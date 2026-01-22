@@ -4,6 +4,7 @@ from feedgen.feed import FeedGenerator
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
+import os
 
 class CursorRSSGenerator:
     def __init__(self):
@@ -182,8 +183,11 @@ async def main():
     articles_data = await generator.fetch_posts()
     rss_content = generator.generate_rss(articles_data)
 
-    # Write to file in root directory
-    with open('cursor_blog_rss.xml', 'wb') as f:
+    # Create rss directory if it doesn't exist
+    os.makedirs('rss', exist_ok=True)
+
+    # Write to file in rss directory
+    with open('rss/cursor_blog_rss.xml', 'wb') as f:
         f.write(rss_content)
 
     print(f"RSS feed generated successfully with {len(articles_data)} articles!")

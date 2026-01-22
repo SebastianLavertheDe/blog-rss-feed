@@ -132,8 +132,9 @@ class RSSRunner:
             # Get base URL for XML URLs
             base_url = self.opml_config.get('base_url', '')
 
-            # Add outline for each successfully generated feed
             feeds_added = 0
+
+            # First, add dynamically generated feeds
             for script_config in self.scripts:
                 script_name = script_config['name']
                 enabled = script_config.get('enabled', True)
@@ -164,6 +165,28 @@ class RSSRunner:
 
                 feeds_added += 1
                 print(f"  + {display_name}: {xml_url}")
+
+            # Then, add static feeds (always included regardless of script results)
+            static_feeds = self.opml_config.get('static_feeds', [])
+            for feed in static_feeds:
+                if not feed.get('enabled', True):
+                    continue
+
+                display_name = feed.get('title', feed.get('name', 'Unknown'))
+                xml_url = feed.get('url', '')
+
+                if not xml_url:
+                    continue
+
+                # Create outline element
+                outline = ET.SubElement(body, 'outline')
+                outline.set('text', display_name)
+                outline.set('title', display_name)
+                outline.set('type', 'rss')
+                outline.set('xmlUrl', xml_url)
+
+                feeds_added += 1
+                print(f"  * {display_name}: {xml_url} (static)")
 
             # Create output directory if needed
             output_file = self.opml_config.get('output_file', 'rss/blog_rss.xml')
