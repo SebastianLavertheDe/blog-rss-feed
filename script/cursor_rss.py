@@ -182,7 +182,7 @@ async def main():
     articles_data = await generator.fetch_posts()
     rss_content = generator.generate_rss(articles_data)
 
-    # Write to file
+    # Write to file in root directory
     with open('cursor_blog_rss.xml', 'wb') as f:
         f.write(rss_content)
 

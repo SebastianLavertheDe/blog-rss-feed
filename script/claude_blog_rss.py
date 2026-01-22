@@ -7,9 +7,9 @@ from dateutil import parser as date_parser
 import json
 import re
 
-class AnthropicEngineeringRSSGenerator:
+class ClaudeBlogRSSGenerator:
     def __init__(self):
-        self.base_url = "https://www.anthropic.com/engineering"
+        self.base_url = "https://claude.com/blog"
 
     def parse_date(self, date_text):
         """Parse date text and return a datetime object with timezone"""
@@ -24,7 +24,7 @@ class AnthropicEngineeringRSSGenerator:
             return datetime.now(timezone.utc)
 
     async def fetch_posts(self):
-        # Fetch the engineering page
+        # Fetch the blog page
         response = requests.get(self.base_url, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
 
@@ -33,44 +33,55 @@ class AnthropicEngineeringRSSGenerator:
         articles_data = []
         seen_urls = set()
 
-        # Look for script tags that might contain JSON data (Next.js data)
-        script_tags = soup.find_all('script', type='application/json')
+        # Look for script tags that might contain JSON data
+        script_tags = soup.find_all('script')
         for script in script_tags:
             try:
-                data = json.loads(script.string)
-                # Navigate the JSON structure to find posts
-                if isinstance(data, dict):
-                    # Check for common Next.js data structures
-                    for key, value in data.items():
-                        if isinstance(value, dict):
-                            for k2, v2 in value.items():
-                                if isinstance(v2, list):
-                                    for item in v2:
-                                        if isinstance(item, dict):
-                                            self._extract_from_json(item, articles_data, seen_urls)
-                        elif isinstance(value, list):
-                            for item in value:
-                                if isinstance(item, dict):
-                                    self._extract_from_json(item, articles_data, seen_urls)
+                script_content = script.string or ''
+                # Look for JSON-like data in script tags
+                if '__DATA__' in script_content or 'window.__DATA' in script_content:
+                    # Try to extract JSON
+                    json_match = re.search(r'window\.__DATA__\s*=\s*({.*?});', script_content, re.DOTALL)
+                    if json_match:
+                        try:
+                            data = json.loads(json_match.group(1))
+                            self._extract_from_json(data, articles_data, seen_urls)
+                        except:
+                            pass
             except:
                 pass
 
-        # Also try HTML parsing as fallback
-        # Look for links to engineering blog posts
+        # Also try HTML parsing - look for blog post links
+        # Claude blog uses Webflow, so we look for specific patterns
         for link in soup.find_all('a', href=True):
             href = link.get('href')
-            if href and '/engineering/' in href and href != '/engineering':
+
+            # Look for blog post links
+            if href and ('/blog/' in href or href.startswith('/blog')):
+                # Skip the main blog page
+                if href == '/blog' or href.endswith('/blog'):
+                    continue
+
                 # Build full URL if relative
                 if not href.startswith('http'):
-                    href = f"https://www.anthropic.com{href}"
+                    href = f"https://claude.com{href}"
 
                 # Skip duplicates
                 if href in seen_urls:
                     continue
                 seen_urls.add(href)
 
-                # Extract title from link text or nearby elements
+                # Get title from link text or nearby elements
                 title = link.get_text(strip=True)
+
+                # Also check for heading elements near the link
+                if not title or len(title) < 10:
+                    parent = link.parent
+                    if parent:
+                        heading = parent.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+                        if heading:
+                            title = heading.get_text(strip=True)
+
                 if not title or len(title) < 10:
                     continue
 
@@ -80,7 +91,11 @@ class AnthropicEngineeringRSSGenerator:
                 if parent:
                     # Look for date patterns in parent and siblings
                     for elem in parent.find_all(string=True):
-                        if re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}', elem):
+                        if re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)[a-z]*\s+\d{1,2},\s+\d{4}', elem):
+                            date_text = elem.strip()
+                            break
+                        # Also match abbreviated months
+                        elif re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}', elem):
                             date_text = elem.strip()
                             break
 
@@ -88,7 +103,6 @@ class AnthropicEngineeringRSSGenerator:
                 if date_text:
                     parsed_date = self.parse_date(date_text)
                 else:
-                    # Try to extract date from URL or title
                     date_text = parsed_date.strftime('%b %d, %Y')
 
                 articles_data.append({
@@ -113,25 +127,39 @@ class AnthropicEngineeringRSSGenerator:
 
         return unique_articles
 
-    def _extract_from_json(self, item, articles_data, seen_urls):
+    def _extract_from_json(self, data, articles_data, seen_urls):
         """Extract article data from JSON structure"""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if key.lower() in ['posts', 'articles', 'items', 'entries', 'blog']:
+                    if isinstance(value, list):
+                        for item in value:
+                            self._extract_article_from_item(item, articles_data, seen_urls)
+                elif isinstance(value, (dict, list)):
+                    self._extract_from_json(value, articles_data, seen_urls)
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    self._extract_article_from_item(item, articles_data, seen_urls)
+
+    def _extract_article_from_item(self, item, articles_data, seen_urls):
+        """Extract article from a single item"""
         if not isinstance(item, dict):
             return
 
-        # Look for common article fields
-        title = item.get('title') or item.get('heading') or item.get('headline')
-        url = item.get('url') or item.get('slug') or item.get('link')
-        date = item.get('date') or item.get('publishedAt') or item.get('pubDate')
+        title = item.get('title') or item.get('heading') or item.get('name')
+        url = item.get('url') or item.get('slug') or item.get('link') or item.get('href')
+        date = item.get('date') or item.get('publishedAt') or item.get('pubDate') or item.get('published-date')
 
         if title and url:
             # Build full URL if needed
             if not url.startswith('http'):
                 if url.startswith('/'):
-                    url = f"https://www.anthropic.com{url}"
+                    url = f"https://claude.com{url}"
                 else:
-                    url = f"https://www.anthropic.com/engineering/{url}"
+                    url = f"https://claude.com/blog/{url}"
 
-            if url in seen_urls or '/engineering/' not in url:
+            if url in seen_urls or '/blog/' not in url:
                 return
 
             seen_urls.add(url)
@@ -157,9 +185,9 @@ class AnthropicEngineeringRSSGenerator:
     def create_feed(self):
         """Create a fresh feed instance"""
         feed = FeedGenerator()
-        feed.title('Anthropic Engineering Blog')
+        feed.title('Claude Blog')
         feed.link(href=self.base_url, rel='alternate')
-        feed.description('Latest posts from Anthropic Engineering blog')
+        feed.description('Latest posts from Claude blog')
         feed.language('en')
         return feed
 
@@ -178,11 +206,12 @@ class AnthropicEngineeringRSSGenerator:
         return rss_content
 
 async def main():
-    generator = AnthropicEngineeringRSSGenerator()
+    generator = ClaudeBlogRSSGenerator()
     articles_data = await generator.fetch_posts()
     rss_content = generator.generate_rss(articles_data)
 
-    with open('anthropic_engineering_rss.xml', 'wb') as f:
+    # Write to file in root directory
+    with open('claude_blog_rss.xml', 'wb') as f:
         f.write(rss_content)
 
     print(f"RSS feed generated successfully with {len(articles_data)} articles!")
