@@ -1,98 +1,131 @@
-# Anthropic Engineering RSS Feed Generator
+# AI & Tech Blog RSS Feed Aggregator
 
-This script generates an RSS feed for Anthropic's engineering blog posts using Playwright to scrape the client-side rendered content.
+A comprehensive RSS feed generator that aggregates AI and technology content from leading sources. This project automatically generates RSS feeds for 13 popular AI/tech blogs and news sources, making it easy to stay updated with the latest developments.
 
-Feed URL: https://raw.githubusercontent.com/conoro/anthropic-engineering-rss-feed/main/anthropic_engineering_rss.xml
+## 📡 RSS Sources
 
-## Features
+| Source | Description | Feed |
+|--------|-------------|------|
+| **Anthropic Engineering** | Official engineering blog from Anthropic | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/anthropic_engineering_rss.xml) |
+| **Cursor Blog** | IDE and AI-powered development tools | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/cursor_blog_rss.xml) |
+| **Claude Blog** | Official Claude and Anthropic product updates | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/claude_blog_rss.xml) |
+| **OpenAI Blog** | Research and product updates from OpenAI | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/openai_blog_rss.xml) |
+| **LangChain Blog** | LLM application development framework | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/langchain_blog_rss.xml) |
+| **Andrej Karpathy Blog** | Deep learning and AI research insights | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/karpathy_blog_rss.xml) |
+| **MarkTechPost** | Machine learning and AI news | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/marktechpost_rss.xml) |
+| **Azure Blog** | Cloud computing and AI from Microsoft | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/azure_blog_rss.xml) |
+| **TLDR Tech** | Daily tech news summaries | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/tldr_tech_rss.xml) |
+| **DeepLearning.AI** | The Batch - Weekly AI news | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/deeplearning_batch_rss.xml) |
+| **Ben's Bites** | Daily AI news and insights | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/bensbites_rss.xml) |
+| **TechCrunch AI** | AI industry news and analysis | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/techcrunch_ai_rss.xml) |
+| **Ars Technica AI** | In-depth AI coverage and analysis | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/arstechnica_ai_rss.xml) |
 
-- **Client-side rendering support**: Uses Playwright to handle JavaScript-rendered content
-- **Proper date parsing**: Extracts and formats publication dates with timezone support
-- **RSS compliance**: Includes GUID elements and atom:link for better interoperability
-- **Reverse chronological order**: Articles sorted newest first
-- **Error handling**: Robust error handling for missing elements
-- **Automated updates**: GitHub Action runs hourly to keep the feed current
+## 📦 All-in-One OPML Feed
 
-## Setup
+Subscribe to all sources at once with our OPML file:
+```
+https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/blog_rss.xml
+```
 
-### Local Usage
+Import this file into your RSS reader to get all 13 feeds in one go.
 
-1. Install dependencies:
+## ✨ Features
+
+- **Automated Updates**: GitHub Actions run regularly to keep feeds fresh
+- **OPML Support**: Single file to subscribe to all sources
+- **Multiple Sources**: 13 premier AI and tech blogs in one place
+- **Standard RSS Format**: Compatible with all RSS readers
+- **Robust Parsing**: Handles various date formats and content types
+
+## 🚀 Quick Start
+
+### Option 1: Subscribe Directly
+
+Copy any of the RSS feed URLs above and paste them into your favorite RSS reader:
+- Feedly
+- Inoreader
+- NewsBlur
+- FreshRSS
+- NetNewsWire
+- Or any RSS reader of your choice
+
+### Option 2: Use the OPML File
+
+1. Download the OPML file: [blog_rss.xml](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/blog_rss.xml)
+2. Import it into your RSS reader
+3. All 13 feeds will be added automatically
+
+### Option 3: Run Locally
+
 ```bash
+# Install dependencies
 pip install -r requirements.txt
+
+# Run all RSS generators
+python run_all.py
+
+# Or run individual feeds
+python script/anthropic_engineering_rss.py
 ```
 
-2. Install Playwright browsers:
-```bash
-playwright install
+## 📁 Project Structure
+
+```
+.
+├── config.yaml              # Configuration file for all RSS sources
+├── run_all.py              # Script to run all RSS generators
+├── blog_rss.xml            # OPML file with all feeds
+├── script/                 # Individual RSS generator scripts
+│   ├── anthropic_engineering_rss.py
+│   ├── cursor_rss.py
+│   ├── claude_blog_rss.py
+│   ├── openai_blog_rss.py
+│   ├── langchain_blog_rss.py
+│   ├── karpathy_blog_rss.py
+│   ├── marktechpost_rss.py
+│   ├── azure_blog_rss.py
+│   ├── tldr_tech_rss.py
+│   ├── deeplearning_batch_rss.py
+│   ├── bensbites_rss.py
+│   ├── techcrunch_ai_rss.py
+│   └── arstechnica_ai_rss.py
+└── rss/                    # Generated RSS feed files
+    ├── anthropic_engineering_rss.xml
+    ├── cursor_blog_rss.xml
+    └── ... (one per source)
 ```
 
-3. Run the main script:
-```bash
-python anthropic_rss.py
+## 🔧 Configuration
+
+All RSS sources are configured in `config.yaml`. To add a new source:
+
+1. Create a new script in the `script/` directory
+2. Add an entry to `config.yaml` under the `scripts` section
+3. Run `python run_all.py` to generate the feed
+
+Example configuration:
+```yaml
+scripts:
+  - name: Your Source Name
+    file: your_source_rss.py
+    output: your_source_rss.xml
+    title: Your Source Title
+    enabled: true
 ```
 
-### GitHub Action Setup
+## 🤝 Contributing
 
-1. Fork this repository to your GitHub account
+Contributions are welcome! Feel free to:
+- Add new RSS sources
+- Improve existing parsers
+- Fix bugs
+- Update documentation
 
-2. Create a Personal Access Token (PAT):
-   - Go to GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
-   - Click "Generate new token"
-   - Name it "GitHub Actions RSS Updater"
-   - Set repository access to your forked repository
-   - Under "Repository permissions", grant:
-     - Contents: Read and write
-   - Click "Generate token" and copy the token
+## 📄 License
 
-3. Add the token to your repository secrets:
-   - Go to your repository → Settings → Secrets and variables → Actions
-   - Click "New repository secret"
-   - Name: `ANTHROPIC_RSS_GH_TOKEN`
-   - Value: Paste the token you copied
-   - Click "Add secret"
+This project is open source and available under the MIT License.
 
-4. Update the RSS feed URL in `anthropic_rss.py`:
-   - Replace `YOUR_USERNAME/YOUR_REPO` with your GitHub username and repository name
-   - The URL should be: `https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/anthropic_engineering_rss.xml`
+## 🔗 Links
 
-5. The GitHub Action will automatically:
-   - Run every hour (and on push to main)
-   - Generate a fresh RSS feed
-   - Commit and push updates to the repository
-   - Make the RSS feed available at the raw GitHub URL
-
-### Accessing the RSS Feed
-
-Once set up, your RSS feed will be available at:
-```
-https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/anthropic_engineering_rss.xml
-```
-
-You can subscribe to this URL in any RSS reader.
-
-## Manual Triggering
-
-You can manually trigger the RSS generation by:
-- Going to the "Actions" tab in your GitHub repository
-- Selecting "Generate Anthropic Engineering RSS Feed"
-- Clicking "Run workflow"
-
-## Usage
-
-Run the main script:
-```bash
-python anthropic_rss.py
-```
-
-The script will generate an `anthropic_engineering_rss.xml` file containing the RSS feed of all engineering blog posts from Anthropic.
-
-## Output
-
-The generated RSS feed includes:
-- Post titles
-- Post URLs  
-- Publication dates (properly formatted)
-- GUID elements for unique identification
-- Descriptions (same as titles)
-- Proper RSS metadata and atom:link elements
+- **Repository**: [SebastianLavertheDe/blog-rss-feed](https://github.com/SebastianLavertheDe/blog-rss-feed)
+- **OPML Feed**: [blog_rss.xml](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/blog_rss.xml)
