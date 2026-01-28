@@ -150,6 +150,9 @@ class RSSRunner:
                 # Build the full URL or relative path
                 if base_url:
                     xml_url = urljoin(base_url.rstrip('/') + '/', output_file)
+                    # Convert GitHub blob URL to raw URL if needed
+                    if 'github.com' in xml_url and '/blob/' in xml_url:
+                        xml_url = xml_url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
                 else:
                     xml_url = output_file
 
