@@ -1,6 +1,6 @@
 # AI & Tech Blog RSS Feed Aggregator
 
-A comprehensive RSS feed generator that aggregates AI and technology content from leading sources. This project automatically generates RSS feeds for 13 popular AI/tech blogs and news sources, making it easy to stay updated with the latest developments.
+A comprehensive RSS feed generator that aggregates AI and technology content from leading sources. This project automatically generates RSS feeds for 19 popular AI/tech blogs, news sources, and communities, making it easy to stay updated with the latest developments.
 
 ## 📡 RSS Sources
 
@@ -19,21 +19,41 @@ A comprehensive RSS feed generator that aggregates AI and technology content fro
 | **Ben's Bites** | Daily AI news and insights | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/bensbites_rss.xml) |
 | **TechCrunch AI** | AI industry news and analysis | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/techcrunch_ai_rss.xml) |
 | **Ars Technica AI** | In-depth AI coverage and analysis | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/arstechnica_ai_rss.xml) |
+| **雷峰网 AI** | AI news and articles in Chinese | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/leiphone_ai_rss.xml) |
+| **David Heinemeier Hansson** | Web development, design, and technology | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/david_heinemeier_hansson_rss.xml) |
+| **Smashing Magazine** | Web Design and Development articles | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/smashing_magazine_rss.xml) |
 
-## 📦 All-in-One OPML Feed
+### 🌐 Community & Forum Feeds
 
-Subscribe to all sources at once with our OPML file:
+| Source | Description | Feed |
+|--------|-------------|------|
+| **Reddit r/artificial** | AI discussions from Reddit community | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/reddit_artificial_rss.xml) |
+| **Reddit r/ClaudeAI** | Claude AI discussions on Reddit | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/claudeai_rss.xml) |
+| **Reddit r/OpenAI** | OpenAI discussions from Reddit community | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/openai_reddit_rss.xml) |
+
+## 📦 All-in-One OPML Feeds
+
+### Blog Feeds (16 sources)
+
+Subscribe to all blog sources at once:
 ```
 https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/blog_rss.xml
 ```
 
-Import this file into your RSS reader to get all 13 feeds in one go.
+### Community/Forum Feeds (3 sources)
+
+Subscribe to all community sources:
+```
+https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/post_rss.xml
+```
+
+Import these files into your RSS reader to get all feeds in one go.
 
 ## ✨ Features
 
 - **Automated Updates**: GitHub Actions run regularly to keep feeds fresh
-- **OPML Support**: Single file to subscribe to all sources
-- **Multiple Sources**: 13 premier AI and tech blogs in one place
+- **OPML Support**: Separate files for blogs and community feeds
+- **Multiple Sources**: 19 RSS feeds including blogs, news, and communities
 - **Standard RSS Format**: Compatible with all RSS readers
 - **Robust Parsing**: Handles various date formats and content types
 
@@ -74,7 +94,8 @@ python script/anthropic_engineering_rss.py
 .
 ├── config.yaml              # Configuration file for all RSS sources
 ├── run_all.py              # Script to run all RSS generators
-├── blog_rss.xml            # OPML file with all feeds
+├── blog_rss.xml            # OPML file with all blog feeds
+├── post_rss.xml            # OPML file with community/forum feeds
 ├── script/                 # Individual RSS generator scripts
 │   ├── anthropic_engineering_rss.py
 │   ├── cursor_rss.py
@@ -88,7 +109,13 @@ python script/anthropic_engineering_rss.py
 │   ├── deeplearning_batch_rss.py
 │   ├── bensbites_rss.py
 │   ├── techcrunch_ai_rss.py
-│   └── arstechnica_ai_rss.py
+│   ├── arstechnica_ai_rss.py
+│   ├── leiphone_ai_rss.py
+│   ├── david_heinemeier_hansson_rss.py
+│   ├── smashing_magazine_rss.py
+│   ├── reddit_artificial_rss.py
+│   ├── claudeai_rss.py
+│   └── openai_reddit_rss.py
 └── rss/                    # Generated RSS feed files
     ├── anthropic_engineering_rss.xml
     ├── cursor_blog_rss.xml
