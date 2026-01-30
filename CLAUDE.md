@@ -225,6 +225,25 @@ post_rss.xml        # OPML: post category feeds
 - Auto-commits and pushes generated RSS feeds
 - Uses personal access token for authentication
 
+## Working Guidelines
+
+### Code Push Policy
+
+**IMPORTANT: Do NOT push code unless the user explicitly requests it.**
+
+- Always test changes locally before considering a push
+- After making changes, wait for user confirmation before pushing
+- Only push when user explicitly says "推送代码" or "push the code"
+- This prevents pushing untested or broken code to the repository
+
+### Testing Before Pushing
+
+Before any push (when requested):
+1. Run `python run_all.py` to verify all feeds work
+2. Check that new RSS files are valid
+3. Verify OPML files are updated correctly
+4. Commit with descriptive message including Co-Authored-By
+
 ## Key Constraints
 
 - All RSS feeds must be written to `rss/` directory
