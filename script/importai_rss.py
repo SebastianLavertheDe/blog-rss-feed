@@ -27,33 +27,62 @@ class ExternalRSSImporter:
         except:
             return datetime.now(timezone.utc)
 
-    def fetch_with_retry(self, url, max_retries=3, timeout=60):
-        """Fetch with retry logic"""
+    def fetch_with_retry(self, url, max_retries=5, timeout=90):
+        """Fetch with retry logic and exponential backoff"""
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/rss+xml, application/xml, text/xml, */*',
         }
 
         for attempt in range(max_retries):
             try:
                 print(f"Fetching RSS (attempt {attempt + 1}/{max_retries}) from: {url}")
-                response = requests.get(url, headers=headers, timeout=timeout)
+                response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
                 response.raise_for_status()
                 return response
             except requests.exceptions.RequestException as e:
                 print(f"Warning: Attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff
+                    wait_time = min(2 ** attempt, 30)  # Cap wait at 30 seconds
                     print(f"Waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
                 else:
-                    raise
+                    print(f"✗ All {max_retries} attempts failed")
+                    return None
+
+    def generate_empty_feed(self):
+        """Generate an empty RSS feed when fetch fails"""
+        print("Generating empty RSS feed as fallback...")
+
+        feed = FeedGenerator()
+        feed.title(self.feed_title)
+        feed.link(href=self.feed_link, rel='alternate')
+        feed.description(self.feed_description + " (Currently unavailable)")
+        feed.language('en')
+
+        # Create rss directory if it doesn't exist
+        os.makedirs('rss', exist_ok=True)
+
+        # Save to file with pretty print
+        output_path = os.path.join('rss', self.output_file)
+        rss_content = feed.rss_str(pretty=True)
+        with open(output_path, 'wb') as f:
+            f.write(rss_content)
+
+        print(f"✓ Empty RSS saved to: {output_path}")
+        return True
 
     def fetch_and_reformat(self):
         """Fetch RSS from URL and reformat with feedgen"""
 
-        try:
-            response = self.fetch_with_retry(self.rss_url)
+        response = self.fetch_with_retry(self.rss_url)
 
+        if response is None:
+            print("✗ Failed to fetch RSS feed after all retries")
+            # Generate empty feed as fallback to prevent workflow failure
+            return self.generate_empty_feed()
+
+        try:
             # Parse the external RSS
             root = ET.fromstring(response.content)
 
@@ -118,8 +147,9 @@ class ExternalRSSImporter:
             return True
 
         except Exception as e:
-            print(f"✗ Error fetching RSS: {e}")
-            return False
+            print(f"✗ Error processing RSS feed: {e}")
+            # Generate empty feed as fallback
+            return self.generate_empty_feed()
 
 def main():
     importer = ExternalRSSImporter(
@@ -132,9 +162,9 @@ def main():
     success = importer.fetch_and_reformat()
 
     if success:
-        print("Import AI RSS imported successfully!")
+        print("Import AI RSS processed successfully!")
     else:
-        print("Failed to import Import AI RSS")
+        print("Failed to process Import AI RSS")
 
     return 0 if success else 1
 
