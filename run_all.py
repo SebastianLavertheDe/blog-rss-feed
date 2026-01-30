@@ -344,8 +344,8 @@ class RSSRunner:
 
         return True
 
-    def print_summary(self, results: Dict[str, bool]):
-        """Print execution summary"""
+    def print_summary(self, results: Dict[str, bool]) -> tuple[int, Dict[str, bool]]:
+        """Print execution summary and return exit code with results"""
         print(f"\n{'=' * 60}")
         print("SUMMARY")
         print(f"{'=' * 60}")
@@ -353,6 +353,7 @@ class RSSRunner:
         total = len(results)
         successful = sum(1 for v in results.values() if v)
         failed = total - successful
+        failed_sources = [name for name, success in results.items() if not success]
 
         for script_name, success in results.items():
             status = "✓ PASS" if success else "✗ FAIL"
@@ -362,10 +363,11 @@ class RSSRunner:
 
         if failed == 0:
             print("\n✓ All RSS feeds generated successfully!")
-            return 0
+            return 0, results
         else:
             print(f"\n✗ {failed} feed(s) failed to generate")
-            return 1
+            print(f"✗ Failed sources: {', '.join(failed_sources)}")
+            return 1, results
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -526,7 +528,7 @@ async def main():
     # Generate OPML
     runner.generate_opml(results)
 
-    exit_code = runner.print_summary(results)
+    exit_code, results = runner.print_summary(results)
 
     return exit_code
 
