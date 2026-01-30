@@ -3,6 +3,7 @@
 
 import requests
 import os
+import time
 from datetime import datetime, timezone
 from feedgen.feed import FeedGenerator
 import xml.etree.ElementTree as ET
@@ -26,13 +27,32 @@ class ExternalRSSImporter:
         except:
             return datetime.now(timezone.utc)
 
+    def fetch_with_retry(self, url, max_retries=3, timeout=60):
+        """Fetch with retry logic"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+
+        for attempt in range(max_retries):
+            try:
+                print(f"Fetching RSS (attempt {attempt + 1}/{max_retries}) from: {url}")
+                response = requests.get(url, headers=headers, timeout=timeout)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as e:
+                print(f"Warning: Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    print(f"Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                else:
+                    raise
+
     def fetch_and_reformat(self):
         """Fetch RSS from URL and reformat with feedgen"""
-        print(f"Fetching RSS from: {self.rss_url}")
 
         try:
-            response = requests.get(self.rss_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=30)
-            response.raise_for_status()
+            response = self.fetch_with_retry(self.rss_url)
 
             # Parse the external RSS
             root = ET.fromstring(response.content)
