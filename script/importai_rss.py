@@ -66,8 +66,17 @@ def build_rss(parsed: feedparser.FeedParserDict) -> bytes:
     now = datetime.now(timezone.utc)
     ET.SubElement(channel, "lastBuildDate").text = format_datetime(now)
 
+    # Sort entries by date (newest first)
+    sorted_entries = sorted(
+        parsed.entries[:30],
+        key=lambda e: (
+            e.get("published_parsed") or e.get("updated_parsed") or (0, 0, 0, 0, 0, 0)
+        ),
+        reverse=True
+    )
+
     count = 0
-    for e in parsed.entries[:30]:
+    for e in sorted_entries:
         item = ET.SubElement(channel, "item")
         ET.SubElement(item, "title").text = clean_xml_text(e.get("title", ""))
         ET.SubElement(item, "link").text = clean_xml_text(e.get("link", ""))

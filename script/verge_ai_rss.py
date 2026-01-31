@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fetch external RSS/Atom feed and reformat with feedgen."""
+"""Fetch external RSS/Atom feed and reformat with ElementTree."""
 
 import requests
 import os
 from datetime import datetime, timezone
-from feedgen.feed import FeedGenerator
+from email.utils import format_datetime
 import xml.etree.ElementTree as ET
 
 class ExternalRSSImporter:
@@ -27,7 +27,7 @@ class ExternalRSSImporter:
             return datetime.now(timezone.utc)
 
     def fetch_and_reformat(self):
-        """Fetch RSS/Atom feed from URL and reformat with feedgen"""
+        """Fetch RSS/Atom feed from URL and reformat with ElementTree"""
         print(f"Fetching RSS from: {self.rss_url}")
 
         try:
@@ -37,15 +37,18 @@ class ExternalRSSImporter:
             # Parse the external feed
             root = ET.fromstring(response.content)
 
-            # Create feedgen instance
-            feed = FeedGenerator()
-            feed.title(self.feed_title)
-            feed.link(href=self.feed_link, rel='alternate')
-            feed.description(self.feed_description)
-            feed.language('en')
+            # Create new RSS with ElementTree
+            new_rss = ET.Element('rss', attrib={'version': '2.0'})
+            new_channel = ET.SubElement(new_rss, 'channel')
+
+            ET.SubElement(new_channel, 'title').text = self.feed_title
+            ET.SubElement(new_channel, 'link').text = self.feed_link
+            ET.SubElement(new_channel, 'description').text = self.feed_description
+            ET.SubElement(new_channel, 'language').text = 'en'
+            ET.SubElement(new_channel, 'lastBuildDate').text = format_datetime(datetime.now(timezone.utc))
 
             # Detect feed type and parse accordingly
-            items = []
+            parsed_items = []
 
             if root.tag == "{http://www.w3.org/2005/Atom}feed":
                 # Atom feed format
@@ -72,17 +75,21 @@ class ExternalRSSImporter:
                         item["description"] = item["title"]
 
                     # Use published date if available, otherwise updated
+                    pub_date_text = None
                     if published_elem is not None and published_elem.text:
-                        item["pubDate"] = published_elem.text
+                        pub_date_text = published_elem.text
                     elif updated_elem is not None and updated_elem.text:
-                        item["pubDate"] = updated_elem.text
-                    else:
-                        item["pubDate"] = None
+                        pub_date_text = updated_elem.text
+
+                    parsed_date = None
+                    if pub_date_text:
+                        parsed_date = self.parse_date(pub_date_text)
 
                     item["guid"] = id_elem.text if id_elem is not None else item["link"]
+                    item["pub_date"] = parsed_date
 
                     if item["title"] and item["link"]:
-                        items.append(item)
+                        parsed_items.append(item)
 
             else:
                 # RSS format
@@ -92,7 +99,6 @@ class ExternalRSSImporter:
 
                 rss_items = channel.findall('.//item')
                 for item_elem in rss_items:
-                    item_dict = {}
                     title = item_elem.find('title')
                     link = item_elem.find('link')
                     description = item_elem.find('description')
@@ -102,26 +108,34 @@ class ExternalRSSImporter:
                     if title is None or link is None:
                         continue
 
-                    item_dict["title"] = title.text if title is not None else ""
-                    item_dict["link"] = link.text if link is not None else ""
-                    item_dict["description"] = description.text if description is not None else item_dict["title"]
-                    item_dict["pubDate"] = pub_date.text if pub_date is not None else None
-                    item_dict["guid"] = guid.text if guid is not None else item_dict["link"]
+                    pub_date_text = pub_date.text if pub_date is not None else None
+                    parsed_date = None
+                    if pub_date_text:
+                        parsed_date = self.parse_date(pub_date_text)
 
-                    items.append(item_dict)
+                    parsed_items.append({
+                        'title': title.text if title is not None else "",
+                        'link': link.text if link is not None else "",
+                        'description': description.text if description is not None else (title.text if title is not None else ""),
+                        'guid': guid.text if guid is not None else (link.text if link is not None else ""),
+                        'pub_date': parsed_date
+                    })
 
-            # Add entries to feed
-            for item in items:
+            # Sort items by date (newest first), items without dates go last
+            parsed_items.sort(key=lambda x: x['pub_date'] if x.get('pub_date') else datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+            # Add sorted entries to channel
+            for item in parsed_items:
                 try:
-                    entry = feed.add_entry()
-                    entry.title(item["title"])
-                    entry.link(href=item["link"])
-                    entry.description(item["description"])
-                    entry.guid(item["guid"], permalink=True)
+                    item_elem = ET.SubElement(new_channel, 'item')
+                    ET.SubElement(item_elem, 'title').text = item["title"]
+                    ET.SubElement(item_elem, 'link').text = item["link"]
+                    ET.SubElement(item_elem, 'description').text = item["description"]
+                    guid_elem = ET.SubElement(item_elem, 'guid', attrib={'isPermaLink': 'true'})
+                    guid_elem.text = item["guid"]
 
-                    if item.get("pubDate"):
-                        parsed_date = self.parse_date(item["pubDate"])
-                        entry.pubDate(parsed_date)
+                    if item.get("pub_date"):
+                        ET.SubElement(item_elem, 'pubDate').text = format_datetime(item["pub_date"])
 
                 except Exception as e:
                     print(f"Warning: Error processing item: {e}")
@@ -132,12 +146,16 @@ class ExternalRSSImporter:
 
             # Save to file with pretty print
             output_path = os.path.join('rss', self.output_file)
-            rss_content = feed.rss_str(pretty=True)
+            xml_bytes = ET.tostring(new_rss, encoding='utf-8', xml_declaration=True)
+
+            # Pretty print by parsing and re-serializing
+            parsed = ET.fromstring(xml_bytes)
+            ET.indent(parsed, space='  ')
             with open(output_path, 'wb') as f:
-                f.write(rss_content)
+                f.write(ET.tostring(parsed, encoding='utf-8', xml_declaration=True))
 
             print(f"✓ RSS saved to: {output_path}")
-            print(f"  Processed {len(items)} items")
+            print(f"  Processed {len(parsed_items)} items")
             return True
 
         except Exception as e:

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fetch external RSS feed and reformat with feedgen."""
+"""Fetch external RSS feed and reformat with ElementTree."""
 
 import requests
 import os
 from datetime import datetime, timezone
-from feedgen.feed import FeedGenerator
+from email.utils import format_datetime
 import xml.etree.ElementTree as ET
 
 class ExternalRSSImporter:
@@ -27,7 +27,7 @@ class ExternalRSSImporter:
             return datetime.now(timezone.utc)
 
     def fetch_and_reformat(self):
-        """Fetch RSS from URL and reformat with feedgen"""
+        """Fetch RSS from URL and reformat with ElementTree"""
         print(f"Fetching RSS from: {self.rss_url}")
 
         try:
@@ -42,16 +42,21 @@ class ExternalRSSImporter:
             if channel is None:
                 channel = root
 
-            # Create feedgen instance
-            feed = FeedGenerator()
-            feed.title(self.feed_title)
-            feed.link(href=self.feed_link, rel='alternate')
-            feed.description(self.feed_description)
-            feed.language('en')
+            # Create new RSS with ElementTree
+            new_rss = ET.Element('rss', attrib={'version': '2.0'})
+            new_channel = ET.SubElement(new_rss, 'channel')
 
-            # Find all items
+            ET.SubElement(new_channel, 'title').text = self.feed_title
+            ET.SubElement(new_channel, 'link').text = self.feed_link
+            ET.SubElement(new_channel, 'description').text = self.feed_description
+            ET.SubElement(new_channel, 'language').text = 'en'
+            ET.SubElement(new_channel, 'lastBuildDate').text = format_datetime(datetime.now(timezone.utc))
+
+            # Find all items and collect them for sorting
             items = channel.findall('.//item')
 
+            # Parse all items first for sorting
+            parsed_items = []
             for item in items:
                 try:
                     title = item.find('title')
@@ -69,25 +74,46 @@ class ExternalRSSImporter:
                     pub_date_text = pub_date.text if pub_date is not None else None
                     guid_text = guid.text if guid is not None else link_text
 
-                    entry = feed.add_entry()
-                    entry.title(title_text)
-                    entry.link(href=link_text)
-                    entry.description(description_text)
-                    entry.guid(guid_text, permalink=True)
-
+                    parsed_date = None
                     if pub_date_text:
                         parsed_date = self.parse_date(pub_date_text)
-                        entry.pubDate(parsed_date)
+
+                    parsed_items.append({
+                        'title': title_text,
+                        'link': link_text,
+                        'description': description_text,
+                        'guid': guid_text,
+                        'pub_date': parsed_date
+                    })
 
                 except Exception as e:
                     print(f"Warning: Error processing item: {e}")
                     continue
 
+            # Sort items by date (newest first), items without dates go last
+            parsed_items.sort(key=lambda x: x['pub_date'] if x['pub_date'] else datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+            # Add sorted entries to channel
+            for item_data in parsed_items:
+                item_elem = ET.SubElement(new_channel, 'item')
+                ET.SubElement(item_elem, 'title').text = item_data['title']
+                ET.SubElement(item_elem, 'link').text = item_data['link']
+                ET.SubElement(item_elem, 'description').text = item_data['description']
+                guid_elem = ET.SubElement(item_elem, 'guid', attrib={'isPermaLink': 'true'})
+                guid_elem.text = item_data['guid']
+
+                if item_data['pub_date']:
+                    ET.SubElement(item_elem, 'pubDate').text = format_datetime(item_data['pub_date'])
+
             os.makedirs('rss', exist_ok=True)
             output_path = os.path.join('rss', self.output_file)
-            rss_content = feed.rss_str(pretty=True)
+            xml_bytes = ET.tostring(new_rss, encoding='utf-8', xml_declaration=True)
+
+            # Pretty print by parsing and re-serializing
+            parsed = ET.fromstring(xml_bytes)
+            ET.indent(parsed, space='  ')
             with open(output_path, 'wb') as f:
-                f.write(rss_content)
+                f.write(ET.tostring(parsed, encoding='utf-8', xml_declaration=True))
 
             print(f"✓ RSS saved to: {output_path}")
             print(f"  Processed {len(items)} items")
