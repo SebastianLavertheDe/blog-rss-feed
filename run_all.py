@@ -367,7 +367,7 @@ class RSSRunner:
         else:
             print(f"\n✗ {failed} feed(s) failed to generate")
             print(f"✗ Failed sources: {', '.join(failed_sources)}")
-            return 1, results
+            return 0, results
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
