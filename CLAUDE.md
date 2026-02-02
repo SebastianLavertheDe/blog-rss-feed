@@ -227,6 +227,14 @@ post_rss.xml        # OPML: post category feeds
 
 ## Working Guidelines
 
+### Documentation Policy
+
+**IMPORTANT: Do NOT write summary documents unless the user explicitly requests them.**
+
+- Only create documentation files (README, SUMMARY, REPORT, etc.) when the user specifically asks
+- Focus on completing the actual work rather than writing about it
+- If documentation is needed, ask the user first
+
 ### Code Push Policy
 
 **IMPORTANT: Do NOT push code unless the user explicitly requests it.**

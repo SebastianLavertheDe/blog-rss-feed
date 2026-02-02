@@ -57,10 +57,31 @@ class RSSRunner:
             return False
 
         try:
+            # Build command with optional arguments
+            cmd = [sys.executable, script_path]
+
+            # Auto-add --rss-url from rssUrl field if present
+            rss_url = script_config.get("rssUrl")
+            if rss_url:
+                cmd.extend(["--rss-url", rss_url])
+
+            # Auto-add --output if not present in args and output is defined in config
+            output_file = script_config.get("output")
+            if output_file and "--output" not in str(script_config.get("args", [])):
+                cmd.extend(["--output", output_file])
+
+            # Add script arguments if provided
+            script_args = script_config.get("args", [])
+            if script_args:
+                if isinstance(script_args, list):
+                    cmd.extend(script_args)
+                elif isinstance(script_args, str):
+                    # Parse string arguments (simple split by space)
+                    cmd.extend(script_args.split())
+
             # Run the script using asyncio subprocess
             process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                script_path,
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
