@@ -1,0 +1,2053 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss version="2.0">
+  <channel>
+    <title>matklad.github.io</title>
+    <link>https://matklad.github.io</link>
+    <description>RSS feed from matklad.github.io</description>
+    <language>en</language>
+    <lastBuildDate>Mon, 02 Feb 2026 12:06:55 +0000</lastBuildDate>
+    <item>
+      <title>make.ts</title>
+      <link>https://matklad.github.io/2026/01/27/make-ts.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;make.ts&lt;/h1&gt;
+  &lt;time class="meta" datetime="2026-01-27"&gt;Jan 27, 2026&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;&lt;kbd&gt;&lt;kbd&gt;Up Enter&lt;/kbd&gt;&lt;/kbd&gt; &lt;kbd&gt;&lt;kbd&gt;Up Up Enter&lt;/kbd&gt;&lt;/kbd&gt; &lt;kbd&gt;&lt;kbd&gt;Up Up Up Enter&lt;/kbd&gt;&lt;/kbd&gt;&lt;/p&gt;
+&lt;p&gt;Sounds familiar? This is how I historically have been running benchmarks and other experiments
+requiring a repeated sequence of commands — type them manually once, then rely on shell history
+(and maybe some terminal splits) for reproduction. These past few years I’ve arrived at a much better
+workflow pattern — &lt;code&gt;make.ts&lt;/code&gt;. I was forced to adapt it once I started working with multiprocess
+applications, where manually entering commands is borderline infeasible. In retrospect, I should
+have adapted the workflow years earlier.&lt;/p&gt;
+&lt;section id="The-Pattern"&gt;
+
+&lt;h2&gt;&lt;a href="#The-Pattern"&gt;The Pattern&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Use a (gitignored) file for interactive scripting. Instead of entering a command directly into the
+terminal, write it to a file first, and then run the file. For me, I type stuff into &lt;code&gt;make.ts&lt;/code&gt; and
+then run &lt;code&gt;./make.ts&lt;/code&gt; in my terminal (Ok, I need &lt;em&gt;one&lt;/em&gt; &lt;kbd&gt;&lt;kbd&gt;Up Enter&lt;/kbd&gt;&lt;/kbd&gt; for that).&lt;/p&gt;
+&lt;p&gt;I want to be clear here, I am not advocating writing “proper” scripts, just capturing your
+interactive, ad-hoc command to a persistent file. Of course any command that you want to execute
+&lt;em&gt;repeatedly&lt;/em&gt; belongs to the build system. The surprising thing is that even more complex one-off
+commands benefit from running through file, because it will take you several tries to get them
+right!&lt;/p&gt;
+&lt;p&gt;There are many benefits relative to &lt;kbd&gt;&lt;kbd&gt;Up Up Up&lt;/kbd&gt;&lt;/kbd&gt; workflow:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Real commands tend to get large, and it is so much nicer to use a real 2D text editor rather than
+shell’s line editor.
+&lt;/li&gt;
+&lt;li&gt;
+If you need more than one command, you can write several commands, and still run them all with a
+single key (before &lt;code&gt;make.ts&lt;/code&gt;, I was prone to constructing rather horrific &amp;amp;&amp;amp; conjuncts for this
+reason).
+&lt;/li&gt;
+&lt;li&gt;
+With a sequence of command outlined, you nudge yourself towards incrementally improving them,
+making them idempotent, and otherwise investing into your own workflow for the next few minutes,
+without falling into the YAGNI pit from the outset.
+&lt;/li&gt;
+&lt;li&gt;
+At some point you might realize after, say, running a series of ad-hoc benchmarks interactively,
+that you’d rather write a proper script which executes a collection of benchmarks with varying
+parameters. With the file approach, you already have the meat of the script implemented, and you
+only need to wrap in a couple of fors and ifs.
+&lt;/li&gt;
+&lt;li&gt;
+Finally, if you happen to work with multi-process projects, you’ll find it easier to manage
+concurrency declaratively, spawning a tree of processes from a single script, rather than
+switching between terminal splits.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/section&gt;
+&lt;section id="Details"&gt;
+
+&lt;h2&gt;&lt;a href="#Details"&gt;Details&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Use a consistent filename for the script. I use &lt;code&gt;make.ts&lt;/code&gt;, and so there’s a &lt;code&gt;make.ts&lt;/code&gt; in the root
+of most projects I work on. Correspondingly, I have &lt;code&gt;make.ts&lt;/code&gt; line in project’s &lt;code&gt;.git/info/exclude&lt;/code&gt;
+— the &lt;code&gt;.gitignore&lt;/code&gt; file which is not shared. The fixed name reduces fixed costs — whenever I
+need complex interactivity I don’t need to come up with a name for a new file, I open my
+pre-existing &lt;code&gt;make.ts&lt;/code&gt;, wipe whatever was there and start hacking. Similarly, I have &lt;code&gt;./make.ts&lt;/code&gt; in
+my shell history, so
+&lt;a href="https://fishshell.com/docs/current/interactive.html#autosuggestions"&gt;fish autosuggestions&lt;/a&gt;
+work for me. At one point, I had a VS Code task to run &lt;code&gt;make.ts&lt;/code&gt;, though I now use
+&lt;a href="https://matklad.github.io/2025/08/31/vibe-coding-terminal-editor.html"&gt;terminal editor&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Start the script with hash bang,
+&lt;span class="display"&gt;&lt;code&gt;#!/usr/bin/env -S deno run --allow-all&lt;/code&gt;&lt;/span&gt;
+in my case, and
+&lt;span class="display"&gt;&lt;code&gt;chmod a+x make.ts&lt;/code&gt;&lt;/span&gt;
+the file, to make it easy to run.&lt;/p&gt;
+&lt;p&gt;Write the script in a language that:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+you are comfortable with,
+&lt;/li&gt;
+&lt;li&gt;
+doesn’t require huge setup,
+&lt;/li&gt;
+&lt;li&gt;
+makes it easy to spawn subprocesses,
+&lt;/li&gt;
+&lt;li&gt;
+has good support for concurrency.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;For me, that is TypeScript. Modern JavaScript is sufficiently ergonomic, and structural, gradual
+typing is a sweet spot that gives you reasonable code completion, but still allows brute-forcing any
+problem by throwing enough stringly dicts at it.&lt;/p&gt;
+&lt;p&gt;JavaScript’s tagged template syntax is brilliant for scripting use-cases:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;$&lt;/span&gt;(&lt;span class="hl-params"&gt;literal, ...interpolated&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-variable language_"&gt;console&lt;/span&gt;.&lt;span class="hl-title function_"&gt;log&lt;/span&gt;({ literal, interpolated });&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; dir = &lt;span class="hl-string"&gt;&amp;quot;hello, world&amp;quot;&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;$&lt;span class="hl-string"&gt;`ls &lt;span class="hl-subst"&gt;${dir}&lt;/span&gt;`&lt;/span&gt;;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;prints&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-punctuation"&gt;{&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    literal&lt;span class="hl-punctuation"&gt;:&lt;/span&gt; &lt;span class="hl-punctuation"&gt;[&lt;/span&gt; &lt;span class="hl-string"&gt;&amp;quot;ls &amp;quot;&lt;/span&gt;&lt;span class="hl-punctuation"&gt;,&lt;/span&gt; &lt;span class="hl-string"&gt;&amp;quot;&amp;quot;&lt;/span&gt; &lt;span class="hl-punctuation"&gt;]&lt;/span&gt;&lt;span class="hl-punctuation"&gt;,&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    interpolated&lt;span class="hl-punctuation"&gt;:&lt;/span&gt; &lt;span class="hl-punctuation"&gt;[&lt;/span&gt; &lt;span class="hl-string"&gt;&amp;quot;hello, world&amp;quot;&lt;/span&gt; &lt;span class="hl-punctuation"&gt;]&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-punctuation"&gt;}&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;What happens here is that &lt;code&gt;$&lt;/code&gt; gets a list of literal string fragments inside the backticks, and
+then, separately, a list of values to be interpolated in-between. It &lt;em&gt;could&lt;/em&gt; concatenate everything
+to just a single string, but it doesn’t have to. This is precisely what is required for process
+spawning, where you want to pass an array of strings to the &lt;code&gt;exec&lt;/code&gt; syscall.&lt;/p&gt;
+&lt;p&gt;Specifically, I use &lt;a href="https://github.com/dsherret/dax"&gt;dax&lt;/a&gt; library with Deno, which is excellent as
+a single-binary batteries-included scripting environment
+(see &lt;a href="https://matklad.github.io/2023/02/12/a-love-letter-to-deno.html"&gt;&amp;lt;3 Deno&lt;/a&gt;). Bun has a dax-like
+library in the box and is a good alternative (though I personally stick with Deno because of
+&lt;code&gt;deno fmt&lt;/code&gt; and &lt;code&gt;deno lsp&lt;/code&gt;). You could also use famous zx, though be mindful that it
+&lt;a href="https://google.github.io/zx/configuration#shell"&gt;uses your shell as a middleman&lt;/a&gt;, something I
+consider to be sloppy (&lt;a href="https://julialang.org/blog/2012/03/shelling-out-sucks/"&gt;explanation&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;While &lt;code&gt;dax&lt;/code&gt; makes it convenient to spawn a single program, &lt;code&gt;async/await&lt;/code&gt; is excellent for herding a
+slither of processes:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title class_"&gt;Promise&lt;/span&gt;.&lt;span class="hl-title function_"&gt;all&lt;/span&gt;([&lt;/span&gt;
+&lt;span class="line"&gt;    $&lt;span class="hl-string"&gt;`sleep 5`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;    $&lt;span class="hl-string"&gt;`sleep 10`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;]);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;/section&gt;
+&lt;section id="Concrete-Example"&gt;
+
+&lt;h2&gt;&lt;a href="#Concrete-Example"&gt;Concrete Example&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Here’s how I applied this pattern earlier today. I wanted to measure how TigerBeetle cluster
+recovers from the crash of the primary. The manual way to do that would be to create a bunch of ssh
+sessions for several cloud machines, format datafiles, start replicas, and then create some load. I
+&lt;em&gt;almost&lt;/em&gt; started to split my terminal up, but then figured out I can do it the smart way.&lt;/p&gt;
+&lt;p&gt;The first step was cross-compiling the binary, uploading it to the cloud machines, and running the
+cluster
+(using my &lt;a href="https://matklad.github.io/2026/01/20/vibecoding-2.html"&gt;box&lt;/a&gt; from the other week):&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-meta"&gt;#!/usr/bin/env -S deno run --allow-all&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;import&lt;/span&gt; $ &lt;span class="hl-keyword"&gt;from&lt;/span&gt; &lt;span class="hl-string"&gt;&amp;quot;jsr:@david/dax@0.44.2&amp;quot;&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`./zig/zig build -Drelease -Dtarget=x86_64-linux`&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box sync 0-5 ./tigerbeetle`&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box run 0-5&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;    ./tigerbeetle format --cluster=0 --replica-count=6 --replica=?? 0_??.tigerbeetle`&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box run 0-5&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;    ./tigerbeetle start --addresses=?0-5? 0_??.tigerbeetle`&lt;/span&gt;;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Running the above the second time, I realized that I need to kill the old cluster first, so two new
+commands are “interactively” inserted:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`./zig/zig build -Drelease -Dtarget=x86_64-linux`&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box sync 0-5 ./tigerbeetle`&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box run 0-5 rm 0_??.tigerbeetle`&lt;/span&gt;.&lt;span class="hl-title function_"&gt;noThrow&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box run 0-5 pkill tigerbeetle`&lt;/span&gt;.&lt;span class="hl-title function_"&gt;noThrow&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box run 0-5&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;    ./tigerbeetle format --cluster=0 --replica-count=6 --replica=?? 0_??.tigerbeetle`&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box run 0-5&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;    ./tigerbeetle start --addresses=?0-5? 0_??.tigerbeetle`&lt;/span&gt;;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;At this point, my investment in writing this file and not just entering the commands one-by-one
+already paid off!&lt;/p&gt;
+&lt;p&gt;The next step is to run the benchmark load in parallel with the cluster:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title class_"&gt;Promise&lt;/span&gt;.&lt;span class="hl-title function_"&gt;all&lt;/span&gt;([&lt;/span&gt;
+&lt;span class="line"&gt;    $&lt;span class="hl-string"&gt;`box run 0-5 ./tigerbeetle start     --addresses=?0-5? 0_??.tigerbeetle`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;    $&lt;span class="hl-string"&gt;`box run 6   ./tigerbeetle benchmark --addresses=?0-5?`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;])&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;I don’t need two terminals for two processes, and I get to copy-paste-edit the mostly same command.&lt;/p&gt;
+&lt;p&gt;For the next step, I actually want to kill one of the replicas, and I also want to capture live
+logs, to see in real-time how the cluster reacts. This is where &lt;code&gt;0-5&lt;/code&gt; multiplexing syntax of box
+falls short, but, given that this is JavaScript, I can just write a for loop:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; replicas = &lt;span class="hl-title function_"&gt;range&lt;/span&gt;(&lt;span class="hl-number"&gt;6&lt;/span&gt;).&lt;span class="hl-title function_"&gt;map&lt;/span&gt;(&lt;span class="hl-function"&gt;(&lt;span class="hl-params"&gt;it&lt;/span&gt;) =&amp;gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    $&lt;span class="hl-string"&gt;`box run &lt;span class="hl-subst"&gt;${it}&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;        ./tigerbeetle start --addresses=?0-5? 0_??.tigerbeetle&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;        &amp;amp;&amp;gt; logs/&lt;span class="hl-subst"&gt;${it}&lt;/span&gt;.log`&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;        .&lt;span class="hl-title function_"&gt;noThrow&lt;/span&gt;()&lt;/span&gt;
+&lt;span class="line"&gt;        .&lt;span class="hl-title function_"&gt;spawn&lt;/span&gt;()&lt;/span&gt;
+&lt;span class="line"&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title class_"&gt;Promise&lt;/span&gt;.&lt;span class="hl-title function_"&gt;all&lt;/span&gt;([&lt;/span&gt;
+&lt;span class="line"&gt;    $&lt;span class="hl-string"&gt;`box run 6 ./tigerbeetle benchmark --addresses=?0-5?`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;    (&lt;span class="hl-keyword"&gt;async&lt;/span&gt; () =&amp;gt; {&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-keyword"&gt;await&lt;/span&gt; $.&lt;span class="hl-title function_"&gt;sleep&lt;/span&gt;(&lt;span class="hl-string"&gt;&amp;quot;20s&amp;quot;&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-variable language_"&gt;console&lt;/span&gt;.&lt;span class="hl-title function_"&gt;log&lt;/span&gt;(&lt;span class="hl-string"&gt;&amp;quot;REDRUM&amp;quot;&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`box run 1 pkill tigerbeetle`&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;    })(),&lt;/span&gt;
+&lt;span class="line"&gt;]);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;replicas.&lt;span class="hl-title function_"&gt;forEach&lt;/span&gt;(&lt;span class="hl-function"&gt;(&lt;span class="hl-params"&gt;it&lt;/span&gt;) =&amp;gt;&lt;/span&gt; it.&lt;span class="hl-title function_"&gt;kill&lt;/span&gt;());&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title class_"&gt;Promise&lt;/span&gt;.&lt;span class="hl-title function_"&gt;all&lt;/span&gt;(replicas);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;At this point, I do need two terminals. One runs &lt;code&gt;./make.ts&lt;/code&gt; and shows the log from the benchmark
+itself, the other runs &lt;code&gt;tail -f logs/2.log&lt;/code&gt; to watch the next replica to become primary.&lt;/p&gt;
+&lt;p&gt;I have definitelly crossed the line where writing a script makes sense, but the neat thing is that
+the gradual evolution up to this point. There isn’t a discontinuity where I need to spend 15
+minutes trying to shape various ad-hoc commands from five terminals into a single coherent script, it
+was in the file to begin with.&lt;/p&gt;
+&lt;p&gt;And then the script is easy to evolve. Once you realize that it’s a good idea to also run the same
+benchmark against a different, baseline version TigerBeetle, you replace &lt;code&gt;./tigerbeetle&lt;/code&gt; with
+&lt;code&gt;./${tigerbeetle}&lt;/code&gt; and wrap everything into&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;async&lt;/span&gt; &lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;benchmark&lt;/span&gt;(&lt;span class="hl-params"&gt;tigerbeetle: &lt;span class="hl-built_in"&gt;string&lt;/span&gt;&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-comment"&gt;// ...&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; tigerbeetle = &lt;span class="hl-title class_"&gt;Deno&lt;/span&gt;.&lt;span class="hl-property"&gt;args&lt;/span&gt;[&lt;span class="hl-number"&gt;0&lt;/span&gt;]&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;benchmark&lt;/span&gt;(tigerbeetle);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; ./make.ts tigerbeetle-baseline&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; ./make.ts tigerbeetle&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;A bit more hacking, and you end up with a repeatable benchmark schedule for a matrix of parameters:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;for&lt;/span&gt; (&lt;span class="hl-keyword"&gt;const&lt;/span&gt; attempt &lt;span class="hl-keyword"&gt;of&lt;/span&gt; [&lt;span class="hl-number"&gt;0&lt;/span&gt;, &lt;span class="hl-number"&gt;1&lt;/span&gt;])&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;for&lt;/span&gt; (&lt;span class="hl-keyword"&gt;const&lt;/span&gt; tigerbeetle &lt;span class="hl-keyword"&gt;of&lt;/span&gt; [&lt;span class="hl-string"&gt;&amp;quot;baseline&amp;quot;&lt;/span&gt;, &lt;span class="hl-string"&gt;&amp;quot;tigerbeetle&amp;quot;&lt;/span&gt;])&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;for&lt;/span&gt; (&lt;span class="hl-keyword"&gt;const&lt;/span&gt; mode &lt;span class="hl-keyword"&gt;of&lt;/span&gt; [&lt;span class="hl-string"&gt;&amp;quot;normal&amp;quot;&lt;/span&gt;, &lt;span class="hl-string"&gt;&amp;quot;viewchange&amp;quot;&lt;/span&gt;]) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; results = $.&lt;span class="hl-title function_"&gt;path&lt;/span&gt;(&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-string"&gt;`./results/&lt;span class="hl-subst"&gt;${tigerbeetle}&lt;/span&gt;-&lt;span class="hl-subst"&gt;${mode}&lt;/span&gt;-&lt;span class="hl-subst"&gt;${attempt}&lt;/span&gt;`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;    );&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;benchmark&lt;/span&gt;(tigerbeetle, mode, results);&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;That’s the gist of it. Don’t let the shell history be your source, capture it into the file first!&lt;/p&gt;
+&lt;/section&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2026/01/27/make-ts</guid>
+      <pubDate>Tue, 27 Jan 2026 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Considering Strictly Monotonic Time</title>
+      <link>https://matklad.github.io/2026/01/23/strictly-monotonic-time.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Considering Strictly Monotonic Time&lt;/h1&gt;
+  &lt;time class="meta" datetime="2026-01-23"&gt;Jan 23, 2026&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;Monotonic time is a frequently used, load bearing abstraction. Monotonicity is often enforced using
+the following code:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; now&lt;/span&gt;(clock: &lt;span class="hl-operator"&gt;*&lt;/span&gt;Clock) Instant {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; t_raw = os_time_monotonic();&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; t = &lt;span class="hl-built_in"&gt;@max&lt;/span&gt;(t_raw, clock.guard);&lt;/span&gt;
+&lt;span class="line"&gt;    assert(t &amp;gt;= clock.guard);&lt;/span&gt;
+&lt;span class="line"&gt;    assert(t &amp;gt;= t_raw);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    clock.guard = t;&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;return&lt;/span&gt; t;&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;That is, ask the OS about the current monotonic time, but don’t trust the result too much and clamp
+it using an in-process guard. Under normal scenarios, you can trust the OS promise of monotonicity,
+but, empirically, there’s a long tail of different scenarios where the promise isn’t upheld:
+&lt;a href="https://github.com/rust-lang/rust/pull/56988" class="display url"&gt;https://github.com/rust-lang/rust/pull/56988&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Today I realized that, if you are doing the above, you might as well force the time to be &lt;em&gt;strictly&lt;/em&gt;
+monotonic:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; t = &lt;span class="hl-built_in"&gt;@max&lt;/span&gt;(t_raw, clock.guard &lt;span class="hl-operator"&gt;+&lt;/span&gt; 1ns);&lt;/span&gt;
+&lt;span class="line"&gt;assert(t &amp;gt; clock.guard);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;The benefit of strict monotonicity is that you can tighten asserts,
+&lt;span class="display"&gt;&lt;code&gt;assert(past &amp;lt;= present)&lt;/code&gt;&lt;/span&gt;
+can become
+&lt;span class="display"&gt;&lt;code&gt;assert(past &amp;lt; present)&lt;/code&gt;&lt;/span&gt;
+and that &lt;em&gt;additionally&lt;/em&gt; catches the bug where you pass in &lt;em&gt;exactly&lt;/em&gt; the same instance.
+In other words, the &lt;code&gt;&amp;lt;=&lt;/code&gt; version explicitly allows either query-ing the time again, or using the old
+value directly.&lt;/p&gt;
+&lt;p&gt;Conversely, with strictly monotonic time, you know that if you see two numerically identical time
+instances, they must have been ultimately derived from the exact same call to &lt;code&gt;now()&lt;/code&gt;. Time becomes
+fundamentally less ambiguous.&lt;/p&gt;
+&lt;p&gt;The constraint here is that the resolution of the time value (&lt;em&gt;not&lt;/em&gt; the clock resolution) needs to
+be high enough, to make sure that repeated &lt;code&gt;+1&lt;/code&gt; don’t move you into the future, but nanosecond
+precision seems fine for that.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2026/01/23/strictly-monotonic-time</guid>
+      <pubDate>Fri, 23 Jan 2026 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Vibecoding #2</title>
+      <link>https://matklad.github.io/2026/01/20/vibecoding-2.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Vibecoding #2&lt;/h1&gt;
+  &lt;time class="meta" datetime="2026-01-20"&gt;Jan 20, 2026&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;I feel like I got substantial value out of Claude today, and want to document it. I am at the tail
+end of AI adoption, so I don’t expect to say anything particularly useful or novel. However, I am
+constantly complaining about the lack of boring AI posts, so it’s only proper if I write one.&lt;/p&gt;
+&lt;section id="Problem-Statement"&gt;
+
+&lt;h2&gt;&lt;a href="#Problem-Statement"&gt;Problem Statement&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;At TigerBeetle, we are big on
+&lt;a href="https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md#simulation-testing"&gt;deterministic simulation testing&lt;/a&gt;.
+We even use it
+&lt;a href="https://tigerbeetle.com/blog/2025-11-28-tale-of-four-fuzzers/#fuzzer-5-can-i-count-no"&gt;to track performance&lt;/a&gt;,
+to some degree. Still, it is crucial to verify performance numbers on a real cluster in its natural
+high-altitude habitat.&lt;/p&gt;
+&lt;p&gt;To do that, you need to procure six machines in a cloud, get your custom version of &lt;code&gt;tigerbeetle&lt;/code&gt;
+binary on them, connect cluster’s replicas together and hit them with load. It feels like, quarter
+of a century into the third millennium, “run stuff on six machines” should be a problem just a notch
+harder than opening a terminal and typing &lt;code&gt;ls&lt;/code&gt;, but I personally don’t know how to solve it without
+wasting a day. So, I spent a day vibecoding my own square wheel.&lt;/p&gt;
+&lt;p&gt;The &lt;em&gt;general&lt;/em&gt; shape of the problem is that I want to spin a fleet of ephemeral machines with given
+specs on demand and run ad-hoc commands in a SIMD fashion on them. I don’t want to manually type
+slightly different commands into a six-way terminal split, but I also do want to be able to ssh into
+a specific box and poke it around.&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Solution"&gt;
+
+&lt;h2&gt;&lt;a href="#Solution"&gt;Solution&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;My idea for the solution comes from these three sources:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/catern/rsyscall" class="url"&gt;https://github.com/catern/rsyscall&lt;/a&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://peter.bourgon.org/blog/2011/04/27/remote-development-from-mac-to-linux.html" class="url"&gt;https://peter.bourgon.org/blog/2011/04/27/remote-development-from-mac-to-linux.html&lt;/a&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/dsherret/dax" class="url"&gt;https://github.com/dsherret/dax&lt;/a&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The big idea of &lt;code&gt;rsyscall&lt;/code&gt; is that you can program distributed system in direct style. When
+programming locally, you do things by issuing syscalls:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; fd = open(&lt;span class="hl-string"&gt;&amp;quot;/etc/passwd&amp;quot;&lt;/span&gt;);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;This API works for doing things on remote machines, if you specify which machine you want to run the
+syscall on:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; fd_local = open(.host, &lt;span class="hl-string"&gt;&amp;quot;/etc/passwd&amp;quot;&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; fd_cloud = open(.{.addr = &lt;span class="hl-string"&gt;&amp;quot;1.2.3.4&amp;quot;&lt;/span&gt;}, &lt;span class="hl-string"&gt;&amp;quot;/etc/passwd&amp;quot;&lt;/span&gt;);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Direct manipulation is the most natural API, and it pays to extend it over the network boundary.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Peter’s post is an application of a similar idea to a narrow, mundane task of developing on Mac and
+testing on Linux. Peter suggests two scripts:&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;remote-sync&lt;/code&gt; synchronizes a local and remote projects. If you run &lt;code&gt;remote-sync&lt;/code&gt; inside &lt;code&gt;~/p/tb&lt;/code&gt;
+folder, then &lt;code&gt;~/p/tb&lt;/code&gt; materializes on the remote machine. &lt;code&gt;rsync&lt;/code&gt; does the heavy lifting, and the
+wrapper script implements &lt;code&gt;DWIM&lt;/code&gt; behaviors.&lt;/p&gt;
+&lt;p&gt;It is typically followed by
+&lt;span class="display"&gt;&lt;code&gt;remote-run some --command&lt;/code&gt;,&lt;/span&gt;
+which runs command on the remote machine in the matching directory, forwarding output back to you.&lt;/p&gt;
+&lt;p&gt;So, when I want to test local changes to &lt;code&gt;tigerbeetle&lt;/code&gt; on my Linux box, I have roughly the following
+shell session:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; cd ~/p/tb/work&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; code . # hack here&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; remote-sync&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; remote-run ./zig/zig build test&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;The killer feature is that shell-completion works. I first type the command I want to run, taking
+advantage of the fact that local and remote commands are the same, paths and all, then hit &lt;code&gt;^A&lt;/code&gt; and
+prepend &lt;code&gt;remote-run&lt;/code&gt; (in reality, I have &lt;code&gt;rr&lt;/code&gt; alias that combines sync&amp;amp;run).&lt;/p&gt;
+&lt;p&gt;The big thing here is not the commands per se, but the shift in the mental model. In a traditional
+ssh &amp;amp; vim setup, you have to juggle two machines with a separate state, the local one and the remote
+one. With &lt;code&gt;remote-sync&lt;/code&gt;, the state is the same across the machines, you only choose whether you want
+to run commands here or there.&lt;/p&gt;
+&lt;p&gt;With just two machines, the difference feels academic. But if you want to run your tests across
+&lt;em&gt;six&lt;/em&gt; machines, the ssh approach fails — you don’t want to re-vim your changes to source files six
+times, you really do want to separate the place where the code is edited from the place(s) where the
+code is run. This is a general pattern — if you are not sure about a particular aspect of your
+design, try increasing the cardinality of the core abstraction from 1 to 2.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;The third component, &lt;code&gt;dax&lt;/code&gt; library, is pretty mundane — just a JavaScript library for shell
+scripting. The notable aspects there are:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;JavaScript’s &lt;a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals"&gt;template literals&lt;/a&gt;,
+which allow implementing command interpolation in a safe by construction way. When processing
+&lt;span class="display"&gt;&lt;code&gt; $`ls ${paths}`&lt;/code&gt;,&lt;/span&gt;
+a string is never materialized, it’s arrays all the way to the &lt;code&gt;exec&lt;/code&gt; syscall (
+&lt;a href="https://matklad.github.io/2021/07/30/shell-injection.html"&gt;more on the topic&lt;/a&gt;).&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;JavaScript’s async/await, which makes managing &lt;em&gt;concurrent&lt;/em&gt; processes (local or remote) natural:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title class_"&gt;Promise&lt;/span&gt;.&lt;span class="hl-title function_"&gt;all&lt;/span&gt;([&lt;/span&gt;
+&lt;span class="line"&gt;  $&lt;span class="hl-string"&gt;`sleep 5`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;  $&lt;span class="hl-string"&gt;`remote-run sleep 5`&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;]);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;Additionally, deno specifically
+&lt;a href="https://docs.deno.com/api/deno/~/Deno.CommandOptions.detached"&gt;valiantly strives&lt;/a&gt;
+to impose process-level structured concurrency, ensuring that no processes spawned by the script
+outlive the script itself, unless explicitly marked &lt;code&gt;detached&lt;/code&gt; — a
+&lt;a href="https://github.com/oconnor663/duct.py/blob/0764961a8c799873a9375d4100ae9ddbee624594/gotchas.md#killing-grandchild-processes"&gt;sour&lt;/a&gt;
+&lt;a href="http://catern.com/process.html#orgaf6e157"&gt;spot&lt;/a&gt; of UNIX.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr&gt;
+&lt;p&gt;Combining the three ideas, I now have a deno script, called &lt;code&gt;box&lt;/code&gt;, that provides a multiplexed
+interface for running ad-hoc code on ad-hoc clusters.&lt;/p&gt;
+&lt;p&gt;A session looks like this:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# Switch to project with local modifications&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; cd ~/p/tb/work&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; git status --short&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt; M src/lsm/forest.zig&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# Spin up 3 machines, print their IPs&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box create 3&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;108.129.172.206,52.214.229.222,3.251.67.25&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box list&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;0 108.129.172.206&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;1 52.214.229.222&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;2 3.251.67.25&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# Move my code to remote machines&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box sync 0,1,2&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# Run pwd&amp;amp;ls on machine 0; now the code is there:&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box run 0 pwd&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;/home/alpine/p/tb/work&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box run 0 ls&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;CHANGELOG.md  LICENSE       README.md     build.zig&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;docs/         src/          zig/&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# Setup dev env and run build on all three machines.&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box run 0,1,2 ./zig/download.sh&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;Downloading Zig 0.14.1 release build...&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;Extracting zig-x86_64-linux-0.14.1.tar.xz...&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;Downloading completed (/home/alpine/p/tb/work/zig/zig)!&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;Enjoy!&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# NB: using local commit hash here (no git _there_).&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box run 0,1,2 \&lt;/span&gt;
+&lt;span class="line"&gt;    ./zig/zig build -Drelease -Dgit-commit=$(git rev-parse HEAD)&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# ?? is replaced by machine id&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box run 0,1,2 \&lt;/span&gt;
+&lt;span class="line"&gt;    ./zig-out/bin/tigerbeetle format \&lt;/span&gt;
+&lt;span class="line"&gt;    --cluster=0 --replica=?? --replica-count=3 \&lt;/span&gt;
+&lt;span class="line"&gt;    0_??.tigerbeetle&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;2026-01-20 19:30:15.947Z info(io): opening &amp;quot;0_0.tigerbeetle&amp;quot;...&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-output"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;# Cleanup machines (they also shutdown themselves after 8 hours)&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-title function_"&gt;$&lt;/span&gt; box destroy 0,1,2&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;I like this! Haven’t used in anger yet, but this is something I wanted for a long time, and now I
+have it&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Structure"&gt;
+
+&lt;h2&gt;&lt;a href="#Structure"&gt;Structure&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;The problem with implementing above is that I have zero practical experience with modern cloud. I
+only created my AWS account today, and just looking at the console interface ignited the urge to
+re-read The Castle. Not my cup of pu-erh. But I had a hypothesis that AI should be good at wrangling
+baroque cloud API, and it mostly held.&lt;/p&gt;
+&lt;p&gt;I started with a couple of paragraphs of rough, super high-level description of what I want to get.
+Not a specification at all, just a general gesture towards unknown unknowns. Then I asked ChatGPT to
+expand those two paragraphs into a more or less complete spec to hand down to an agent for
+implementation.&lt;/p&gt;
+&lt;p&gt;This phase surfaced a bunch of unknowns for me. For example, I wasn’t thinking at all that I somehow
+need to identify machines, ChatGPT suggested using random hex numbers, and I realized that I do need
+0,1,2 naming scheme to concisely specify batches of machines. While thinking about this, I realized
+that sequential numbering scheme also has an advantage that I &lt;em&gt;can’t&lt;/em&gt; have two concurrent clusters
+running, which is a desirable property for my use-case. If I forgot to shutdown a machine, I’d
+rather get an error on trying to re-create a machine with the same name, then to silently avoid the
+clash. Similarly, turns out the questions of permissions and network access rules are something to
+think about, as well as what region and what image I need.&lt;/p&gt;
+&lt;p&gt;With the spec document in hand, I turned over to Claude code for actual implementation work. The
+first step was to further refine the spec, asking Claude if anything is unclear. There were couple
+of interesting clarifications there.&lt;/p&gt;
+&lt;p&gt;First, the original ChatGPT spec didn’t get what I meant with my “current directory mapping” idea,
+that I want to materialize a local &lt;code&gt;~/p/tb/work&lt;/code&gt; as remote &lt;code&gt;~/p/tb/work&lt;/code&gt;, even if &lt;code&gt;~&lt;/code&gt; are different.
+ChatGPT generated an incorrect description &lt;em&gt;and&lt;/em&gt; an incorrect example. I manually corrected example,
+but wasn’t able to write a concise and correct description. Claude fixed that working from the
+example. I feel like I need to internalize this more — for current crop of AI, examples seem to be
+far more valuable than rules.&lt;/p&gt;
+&lt;p&gt;Second, the spec included my desire to auto-shutdown machines once I no longer use them, just to
+make sure I don’t forget to turn the lights off when leaving the room. Claude grilled me on what
+&lt;em&gt;precisely&lt;/em&gt; I want there, and I asked it to DWIM the thing.&lt;/p&gt;
+&lt;p&gt;The spec ended up being 6KiB of English prose. The final implementation was 14KiB of TypeScript. I
+wasn’t keeping the spec and the implementation perfectly in sync, but I think they ended up pretty
+close in the end. Which means that prose specifications are somewhat more compact than code, but not
+&lt;em&gt;much&lt;/em&gt; more compact.&lt;/p&gt;
+&lt;p&gt;My next step was to try to just one-shot this. Ok, this is embarrassing, and I usually avoid
+swearing in this blog, but I just typoed that as “one-shit”, and, well, that is one flavorful
+description I won’t be able to improve upon. The result was just not good (more on why later), so I
+almost immediately decided to throw it away and start a more incremental approach.&lt;/p&gt;
+&lt;p&gt;In my &lt;a href="https://matklad.github.io/2025/08/31/vibe-coding-terminal-editor.html"&gt;previous vibe-post&lt;/a&gt;, I
+noticed that LLM are good at closing the loop. A variation here is that LLMs are good at producing
+results, and not necessarily good code. I am pretty sure that, if I had let the agent to iterate on
+the initial script and actually &lt;em&gt;run&lt;/em&gt; it against AWS, I would have gotten something working. I
+didn’t want to go that way for three reasons:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Spawning VMs takes time, and that significantly reduces the throughput of agentic iteration.
+&lt;/li&gt;
+&lt;li&gt;
+No way I let the agent run with a real AWS account, given that AWS doesn’t have a fool-proof way
+to cap costs.
+&lt;/li&gt;
+&lt;li&gt;
+I am fairly confident that this script will be a part of my workflow for at least several years,
+so I care &lt;em&gt;more&lt;/em&gt; about long-term code maintenance, than immediate result.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;And, as I said, the code didn’t feel good, for these specific reasons:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+It wasn’t the code that I would have written, it lacked my character, which made it hard for me
+to understand it at a glance.
+&lt;/li&gt;
+&lt;li&gt;
+The code lacked any character whatsoever. It could have worked, it wasn’t “naively bad”, like the
+first code you write when you are learning programming, but there wasn’t anything good there.
+&lt;/li&gt;
+&lt;li&gt;
+I never know what the code &lt;em&gt;should&lt;/em&gt; be up-front. I don’t design solutions, I discover them in the
+process of refactoring. Some of my best work was spending a quiet weekend rewriting large
+subsystems implemented before me, because, with &lt;em&gt;an&lt;/em&gt; implementation at hand, it was possible for
+me to see the actual, beautiful core of what &lt;em&gt;needs&lt;/em&gt; to be done. With a slop-dump, I just don’t
+get to even see what could be wrong.
+&lt;/li&gt;
+&lt;li&gt;
+In particular, while you are working the code (as in “wrought iron”), you often go back to
+requirements and change them. Remember that ambiguity of my request to “shut down idle cluster”?
+Claude tried to DWIM and created some horrific mess of bash scripts, timestamp files, PAM policy
+and systemd units. But the right answer there was “lets maybe not have that feature?” (in
+contrast, simply shutting the machine down after 8 hours is a one-liner).
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The incremental approach worked much better, Claude is good at filling-in the blanks. The very first
+thing I did for &lt;code&gt;box-v2&lt;/code&gt; was manually typing-in:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;type&lt;/span&gt; &lt;span class="hl-variable constant_"&gt;CLI&lt;/span&gt; =&lt;/span&gt;
+&lt;span class="line"&gt;  | &lt;span class="hl-title class_"&gt;CLICreate&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  | &lt;span class="hl-title class_"&gt;CLIDestroy&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  | &lt;span class="hl-title class_"&gt;CLIList&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  | &lt;span class="hl-title class_"&gt;CLISync&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;type&lt;/span&gt; &lt;span class="hl-title class_"&gt;BoxList&lt;/span&gt; = &lt;span class="hl-built_in"&gt;string&lt;/span&gt;[];&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;type&lt;/span&gt; &lt;span class="hl-title class_"&gt;CLICreate&lt;/span&gt; = { &lt;span class="hl-attr"&gt;tag&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;create&amp;quot;&lt;/span&gt;; &lt;span class="hl-attr"&gt;count&lt;/span&gt;: &lt;span class="hl-built_in"&gt;number&lt;/span&gt; };&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;type&lt;/span&gt; &lt;span class="hl-title class_"&gt;CLIDestroy&lt;/span&gt; = { &lt;span class="hl-attr"&gt;tag&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;destroy&amp;quot;&lt;/span&gt;; &lt;span class="hl-attr"&gt;boxes&lt;/span&gt;: &lt;span class="hl-title class_"&gt;BoxList&lt;/span&gt; };&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;type&lt;/span&gt; &lt;span class="hl-title class_"&gt;CLIList&lt;/span&gt; = { &lt;span class="hl-attr"&gt;tag&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;list&amp;quot;&lt;/span&gt; };&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;type&lt;/span&gt; &lt;span class="hl-title class_"&gt;CLISync&lt;/span&gt; = { &lt;span class="hl-attr"&gt;tag&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;sync&amp;quot;&lt;/span&gt;; &lt;span class="hl-attr"&gt;boxes&lt;/span&gt;: &lt;span class="hl-title class_"&gt;BoxList&lt;/span&gt;; };&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;fatal&lt;/span&gt;(&lt;span class="hl-params"&gt;message: &lt;span class="hl-built_in"&gt;string&lt;/span&gt;&lt;/span&gt;): &lt;span class="hl-built_in"&gt;never&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-variable language_"&gt;console&lt;/span&gt;.&lt;span class="hl-title function_"&gt;error&lt;/span&gt;(message);&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-title class_"&gt;Deno&lt;/span&gt;.&lt;span class="hl-title function_"&gt;exit&lt;/span&gt;(&lt;span class="hl-number"&gt;1&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;CLIParse&lt;/span&gt;(&lt;span class="hl-params"&gt;args: &lt;span class="hl-built_in"&gt;string&lt;/span&gt;[]&lt;/span&gt;): &lt;span class="hl-variable constant_"&gt;CLI&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Then I asked Claude to complete the &lt;code&gt;CLIParse&lt;/code&gt; function, and I was happy with the result. Note
+&lt;a href="https://haskellforall.com/2026/01/prompting-101-show-dont-tell" class="display"&gt;&lt;em&gt;Show, Don’t Tell&lt;/em&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;I am not &lt;em&gt;asking&lt;/em&gt; Claude to avoid throwing an exception and fail fast instead. I just give &lt;code&gt;fatal&lt;/code&gt;
+function, and it code-completes the rest.&lt;/p&gt;
+&lt;p&gt;I can’t say that the code &lt;em&gt;inside&lt;/em&gt; &lt;code&gt;CLIParse&lt;/code&gt; is top-notch. I’d probably written something more
+spartan. But the important part is that, at this level, I don’t care. The abstraction for parsing
+CLI arguments feel right to me, and the details I can always fix later. This is how this overall
+vibe-coding session transpired — I was providing structure, Claude was painting by the numbers.&lt;/p&gt;
+&lt;p&gt;In particular, with that CLI parsing structure in place, Claude had little problem adding new
+subcommands and new arguments in a satisfactory way. The only snag was that, when I asked to add an
+optional path to &lt;code&gt;sync&lt;/code&gt;, it went with &lt;code&gt;string | null&lt;/code&gt;, while I strongly prefer &lt;code&gt;string | undefined&lt;/code&gt;.
+Obviously, its better to pick your null in JavaScript and stick with it. The fact that &lt;code&gt;undefined&lt;/code&gt;
+is unavoidable predetermines the winner. Given that the argument was added as an incremental small
+change, course-correcting was trivial.&lt;/p&gt;
+&lt;p&gt;The null vs undefined issue perhaps illustrates my complaint about the code lacking character.
+&lt;code&gt;| null&lt;/code&gt; is the default non-choice. &lt;code&gt;| undefined&lt;/code&gt; is an insight, which I personally learned from VS
+Code LSP implementation.&lt;/p&gt;
+&lt;p&gt;The hand-written skeleton/vibe-coded guts worked not only for the CLI. I wrote&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;async&lt;/span&gt; &lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;main&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;const&lt;/span&gt; cli = &lt;span class="hl-title class_"&gt;CLIParse&lt;/span&gt;(&lt;span class="hl-title class_"&gt;Deno&lt;/span&gt;.&lt;span class="hl-property"&gt;args&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (cli.&lt;span class="hl-property"&gt;tag&lt;/span&gt; === &lt;span class="hl-string"&gt;&amp;quot;create&amp;quot;&lt;/span&gt;) &lt;span class="hl-keyword"&gt;return&lt;/span&gt; &lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;mainCreate&lt;/span&gt;(cli.&lt;span class="hl-property"&gt;count&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (cli.&lt;span class="hl-property"&gt;tag&lt;/span&gt; === &lt;span class="hl-string"&gt;&amp;quot;destroy&amp;quot;&lt;/span&gt;) &lt;span class="hl-keyword"&gt;return&lt;/span&gt; &lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;mainDestroy&lt;/span&gt;(cli.&lt;span class="hl-property"&gt;boxes&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  ...&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;async&lt;/span&gt; &lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;mainDestroy&lt;/span&gt;(&lt;span class="hl-params"&gt;boxes: &lt;span class="hl-built_in"&gt;string&lt;/span&gt;[]&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;for&lt;/span&gt; (&lt;span class="hl-keyword"&gt;const&lt;/span&gt; box &lt;span class="hl-keyword"&gt;of&lt;/span&gt; boxes) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;instanceDestroy&lt;/span&gt;(box);&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;async&lt;/span&gt; &lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;instanceDestroy&lt;/span&gt;(&lt;span class="hl-params"&gt;id: &lt;span class="hl-built_in"&gt;string&lt;/span&gt;&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;and then asked Claude to write the body of a particular function according to the SPEC.md.&lt;/p&gt;
+&lt;p&gt;Unlike with the CLI, Claude wasn’t able to follow this pattern itself. With one example it’s not obvious,
+but the overall structure is that &lt;code&gt;instanceXXX&lt;/code&gt; is the AWS-level operation on a single box, and
+&lt;code&gt;mainXXX&lt;/code&gt; is the CLI-level control flow that deals with looping and parallelism. When I asked Claude
+to implement &lt;code&gt;box run&lt;/code&gt;, &lt;em&gt;without&lt;/em&gt; myself doing the &lt;code&gt;main&lt;/code&gt; / &lt;code&gt;instance&lt;/code&gt; split, Claude failed to
+notice it and needed a course correction.&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Implementation"&gt;
+
+&lt;h2&gt;&lt;a href="#Implementation"&gt;Implementation&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;&lt;em&gt;However&lt;/em&gt;, Claude was &lt;em&gt;massively&lt;/em&gt; successful with the actual logic. It would have taken me hours to
+acquire specific, non-reusable knowledge to write:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;// Create spot instance&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; instanceMarketOptions = &lt;span class="hl-title class_"&gt;JSON&lt;/span&gt;.&lt;span class="hl-title function_"&gt;stringify&lt;/span&gt;({&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-title class_"&gt;MarketType&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;spot&amp;quot;&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-title class_"&gt;SpotOptions&lt;/span&gt;: { &lt;span class="hl-title class_"&gt;InstanceInterruptionBehavior&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;terminate&amp;quot;&lt;/span&gt; },&lt;/span&gt;
+&lt;span class="line"&gt;});&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; tagSpecifications = &lt;span class="hl-title class_"&gt;JSON&lt;/span&gt;.&lt;span class="hl-title function_"&gt;stringify&lt;/span&gt;([&lt;/span&gt;
+&lt;span class="line"&gt;  { &lt;span class="hl-title class_"&gt;ResourceType&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;instance&amp;quot;&lt;/span&gt;, &lt;span class="hl-title class_"&gt;Tags&lt;/span&gt;: [{ &lt;span class="hl-title class_"&gt;Key&lt;/span&gt;: moniker, &lt;span class="hl-title class_"&gt;Value&lt;/span&gt;: id }] },&lt;/span&gt;
+&lt;span class="line"&gt;]);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; result = &lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`aws ec2 run-instances \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --image-id &lt;span class="hl-subst"&gt;${image}&lt;/span&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --instance-type &lt;span class="hl-subst"&gt;${instanceType}&lt;/span&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --key-name &lt;span class="hl-subst"&gt;${moniker}&lt;/span&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --security-groups &lt;span class="hl-subst"&gt;${moniker}&lt;/span&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --instance-market-options &lt;span class="hl-subst"&gt;${instanceMarketOptions}&lt;/span&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --user-data &lt;span class="hl-subst"&gt;${userDataBase64}&lt;/span&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --tag-specifications &lt;span class="hl-subst"&gt;${tagSpecifications}&lt;/span&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-string"&gt;  --output json`&lt;/span&gt;.&lt;span class="hl-title function_"&gt;json&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; instanceId = result.&lt;span class="hl-property"&gt;Instances&lt;/span&gt;[&lt;span class="hl-number"&gt;0&lt;/span&gt;].&lt;span class="hl-property"&gt;InstanceId&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-comment"&gt;// Wait for instance to be running&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;await&lt;/span&gt; $&lt;span class="hl-string"&gt;`aws ec2 wait instance-status-ok --instance-ids &lt;span class="hl-subst"&gt;${instanceId}&lt;/span&gt;`&lt;/span&gt;;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;I want to be careful — I can’t vouch for &lt;em&gt;correctness&lt;/em&gt; and especially &lt;em&gt;completeness&lt;/em&gt; of the above
+snippet. However, given that the nature of the problem is such that I can just run the code and see
+the result, I am fine with it. If I were writing this myself, trial-and-error would totally be my
+approach as well.&lt;/p&gt;
+&lt;p&gt;Then there’s synthesis — with several instance commands implemented, I noticed that many started
+with querying AWS to resolve symbolic machine name, like “1”, to the AWS name/IP. At that point I
+realized that resolving symbolic names is a fundamental part of the problem, and that it should only
+happen once, which resulting in the following refactored shape of the code:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;async&lt;/span&gt; &lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;main&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;const&lt;/span&gt; cli = &lt;span class="hl-title class_"&gt;CLIParse&lt;/span&gt;(&lt;span class="hl-title class_"&gt;Deno&lt;/span&gt;.&lt;span class="hl-property"&gt;args&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;const&lt;/span&gt; instances = &lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;instanceMap&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (cli.&lt;span class="hl-property"&gt;tag&lt;/span&gt; === &lt;span class="hl-string"&gt;&amp;quot;create&amp;quot;&lt;/span&gt;) &lt;span class="hl-keyword"&gt;return&lt;/span&gt; &lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;mainCreate&lt;/span&gt;(instances, cli.&lt;span class="hl-property"&gt;count&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (cli.&lt;span class="hl-property"&gt;tag&lt;/span&gt; === &lt;span class="hl-string"&gt;&amp;quot;destroy&amp;quot;&lt;/span&gt;) &lt;span class="hl-keyword"&gt;return&lt;/span&gt; &lt;span class="hl-keyword"&gt;await&lt;/span&gt; &lt;span class="hl-title function_"&gt;mainDestroy&lt;/span&gt;(instances, cli.&lt;span class="hl-property"&gt;boxes&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  ...&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Claude was ok with extracting the logic, but messed up the overall code layout, so the final code
+motions were on me. “Context” arguments go &lt;em&gt;first&lt;/em&gt;, not last, common prefix is more valuable than
+common suffix because of visual alignment.&lt;/p&gt;
+&lt;p&gt;The original “one-shotted” implementation also didn’t do up-front querying. This is an example of a
+shape of a problem I only discover when working with code closely.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;Of course, the script didn’t work perfectly the first time and we needed quite a few iterations on
+the real machines both to fix coding bugs, as well gaps in the spec. That was an interesting
+experience of speed-running rookie mistakes. Claude made naive bugs, but was also good at fixing
+them.&lt;/p&gt;
+&lt;p&gt;For example, when I first tried to &lt;code&gt;box ssh&lt;/code&gt; after &lt;code&gt;box create&lt;/code&gt;, I got an error. Pasting it into
+Claude immediately showed the problem. Originally, the code was doing
+&lt;span class="display"&gt;&lt;code&gt;aws ec2 wait instance-running&lt;/code&gt;&lt;/span&gt;
+and not
+&lt;span class="display"&gt;&lt;code&gt;aws ec2 wait instance-status-ok&lt;/code&gt;.&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;The former checks if instance is logically created, the latter waits until the OS is booted. It
+makes sense that these two exist, and the difference is clear (and its also clear that OS booted !=
+SSH demon started). Claude’s value here is in providing specific names for the concepts I
+already know to exist.&lt;/p&gt;
+&lt;p&gt;Another fun one was about the disk. I noticed that, while the instance had an SSD, it wasn’t
+actually used. I asked Claude to mount it as home, but that didn’t work. Claude immediately asked me
+to run
+&lt;span class="display"&gt;&lt;code&gt;$ box run 0 cat /var/some/unintuitive/long/path.log&lt;/code&gt;&lt;/span&gt;
+and that log immediately showed
+the problem. This is remarkable! 50% of my typical Linux debugging day is wasted not knowing that a
+useful log exists, and the other 50% is for searching for the log I know should exist &lt;em&gt;somewhere&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;After the fix, I lost the ability to SSH. Pasting the error immediately gave the answer — by
+mounting over &lt;code&gt;/home&lt;/code&gt;, we were overwriting ssh keys configured prior.&lt;/p&gt;
+&lt;p&gt;There were couple of more iterations like that. Rookie mistakes &lt;em&gt;were&lt;/em&gt; made, but they were debugged
+and fixed &lt;em&gt;much&lt;/em&gt; faster than my personal knowledge allows (and again, I feel that is trivia
+knowledge, rather than deep reusable knowledge, so I am happy to delegate it!).&lt;/p&gt;
+&lt;p&gt;It worked satisfactorily in the end, and, what’s more, I am happy to maintain the code, at least to
+the extent that I personally need it. Kinda hard to measure productivity boost here, but, given just
+the sheer number of CLI flags required to make this work, I am pretty confident that time was saved,
+even factoring the writing of the present article!&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Coda"&gt;
+
+&lt;h2&gt;&lt;a href="#Coda"&gt;Coda&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;I’ve recently read &lt;em&gt;The Art of Doing Science and Engineering&lt;/em&gt; by Hamming (of distance and code), and
+one story stuck with me:&lt;/p&gt;
+
+&lt;figure class="blockquote"&gt;
+&lt;blockquote&gt;&lt;p&gt;A psychologist friend at Bell Telephone Laboratories once built a machine with about 12 switches and
+a red and a green light. You set the switches, pushed a button, and either you got a red or a green
+light. After the first person tried it 20 times they wrote a theory of how to make the green light
+come on. The theory was given to the next victim and they had their 20 tries and wrote their theory,
+and so on endlessly. The stated purpose of the test was to study how theories evolved.&lt;/p&gt;
+&lt;p&gt;But my friend, being the kind of person he was, had connected the lights to a random source! One day
+he observed to me that no person in all the tests (and they were all high-class Bell Telephone
+Laboratories scientists) ever said there was no message. I promptly observed to him that not one of
+them was either a statistician or an information theorist, the two classes of people who are
+intimately familiar with randomness. A check revealed I was right!&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;/figure&gt;
+&lt;/section&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2026/01/20/vibecoding-2</guid>
+      <pubDate>Tue, 20 Jan 2026 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Memory Safety Is ...</title>
+      <link>https://matklad.github.io/2025/12/30/memory-safety-is.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Memory Safety Is …&lt;/h1&gt;
+  &lt;time class="meta" datetime="2025-12-30"&gt;Dec 30, 2025&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;Memory safety is one of those elusive concepts like intelligence, consciousness, or
+&lt;a href="https://en.wikipedia.org/wiki/I_know_it_when_I_see_it"&gt;porn&lt;/a&gt;, that resist attempts to be put to
+words. Thus, I am not going to attempt to define it. Instead, I want to poke holes in definitions of
+others.&lt;/p&gt;
+&lt;p&gt;Note that the present post is 90% sophistry in the style of Zeno — I don’t think you need a
+water-tight definition to have a reasonable discussion, and no definition can save an unreasonable
+one. But thinking &lt;em&gt;about&lt;/em&gt; definitions focuses the mind.&lt;/p&gt;
+&lt;p&gt;The crux of my argument:&lt;/p&gt;
+
+&lt;figure class="blockquote"&gt;
+&lt;blockquote&gt;&lt;p&gt;Memory safety is a property of an &lt;em&gt;implementation&lt;/em&gt;.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;That’s the problem with many definitions — they are about a wrong kind of thing, and are confused
+for that reason. For example, a definition used in
+&lt;a href="https://queue.acm.org/detail.cfm?id=3773095"&gt;&lt;em&gt;Memory Safety for Skeptics&lt;/em&gt;&lt;/a&gt;:&lt;/p&gt;
+
+&lt;figure class="blockquote"&gt;
+&lt;blockquote&gt;&lt;p&gt;A program execution is memory safe so long as a particular list of bad things, called
+memory-access errors, never occur:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Buffer overflow
+&lt;/li&gt;
+&lt;li&gt;
+Null pointer dereference
+&lt;/li&gt;
+&lt;li&gt;
+Use after free
+&lt;/li&gt;
+&lt;li&gt;
+Use of uninitialized memory
+&lt;/li&gt;
+&lt;li&gt;
+Illegal free (of an already freed pointer, or a non-malloc-ed pointer)
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;This is obvious nonsense! Java programs dereference null pointers all the time! And on typical
+architectures dereferencing a null pointer in user-space is well-defined to trap. Many JVMs
+implement Java-level NPE checks by relying on OS-level segfaults!&lt;/p&gt;
+&lt;p&gt;Another popular definition comes from
+&lt;a href="https://courses.grainger.illinois.edu/cs421/fa2018/CS421A/resources/cardelli.pdf"&gt;&lt;em&gt;Type Systems&lt;/em&gt;&lt;/a&gt;
+paper by Luca Cardelli.&lt;/p&gt;
+
+&lt;figure class="blockquote"&gt;
+&lt;blockquote&gt;&lt;p&gt;A program fragment is safe if it does not cause untrapped errors to occur.
+Languages where all program fragments are safe are called safe languages.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;This definition is not wrong, but it is vacuous. It is internally consistent, but doesn’t define
+anything useful.&lt;/p&gt;
+&lt;p&gt;To see that we need to sketch our domain of discourse.&lt;/p&gt;
+&lt;p&gt;We start with a source language, L, such as Java or C. L is defined by its syntax and semantics.
+Syntax defines the set of programs, and semantics ascribes meaning to them. Semantics is necessarily
+defined in terms of &lt;em&gt;abstract&lt;/em&gt; machine LM — a mathematical device that captures all the real and
+“virtual” state to explain execution behavior of a program. For example, in languages with pointer
+provenance, provenance is a concrete “field” of every pointer in the abstract machine.&lt;/p&gt;
+&lt;p&gt;In addition to LM (abstract machine), we also have a concrete machine CM on hand, such as x86_64
+running Linux userspace, or Wasm in the browser. Concrete machine comes with its own language C and
+its own semantics.&lt;/p&gt;
+&lt;p&gt;Finally, we have an implementation I that we use to run L programs on our concrete machine CM.
+Roughly, if P is an L program, then an implementation transforms it to a C program with a matching
+semantics:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;∀ P ∈ L:&lt;/span&gt;
+&lt;span class="line"&gt;    I(P) ∈ C&lt;/span&gt;
+&lt;span class="line"&gt;  ∧ LSema(P) ≈ CSema(I(P))&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Concretely, if we have a Java program, we can reason about what this program does without thinking
+where it will run. It’s a job of the JVM to faithfully preserve our mental model when the program is
+executed on an aarch64 laptop. See &lt;a href="https://xavierleroy.org/publi/compcert-backend.pdf"&gt;Compcert&lt;/a&gt;
+paper for details.&lt;/p&gt;
+&lt;p&gt;The key detail here is that on the level of abstract semantics, you simply can not have undefined
+behavior. For the specification to be consistent, you need to explain what the abstract machine does
+in every case exhaustively, even if it is just “LM gets stuck”. If UB is set complement to defined
+behaviors, then it is defined just as precisely! Again, Compcert paper &lt;em&gt;defines&lt;/em&gt; what UB is on
+&lt;a href="https://xavierleroy.org/publi/compcert-backend.pdf#page=15"&gt;page 15&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;And this is the problem I have with Cardelli’s definition. It hinges on how we &lt;em&gt;name&lt;/em&gt; a particular
+set in our abstract semantics. If the set is called “trapped error” the language is safe, but if it
+is “undefined behavior”, it is unsafe.&lt;/p&gt;
+&lt;p&gt;This is useless! Here, I’ve just made a language called Lil-C, which exactly like C, except that
+every UB is formally defined to trap. It is safe! And it can run any C program! Have I just done
+anything useful? No!&lt;/p&gt;
+&lt;p&gt;To recap, we have source language L, target language/machine C, and an implementation I that maps
+the former to the latter. Any memory safety definition should talk about I. If it talks about L or
+C, it can’t be right.&lt;/p&gt;
+&lt;p&gt;Consider “dereference of a wild pointer”. At the level of L, it is a well-defined operation that
+causes abstract machine to get stuck. It’s &lt;em&gt;the job&lt;/em&gt; of abstract machine to precisely tell us which
+pointers are valid to dereference. At the level of C, this operation is also well defined! Physical
+address is looked up in the page table, protection bits are checked, an interrupt is raised if
+something’s off, etc. Undefined Behavior and memory unsafety arise in &lt;em&gt;translation&lt;/em&gt; of semantics of
+L into C, where “stuck” L states give raise to “unexpected” behaviors in C, which can not be
+explained in terms of L.&lt;/p&gt;
+&lt;p&gt;Cardelli’s definition ends up being vacuous, because it tries to talk about L in isolation.&lt;/p&gt;
+&lt;p&gt;“Skeptics” definition is doubly confused. It’s unclear if it has L or C in mind (null pointer
+dereference in the source code, or in the generated machine code), but it would be wrong in either
+count, as it definitely doesn’t touch I.&lt;/p&gt;
+&lt;p&gt;As a positive example, consider &lt;a href="https://fil-c.org"&gt;Fil-C&lt;/a&gt; (see also &lt;a href="https://graydon2.dreamwidth.org/320265.html"&gt;&lt;em&gt;A note on
+Fil-C&lt;/em&gt;&lt;/a&gt;). This is an &lt;em&gt;implementation&lt;/em&gt; of C that
+maintains C semantics, is safe, and is arguably sufficiently efficient to be practical. Unlike my
+Lil-C, Fil-C is a useful thing (and requires &lt;em&gt;much&lt;/em&gt; more effort to pull off).&lt;/p&gt;
+&lt;p&gt;I know I promised not to define memory safety here, but, having skimmed that Compcert paper (hat tip
+to &lt;a href="https://lobste.rs/s/va2mvi/without_futex_it_s_futile#c_uu3y6v"&gt;@pervognsen&lt;/a&gt;), I think I’ll go
+out on a limb and just do it? Compcert paper defines backward simulation as a property that every
+behavior of a compiled program is a behavior of the source program (semantics of a program is a
+&lt;em&gt;set&lt;/em&gt; of behaviors, due to non-determinism). Using this article’s notation:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;P ∈ L        -- source program&lt;/span&gt;
+&lt;span class="line"&gt;I: L -&amp;gt; C    -- implementation (e.g L to C compiler)&lt;/span&gt;
+&lt;span class="line"&gt;I(P) ∈ C     -- compiled program&lt;/span&gt;
+&lt;span class="line"&gt;LSema(P)     -- possible behaviors of P&lt;/span&gt;
+&lt;span class="line"&gt;CSema(I(P))  -- behaviors of P under implementation I&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;-- Backward simulation:&lt;/span&gt;
+&lt;span class="line"&gt;∀B: B ∈ CSema(I(P)) =&amp;gt; B ∈ LSema(P)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Memory safety is a weakening of backward simulation:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;-- Memory safety of implementation I:&lt;/span&gt;
+&lt;span class="line"&gt;MemorySafe(I) :=&lt;/span&gt;
+&lt;span class="line"&gt;    ∀ P: ∀B: B ∈ CSema(I(P)) =&amp;gt; (B ∈ LSema(P) ⋁ B = crash)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;An implementation I of L is memory safe, if it cannot give rise to new, surprising behaviors, for
+arbitrary programs P (including buggy ones), except that crashing is allowed. As a smoke test, an
+implementation that produces programs that always immediately crash is safe according to this
+definition, as it should be.&lt;/p&gt;
+&lt;p&gt;Thinking about definitions focuses the mind indeed!&lt;/p&gt;
+&lt;p&gt;Update(2025-12-31): Another interesting paper to read is
+&lt;a href="https://link.springer.com/content/pdf/10.1007/978-3-319-89722-6_4.pdf"&gt;&lt;em&gt;The Meaning Of Memory Safety&lt;/em&gt;&lt;/a&gt;.
+I think their definition ends up significantly stronger than needed: closer to CHERI than Java, and
+deems JavaScript to not be memory safe. Still worth reading!&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2025/12/30/memory-safety-is</guid>
+      <pubDate>Tue, 30 Dec 2025 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>The Second Great Error Model Convergence</title>
+      <link>https://matklad.github.io/2025/12/29/second-error-model-convergence.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;The Second Great Error Model Convergence&lt;/h1&gt;
+  &lt;time class="meta" datetime="2025-12-29"&gt;Dec 29, 2025&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;I feel like this has been said before, more than once, but I want to take a moment to note that
+most modern languages converged to the error management approach described in Joe Duffy’s
+&lt;a href="https://joeduffyblog.com/2016/02/07/the-error-model/#recoverable-errors-type-directed-exceptions"&gt;&lt;em&gt;The Error Model&lt;/em&gt;&lt;/a&gt;,
+which is a generational shift from the previous consensus on exception handling.&lt;/p&gt;
+&lt;p&gt;C++, JavaScript, Python, Java, C# all have roughly equivalent &lt;code&gt;throw&lt;/code&gt;, &lt;code&gt;catch&lt;/code&gt;, &lt;code&gt;finally&lt;/code&gt;
+constructs with roughly similar runtime semantics and typing rules. Even functional languages like
+Haskell, OCaml, and Scala feature exceptions prominently in their grammar, even if their usage is
+frowned upon by parts of the community.&lt;/p&gt;
+&lt;p&gt;But the same can be said about Go, Rust, Swift, and Zig! Their error handling is similar to each
+other, and quite distinct from the previous bunch, with Kotlin and Dart being notable, ahem,
+exceptions. Here are some commonalities of modern error handling:&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;First&lt;/em&gt;, and most notably, functions that can fail are annotated at the call side. While the old way
+looked like this:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-type"&gt;Widget&lt;/span&gt; &lt;span class="hl-variable"&gt;widget&lt;/span&gt; &lt;span class="hl-operator"&gt;=&lt;/span&gt; make_widget();&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;the new way is&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;let&lt;/span&gt; &lt;span class="hl-variable"&gt;widget&lt;/span&gt; = &lt;span class="hl-title function_ invoke__"&gt;make_widget&lt;/span&gt;()?;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; widget = &lt;span class="hl-keyword"&gt;try&lt;/span&gt; make_widget();&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;let&lt;/span&gt; widget &lt;span class="hl-operator"&gt;=&lt;/span&gt; &lt;span class="hl-keyword"&gt;try&lt;/span&gt; makeWidget()&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;widget, err := makeWidget()&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;if&lt;/span&gt; err != &lt;span class="hl-literal"&gt;nil&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;return&lt;/span&gt; err&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;There’s a syntactic marker alerting the reader that a particular operation is fallible, though the
+verbosity of the marker varies. For the writer, the marker ensures that changing the function
+contract from infallible to fallible (or vice versa) requires changing not only the function
+definition itself, but the entire call chain. On the other hand, adding a new error condition to a
+set of possible errors of a fallible function generally &lt;em&gt;doesn’t&lt;/em&gt; require reconsidering rethrowing
+call-sites.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Second&lt;/em&gt;, there’s a separate, distinct mechanism that is invoked in case of a detectable bug. In
+Java, index out of bounds or null pointer dereference (examples of programming errors) use the same
+language machinery as operational errors. Rust, Go, Swift, and Zig use a separate panic path. In Go
+and Rust, panics unwind the stack, and they are recoverable via a library function. In Swift and
+Zig, panic aborts the entire process. Operational error of a lower layer can be classified as a
+programming error by the layer above, so there’s generally a mechanism to escalate an erroneous
+result value to a panic. But the opposite is more important: a function which does only “ordinary”
+computations &lt;em&gt;can&lt;/em&gt; be buggy, and &lt;em&gt;can&lt;/em&gt; fail, but such failures are considered &lt;em&gt;catastrophic&lt;/em&gt; and are
+invisible in the type system, and sufficiently transparent at runtime.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Third&lt;/em&gt;, results of fallible computation are first-class values, as in Rust’s &lt;code&gt;Result&amp;lt;T, E&amp;gt;&lt;/code&gt;.
+There’s generally little type system machinery dedicated exclusively to errors and &lt;code&gt;try&lt;/code&gt; expressions
+are just a little more than syntax sugar for that little Go spell. This isn’t true for Swift, which
+does treat errors specially. For example, the generic
+&lt;a href="https://developer.apple.com/documentation/swift/sequence/map(_:)"&gt;&lt;code&gt;map&lt;/code&gt;&lt;/a&gt; function has to explicitly
+care about errors, and hard-codes the decision to bail early:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;func&lt;/span&gt; &lt;span class="hl-title function_"&gt;map&lt;/span&gt;&amp;lt;&lt;span class="hl-type"&gt;T&lt;/span&gt;, &lt;span class="hl-type"&gt;E&lt;/span&gt;&amp;gt;(&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;_&lt;/span&gt; &lt;span class="hl-params"&gt;transform&lt;/span&gt;: (&lt;span class="hl-keyword"&gt;Self&lt;/span&gt;.&lt;span class="hl-type"&gt;Element&lt;/span&gt;) &lt;span class="hl-keyword"&gt;throws&lt;/span&gt;(&lt;span class="hl-type"&gt;E&lt;/span&gt;) -&amp;gt; &lt;span class="hl-type"&gt;T&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;) &lt;span class="hl-keyword"&gt;throws&lt;/span&gt;(&lt;span class="hl-type"&gt;E&lt;/span&gt;) -&amp;gt; [&lt;span class="hl-type"&gt;T&lt;/span&gt;] &lt;span class="hl-keyword"&gt;where&lt;/span&gt; &lt;span class="hl-type"&gt;E&lt;/span&gt; : &lt;span class="hl-type"&gt;Error&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Swift does provide &lt;a href="https://developer.apple.com/documentation/swift/result"&gt;first-classifier type&lt;/a&gt;
+for errors.&lt;/p&gt;
+&lt;p&gt;Should you want to handle an exception, rather than propagate it, the handling is localized to
+a single throwing expression to deal with a single specific errors, rather than with any error from
+a block of statements:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;let&lt;/span&gt; &lt;span class="hl-variable"&gt;widget&lt;/span&gt; = &lt;span class="hl-keyword"&gt;match&lt;/span&gt; &lt;span class="hl-title function_ invoke__"&gt;make_widget&lt;/span&gt;() {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-title function_ invoke__"&gt;Ok&lt;/span&gt;(it) =&amp;gt; it,&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-title function_ invoke__"&gt;Err&lt;/span&gt;(WidgetError::NotFound) =&amp;gt; &lt;span class="hl-title function_ invoke__"&gt;default_widget&lt;/span&gt;(),&lt;/span&gt;
+&lt;span class="line"&gt;};&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;let widget = make_widget() &lt;span class="hl-keyword"&gt;catch&lt;/span&gt; &lt;span class="hl-operator"&gt;|&lt;/span&gt;err&lt;span class="hl-operator"&gt;|&lt;/span&gt; &lt;span class="hl-keyword"&gt;switch&lt;/span&gt; (err) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;error&lt;/span&gt;.NotFound =&amp;gt; default_widget(),&lt;/span&gt;
+&lt;span class="line"&gt;};&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Swift again sticks to more traditional try catch, but, interestingly, Kotlin does have &lt;code&gt;try&lt;/code&gt;
+expressions.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;The largest remaining variance is in what the error value looks like. This still feels like a
+research area. This is a hard problem due to a fundamental tension:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+On the one hand, at lower-levels you want to exhaustively enumerate errors to make sure that:
+&lt;ul&gt;
+&lt;li&gt;
+internal error handling logic is complete and doesn’t miss a case,
+&lt;/li&gt;
+&lt;li&gt;
+public API doesn’t leak any extra surprise error conditions.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;
+On the other hand, at higher-levels, you want to string together widely different functionality
+from many separate subsystems without worrying about specific errors, other than:
+&lt;ul&gt;
+&lt;li&gt;
+separating fallible functions from infallible,
+&lt;/li&gt;
+&lt;li&gt;
+ensuring that there is some top-level handler to show a 500 error or an equivalent.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The two extremes are well understood. For exhaustiveness, nothing beats sum types (&lt;code&gt;enum&lt;/code&gt;s in Rust).
+This I think is one of the key pieces which explains why the pendulum seemingly swung back on
+checked exceptions.&lt;/p&gt;
+&lt;p&gt;In Java, a method can throw one of the several exceptions:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;void&lt;/span&gt; &lt;span class="hl-title function_"&gt;f&lt;/span&gt;&lt;span class="hl-params"&gt;()&lt;/span&gt; &lt;span class="hl-keyword"&gt;throws&lt;/span&gt; FooException, BarException;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Critically, you &lt;em&gt;can’t&lt;/em&gt; abstract over this pair. The call chain has to either repeat the two cases,
+or type-erase them into a superclass, losing information. The former has a nasty side-effect that
+the entire chain needs updating if a third variant is added. Java-style checked exceptions are
+sensitive to “N to N + 1” transitions. Modern value-oriented error management is only sensitive  to
+“0 to 1” transition.&lt;/p&gt;
+&lt;p&gt;Still, if I am back to writing Java at any point, I’d be &lt;em&gt;very&lt;/em&gt; tempted to standardize on
+coarse-grained &lt;code&gt;throws Exception&lt;/code&gt; signature for all throwing methods. This is exactly the &lt;em&gt;second&lt;/em&gt;
+well understood extreme: there’s a type-erased universal error type, and the “throwableness” of a
+function contains one bit of information. We only care &lt;em&gt;if&lt;/em&gt; the function can throw, and the error
+itself can be whatever. You still can downcast dynamic error value handle specific conditions, but
+the downcasting is not checked by the compiler. That is, downcasting is “save” and nothing will
+panic in the error handling mechanism itself, but you’ll never be sure if the errors you are
+handling can actually arise, and whether some errors &lt;em&gt;should&lt;/em&gt; be handled, but aren’t.&lt;/p&gt;
+&lt;p&gt;Go and Swift provide first-class universal errors, like Midori. Starting with Swift 4, you can also
+narrow the type down.&lt;/p&gt;
+&lt;p&gt;Rust doesn’t really have super strong conventions about the errors, but it started with mostly
+enums, and then &lt;code&gt;failure&lt;/code&gt; and &lt;code&gt;anyhow&lt;/code&gt; shone spotlight on the universal error type.&lt;/p&gt;
+&lt;p&gt;But overall, it feels like “midpoint” error handling is poorly served by either extreme. In larger
+applications, you sorta care about error kinds, and there are usually a few place where it is pretty
+important to be exhaustive in your handling, but threading necessary types to those few places
+infects the rest of the codebases, and ultimately leads to “a bag of everything” error types with
+many “dead” variants.&lt;/p&gt;
+&lt;p&gt;Zig makes an interesting choice of assuming mostly closed-world compilation model, and relying on
+cross-function inference to learn who can throw what.&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;What I find the most fascinating about the story is the generational aspect. There really was a
+strong consensus about exceptions, and then &lt;a href="https://www.artima.com/articles/the-trouble-with-checked-exceptions"&gt;an agreement that checked exceptions are a
+failure&lt;/a&gt;, and now, suddenly, we
+are back to “checked exceptions” with a twist, in the form of “errors are values” philosophy. What
+happened between the lull of the naughts and the past decade industrial PLT renaissance?&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2025/12/29/second-error-model-convergence</guid>
+      <pubDate>Mon, 29 Dec 2025 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Parsing Advances</title>
+      <link>https://matklad.github.io/2025/12/28/parsing-advances.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Parsing Advances&lt;/h1&gt;
+  &lt;time class="meta" datetime="2025-12-28"&gt;Dec 28, 2025&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;I find myself writing yet another toy parser, as one does during a Christmas break. It roughly follows
+&lt;a href="https://matklad.github.io/2023/05/21/resilient-ll-parsing-tutorial.html"&gt;&lt;em&gt;Resilient LL Parsing Tutorial&lt;/em&gt;&lt;/a&gt;.
+Not because I need resilience, but mostly because I find producing a syntax tree and a collection of
+diagnostics a more natural fit for the problem than bailing out on the first error.&lt;/p&gt;
+&lt;p&gt;One practical pitfall with the approach is infinite loops/recursion. Resilience sometimes means
+&lt;em&gt;not&lt;/em&gt; consuming a token, and, if you do that in a loop or a Pratt recursive call, you’ll get
+yourself an annoying to debug error:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;running 1 test from ./src/corpus_test.ts&lt;/span&gt;
+&lt;span class="line"&gt;corpus ...Task test deno test --allow-read=./src/corpus --allow-write=./src/corpus &amp;quot;--&amp;quot; &amp;quot;--update&amp;quot;&lt;/span&gt;
+&lt;span class="line"&gt;Check src/corpus_test.ts&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&amp;lt;--- Last few GCs ---&amp;gt;&lt;/span&gt;
+&lt;span class="line"&gt;4,[26641:0x9d1574000]     7390 ms: Mark-Compact (reduce) 3924.9 (3927.3) -&amp;gt; 3924.9 (3926.3) MB, pooled: 0.0 MB, 1224.00 / 0.00 ms (+ 0.3 ms in 1 steps since start of marking, biggest step 0.3 ms, walltime since start of marking 1232 ms) (average mu = 0.200,[26641:0x9d1574000]     8804 ms: Mark-Compact (reduce) 4009.9 (4011.3) -&amp;gt; 4009.9 (4011.3) MB, pooled: 0.0 MB, 1294.67 / 0.00 ms (+ 0.2 ms in 1 steps since start of marking, biggest step 0.2 ms, walltime since start of marking 1302 ms) (average mu = 0.141,&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;#&lt;/span&gt;
+&lt;span class="line"&gt;# Fatal JavaScript out of memory: Ineffective mark-compacts near heap limit&lt;/span&gt;
+&lt;span class="line"&gt;#&lt;/span&gt;
+&lt;span class="line"&gt;==== C stack trace ===============================&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    0   deno                                0x0000000102ce8404 v8::base::debug::StackTrace::StackTrace() + 24&lt;/span&gt;
+&lt;span class="line"&gt;    1   deno                                0x0000000102ceeb9c v8::platform::(anonymous namespace)::PrintStackTrace() + 24&lt;/span&gt;
+&lt;span class="line"&gt;    2   deno                                0x0000000102ce4094 v8::base::FatalOOM(v8::base::OOMType, char const*) + 68&lt;/span&gt;
+&lt;span class="line"&gt;    3   deno                                0x0000000102d3a7a8 v8::internal::V8::FatalProcessOutOfMemory(v8::internal::Isolate*, char const*, v8::OOMDetails const&amp;amp;) + 296&lt;/span&gt;
+&lt;span class="line"&gt;    4   deno                                0x0000000102f37378 v8::internal::Heap::stack() + 0&lt;/span&gt;
+&lt;span class="line"&gt;    5   deno                                0x0000000102f3581c v8::internal::Heap::CheckMemoryPressure() + 0&lt;/span&gt;
+&lt;span class="line"&gt;    6   deno                                0x0000000102ead4f8 v8::internal::StackGuard::HandleInterrupts(v8::internal::StackGuard::InterruptLevel) + 504&lt;/span&gt;
+&lt;span class="line"&gt;    7   deno                                0x000000010335fe44 v8::internal::Runtime_HandleNoHeapWritesInterrupts(int, unsigned long*, v8::internal::Isolate*) + 304&lt;/span&gt;
+&lt;span class="line"&gt;    8   deno                                0x00000001043887b4 Builtins_CEntry_Return1_ArgvOnStack_NoBuiltinExit + 84&lt;/span&gt;
+&lt;span class="line"&gt;    9   ???                                 0x0000000126997874 0x0 + 4942559348&lt;/span&gt;
+&lt;span class="line"&gt;    10  ???                                 0x000000012698a758 0x0 + 4942505816&lt;/span&gt;
+&lt;span class="line"&gt;...&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;For a concrete example, you might parse function argument list using code like this:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; &lt;span class="hl-attr"&gt;result&lt;/span&gt;: ast.&lt;span class="hl-property"&gt;Expression&lt;/span&gt;[] = [];&lt;/span&gt;
+&lt;span class="line"&gt;p.&lt;span class="hl-title function_"&gt;expect&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;span class="hl-string"&gt;&amp;quot;(&amp;quot;&lt;/span&gt;&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;while&lt;/span&gt; (!p.&lt;span class="hl-title function_"&gt;eof&lt;/span&gt;() &amp;amp;&amp;amp; !p.&lt;span class="hl-title function_"&gt;at&lt;/span&gt;(&lt;span class="hl-string"&gt;&amp;quot;)&amp;quot;&lt;/span&gt;)) {&lt;/span&gt;
+&lt;span class="line"&gt;  result.&lt;span class="hl-title function_"&gt;push&lt;/span&gt;(&lt;span class="hl-title function_"&gt;expression&lt;/span&gt;(p));&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (!p.&lt;span class="hl-title function_"&gt;at&lt;/span&gt;(&lt;span class="hl-string"&gt;&amp;quot;)&amp;quot;&lt;/span&gt;)) p.&lt;span class="hl-title function_"&gt;expect&lt;/span&gt;(&lt;span class="hl-string"&gt;&amp;quot;,&amp;quot;&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;p.&lt;span class="hl-title function_"&gt;expect&lt;/span&gt;(&lt;span class="hl-string"&gt;&amp;quot;)&amp;quot;&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;return&lt;/span&gt; result;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;The implicit contract here is that &lt;code&gt;expression&lt;/code&gt; consumes at least one token, even if there are
+errors in the source code. If there’s some token that makes &lt;code&gt;expression&lt;/code&gt; bail without consuming
+anything, the code loops forever, and you’ll need a debugger to get at the stack trace!&lt;/p&gt;
+&lt;p&gt;The way I solved this issue traditionally is via a combination of two techniques:&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Fuel:&lt;/em&gt; parser has a &lt;code&gt;fuel: Cell&amp;lt;u32&amp;gt;&lt;/code&gt; field, which is decremented even by “readonly” lookahead
+methods, and topped up every time the parser consumes a token. Fuel is useful to make you parser
+crash somewhat cleanly, though the crash is typically still removed from problematic function by
+several stack frames.&lt;/p&gt;
+&lt;p&gt;The second technique is to maintain a mental map of functions which always consume at least one
+token of input, and functions which might bail without consuming anything. And, whenever you write a
+loop or a recursive call, consult this map to be sure to call at least one token-consuming function.
+Hard and error prone!&lt;/p&gt;
+&lt;p&gt;Well, I think I’ve figured something better today! You can assert that parser did advance when you
+expect it to. The &lt;em&gt;smaller&lt;/em&gt; benefit here is that if parser didn’t advance, you get an immediate
+error. The &lt;em&gt;bigger&lt;/em&gt; benefit is that these asserts materialize the mental map of advancing functions
+in the source code, so it doesn’t have to be mental anymore!&lt;/p&gt;
+&lt;p&gt;This seems like an obvious idea in retrospect, but, well, took me more than one parser to figure it
+out!&lt;/p&gt;
+&lt;p&gt;Concretely, I came up with the following base parser API:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;class&lt;/span&gt; &lt;span class="hl-title class_"&gt;Parser&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;private&lt;/span&gt; &lt;span class="hl-attr"&gt;tokens&lt;/span&gt;: ast.&lt;span class="hl-property"&gt;Token&lt;/span&gt;[];&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;private&lt;/span&gt; &lt;span class="hl-attr"&gt;index&lt;/span&gt;: &lt;span class="hl-built_in"&gt;number&lt;/span&gt; = &lt;span class="hl-number"&gt;0&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;private&lt;/span&gt; &lt;span class="hl-attr"&gt;advances&lt;/span&gt;: &lt;span class="hl-built_in"&gt;number&lt;/span&gt;[] = [];&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-title function_"&gt;advance_push&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-variable language_"&gt;this&lt;/span&gt;.&lt;span class="hl-property"&gt;advances&lt;/span&gt;.&lt;span class="hl-title function_"&gt;push&lt;/span&gt;(&lt;span class="hl-variable language_"&gt;this&lt;/span&gt;.&lt;span class="hl-property"&gt;index&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-title function_"&gt;advance_pop&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; advance = &lt;span class="hl-variable language_"&gt;this&lt;/span&gt;.&lt;span class="hl-property"&gt;advances&lt;/span&gt;.&lt;span class="hl-title function_"&gt;pop&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-title function_"&gt;assert&lt;/span&gt;(advance !== &lt;span class="hl-literal"&gt;undefined&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-title function_"&gt;assert&lt;/span&gt;(advance &amp;lt; &lt;span class="hl-variable language_"&gt;this&lt;/span&gt;.&lt;span class="hl-property"&gt;index&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-title function_"&gt;advance_drop&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; advance = &lt;span class="hl-variable language_"&gt;this&lt;/span&gt;.&lt;span class="hl-property"&gt;advances&lt;/span&gt;.&lt;span class="hl-title function_"&gt;pop&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-title function_"&gt;assert&lt;/span&gt;(advance !== &lt;span class="hl-literal"&gt;undefined&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;And here is the buggy function that lead to the error at the start of the article:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;expression_pratt&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-params"&gt;  p: Parser,&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-params"&gt;  left: ast.TokenTag,&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-params"&gt;&lt;/span&gt;): ast.&lt;span class="hl-property"&gt;Expression&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;let&lt;/span&gt; &lt;span class="hl-attr"&gt;lhs&lt;/span&gt;: ast.&lt;span class="hl-property"&gt;Expression&lt;/span&gt; = &lt;span class="hl-title function_"&gt;expression_delimited&lt;/span&gt;(p);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;while&lt;/span&gt; (p.&lt;span class="hl-title function_"&gt;at&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;span class="hl-string"&gt;&amp;quot;(&amp;quot;&lt;/span&gt;&lt;/span&gt;)) {&lt;/span&gt;
+&lt;span class="line"&gt;    lhs = &lt;span class="hl-title function_"&gt;expression_call&lt;/span&gt;(p, lhs);&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;while&lt;/span&gt; (&lt;span class="hl-literal"&gt;true&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; right = p.&lt;span class="hl-title function_"&gt;token&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (&lt;span class="hl-title function_"&gt;expression_pratt_right_binds_tighter&lt;/span&gt;(left, right.&lt;span class="hl-property"&gt;tag&lt;/span&gt;)) {&lt;/span&gt;
+&lt;span class="line"&gt;      &lt;span class="hl-keyword"&gt;const&lt;/span&gt; rhs = &lt;span class="hl-title function_"&gt;expression_pratt&lt;/span&gt;(p, right.&lt;span class="hl-property"&gt;tag&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;      lhs = {&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;tag&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;ExpressionBinary&amp;quot;&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;location&lt;/span&gt;: right.&lt;span class="hl-property"&gt;location&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;operator&lt;/span&gt;: right.&lt;span class="hl-property"&gt;tag&lt;/span&gt; &lt;span class="hl-keyword"&gt;as&lt;/span&gt; ast.&lt;span class="hl-property"&gt;BinaryOperation&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        lhs,&lt;/span&gt;
+&lt;span class="line"&gt;        rhs,&lt;/span&gt;
+&lt;span class="line"&gt;      };&lt;/span&gt;
+&lt;span class="line"&gt;    } &lt;span class="hl-keyword"&gt;else&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;      &lt;span class="hl-keyword"&gt;return&lt;/span&gt; lhs;&lt;/span&gt;
+&lt;span class="line"&gt;    }&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;The same function, but with advanced assertions:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;function&lt;/span&gt; &lt;span class="hl-title function_"&gt;expression_pratt&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-params"&gt;  p: Parser,&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-params"&gt;  left: ast.TokenTag,&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-params"&gt;&lt;/span&gt;): ast.&lt;span class="hl-property"&gt;Expression&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;let&lt;/span&gt; &lt;span class="hl-attr"&gt;lhs&lt;/span&gt;: ast.&lt;span class="hl-property"&gt;Expression&lt;/span&gt; = &lt;span class="hl-title function_"&gt;expression_delimited&lt;/span&gt;(p);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;while&lt;/span&gt; (p.&lt;span class="hl-title function_"&gt;at&lt;/span&gt;(&lt;span class="hl-params"&gt;&lt;span class="hl-string"&gt;&amp;quot;(&amp;quot;&lt;/span&gt;&lt;/span&gt;)) {&lt;/span&gt;
+&lt;span class="line"&gt;    lhs = &lt;span class="hl-title function_"&gt;expression_call&lt;/span&gt;(p, lhs);&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;while&lt;/span&gt; (&lt;span class="hl-literal"&gt;true&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line hl-line"&gt;    p.&lt;span class="hl-title function_"&gt;advance_push&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; right = p.&lt;span class="hl-title function_"&gt;token&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (&lt;span class="hl-title function_"&gt;expression_pratt_right_binds_tighter&lt;/span&gt;(left, right.&lt;span class="hl-property"&gt;tag&lt;/span&gt;)) {&lt;/span&gt;
+&lt;span class="line"&gt;      &lt;span class="hl-keyword"&gt;const&lt;/span&gt; rhs = &lt;span class="hl-title function_"&gt;expression_pratt&lt;/span&gt;(p, right.&lt;span class="hl-property"&gt;tag&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;      lhs = {&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;tag&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;ExpressionBinary&amp;quot;&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;location&lt;/span&gt;: right.&lt;span class="hl-property"&gt;location&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;operator&lt;/span&gt;: rhs.&lt;span class="hl-property"&gt;tag&lt;/span&gt; &lt;span class="hl-keyword"&gt;as&lt;/span&gt; ast.&lt;span class="hl-property"&gt;BinaryOperation&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        lhs,&lt;/span&gt;
+&lt;span class="line"&gt;        rhs,&lt;/span&gt;
+&lt;span class="line"&gt;      };&lt;/span&gt;
+&lt;span class="line"&gt;    } &lt;span class="hl-keyword"&gt;else&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line hl-line"&gt;      p.&lt;span class="hl-title function_"&gt;advance_drop&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;      &lt;span class="hl-keyword"&gt;return&lt;/span&gt; lhs;&lt;/span&gt;
+&lt;span class="line"&gt;    }&lt;/span&gt;
+&lt;span class="line hl-line"&gt;    p.&lt;span class="hl-title function_"&gt;advance_pop&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;The new error message:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;running 1 test from ./src/corpus_test.ts&lt;/span&gt;
+&lt;span class="line"&gt;corpus ... FAILED (11ms)&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt; ERRORS&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;corpus =&amp;gt; ./src/corpus_test.ts:47:6&lt;/span&gt;
+&lt;span class="line"&gt;error: Error: assertion failed&lt;/span&gt;
+&lt;span class="line"&gt;  if (!condition) throw new Error(&amp;quot;assertion failed&amp;quot;);&lt;/span&gt;
+&lt;span class="line"&gt;                        ^&lt;/span&gt;
+&lt;span class="line"&gt;    at assert (./src/stdx.ts:2:25)&lt;/span&gt;
+&lt;span class="line"&gt;    at Parser.advance_pop (./src/parse.ts:132:5)&lt;/span&gt;
+&lt;span class="line"&gt;    at expression_pratt (./src/parse_grammar.ts:169:7)&lt;/span&gt;
+&lt;span class="line"&gt;    at expression (./src/parse_grammar.ts:143:10)&lt;/span&gt;
+&lt;span class="line"&gt;    at expression_block (./src/parse_grammar.ts:305:21)&lt;/span&gt;
+&lt;span class="line"&gt;    at declaration_fun (./src/parse_grammar.ts:73:7)&lt;/span&gt;
+&lt;span class="line"&gt;    at declaration (./src/parse_grammar.ts:25:12)&lt;/span&gt;
+&lt;span class="line"&gt;    at Module.file (./src/parse_grammar.ts:10:15)&lt;/span&gt;
+&lt;span class="line"&gt;    at Module.parse (./src/parse.ts:13:18)&lt;/span&gt;
+&lt;span class="line"&gt;    at ast_dump (./src/corpus_test.ts:85:22)&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;and the fix:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;  &lt;span class="hl-keyword"&gt;while&lt;/span&gt; (&lt;span class="hl-literal"&gt;true&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    p.&lt;span class="hl-title function_"&gt;advance_push&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; right = p.&lt;span class="hl-title function_"&gt;token&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (&lt;span class="hl-title function_"&gt;expression_pratt_right_binds_tighter&lt;/span&gt;(left, right.&lt;span class="hl-property"&gt;tag&lt;/span&gt;)) {&lt;/span&gt;
+&lt;span class="line hl-line"&gt;      p.&lt;span class="hl-title function_"&gt;bump&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;      &lt;span class="hl-keyword"&gt;const&lt;/span&gt; rhs = &lt;span class="hl-title function_"&gt;expression_pratt&lt;/span&gt;(p, right.&lt;span class="hl-property"&gt;tag&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;      lhs = {&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;tag&lt;/span&gt;: &lt;span class="hl-string"&gt;&amp;quot;ExpressionBinary&amp;quot;&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;location&lt;/span&gt;: right.&lt;span class="hl-property"&gt;location&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-attr"&gt;operator&lt;/span&gt;: rhs.&lt;span class="hl-property"&gt;tag&lt;/span&gt; &lt;span class="hl-keyword"&gt;as&lt;/span&gt; ast.&lt;span class="hl-property"&gt;BinaryOperation&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;        lhs,&lt;/span&gt;
+&lt;span class="line"&gt;        rhs,&lt;/span&gt;
+&lt;span class="line"&gt;      };&lt;/span&gt;
+&lt;span class="line"&gt;    } &lt;span class="hl-keyword"&gt;else&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;      p.&lt;span class="hl-title function_"&gt;advance_drop&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;      &lt;span class="hl-keyword"&gt;return&lt;/span&gt; lhs;&lt;/span&gt;
+&lt;span class="line"&gt;    }&lt;/span&gt;
+&lt;span class="line"&gt;    p.&lt;span class="hl-title function_"&gt;advance_pop&lt;/span&gt;();&lt;/span&gt;
+&lt;span class="line"&gt;  }&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2025/12/28/parsing-advances</guid>
+      <pubDate>Sun, 28 Dec 2025 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Newtype Index Pattern In Zig</title>
+      <link>https://matklad.github.io/2025/12/23/zig-newtype-index-pattern.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Newtype Index Pattern In Zig&lt;/h1&gt;
+  &lt;time class="meta" datetime="2025-12-23"&gt;Dec 23, 2025&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;In efficiency-minded code, it is idiomatic to use indexes rather than pointers. Indexes have several
+advantages:&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;First&lt;/em&gt;, they save memory. Typically a 32-bit index is enough, a saving of four bytes per pointer on
+64-bit architectures. I haven’t seen this measured, but my gut feeling is that this is much more
+impactful than it might initially seem. On modern architectures, saving memory saves time (and
+energy) as well, because the computing bottleneck is often the bit pipe between the memory and the
+CPU, not the computation per se. Dense data structures use CPU cache more efficiently, removing
+prohibitive latency of memory accesses. Bandwidth savings are even better: smaller item size
+obviously improves bandwidth utilization, but having more items in cache obviates the need to use
+the bandwidth in the first place. Best case, the working set fits into the CPU cache!&lt;/p&gt;
+&lt;p&gt;Note well that memory savings are evenly spread out. Using indexes makes every data structure
+slightly more compact, which improves performance across the board, regardless of hotspot
+distribution. It’s hard to notice a potential for such saving in a profiler, and even harder to test
+out. For these two reasons, I would default to indexes for code where speed matters, even when I
+don’t have the code written yet to profile it!&lt;/p&gt;
+&lt;p&gt;There’s also a more subtle way in which indexes save memory. Using indexes means storing multiple
+items in an array, but such dense storage contains extra information in relative positions of the
+items. If you need to store a list of items, you can often avoid materializing the list of indexes
+by storing a range “pointing” into the shared storage. Occasionally, you can even do UTF-8 trick and
+use just a single bit to mark the end of a list.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;The second&lt;/em&gt; benefit of indexes is more natural modeling of cyclic and recursive data structures.
+Creating a cycle fundamentally requires mutability somewhere (“tying the knot” in Haskell relies on
+mutability of lazy thunks). This means that you need to make some pointers nullable, and that
+usually gets awkward even without borrow checker behind your back. Even without cycles and just
+recursion, pointers are problematic, due to a combination of two effects:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+pointers encourage recursive functions, and
+&lt;/li&gt;
+&lt;li&gt;
+recursive data structures lead to arbitrary long (but finite) chains of pointers.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The combination works fine at small scale, but then it fails with stack overflow in production every
+single time, requiring awkward work-arounds. For example, &lt;code&gt;rustc&lt;/code&gt; serializes error traces from
+nested macro expansions as a deeply nested tree of JSON objects, which requires using
+&lt;a href="https://docs.rs/stacker/latest/stacker/"&gt;stacker&lt;/a&gt; hack when parsing the output (which you’ll learn
+about only &lt;em&gt;after&lt;/em&gt; crashes in the hands of macro connoisseur users).&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Finally&lt;/em&gt;, indexes greatly help serialization, they make it trivial to communicate data structures
+both through space (sending a network message) and time (saving to disk and reading later). Indexes
+are naturally relocatable, it doesn’t matter where in memory they are. But this is just a half of
+serialization benefit. The other is that, because everything is in few arrays, you can do bulk
+serialization. You don’t need to write the items one by one, you can directly &lt;code&gt;memcpy&lt;/code&gt; arrays around
+(but be careful to not leak data via padding, and be sure to checksum the result).&lt;/p&gt;
+&lt;p&gt;The big problem with “naive” &lt;code&gt;u32&lt;/code&gt; indexes is of course using the right index with the wrong array,
+or vice verse. The standard solution here is to introduce a newtype wrapper around the raw index.
+&lt;a href="https://codeberg.org/andrewrk"&gt;@andrewrk&lt;/a&gt; recently popularized a nice “happy accident of language
+design” pattern for this in Zig. The core idea is to define an index via non-exhaustive &lt;code&gt;enum&lt;/code&gt;:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; ItemIndex = &lt;span class="hl-keyword"&gt;enum&lt;/span&gt;(&lt;span class="hl-type"&gt;u32&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    _&lt;/span&gt;
+&lt;span class="line"&gt;};&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;hr&gt;
+&lt;p&gt;In Zig, &lt;code&gt;enum&lt;/code&gt; designates a strongly-typed collection of integer constants, not a Rust-style ADT
+(there’s &lt;code&gt;union(enum)&lt;/code&gt; for that). By default an backing integer type is chosen by the compiler, but
+you can manually override it with &lt;code&gt;enum(u32)&lt;/code&gt; syntax:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; Color = &lt;span class="hl-keyword"&gt;enum&lt;/span&gt;(&lt;span class="hl-type"&gt;u16&lt;/span&gt;) { red, green, blue };&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Finally, Zig allows making enums non-exhaustive with &lt;code&gt;_&lt;/code&gt;. In a non-exhaustive enum, any numeric
+value is valid, and some have symbolic labels:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; FontWeight = &lt;span class="hl-keyword"&gt;enum&lt;/span&gt;(&lt;span class="hl-type"&gt;u16&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    normal = &lt;span class="hl-numbers"&gt;400&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;    bold = &lt;span class="hl-numbers"&gt;700&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;    _,&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;pub&lt;/span&gt; &lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; value&lt;/span&gt;(weight: FontWeight) &lt;span class="hl-type"&gt;u16&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-keyword"&gt;return&lt;/span&gt; &lt;span class="hl-built_in"&gt;@intFromEnum&lt;/span&gt;(weight);&lt;/span&gt;
+&lt;span class="line"&gt;    }&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;test&lt;/span&gt; FontWeight {&lt;/span&gt;
+&lt;span class="line"&gt;    assert(FontWeight.value(.normal) &lt;span class="hl-operator"&gt;==&lt;/span&gt; &lt;span class="hl-numbers"&gt;400&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; bold: FontWeight = &lt;span class="hl-built_in"&gt;@enumFromInt&lt;/span&gt;(&lt;span class="hl-numbers"&gt;700&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;    assert(bold &lt;span class="hl-operator"&gt;==&lt;/span&gt; .bold);&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;&lt;a href="https://ziglang.org/documentation/0.15.2/#intFromEnum"&gt;&lt;code&gt;@intFromEnum&lt;/code&gt;&lt;/a&gt; and
+&lt;a href="https://ziglang.org/documentation/0.15.2/#enumFromInt"&gt;&lt;code&gt;@enumFromInt&lt;/code&gt;&lt;/a&gt; builtins switch abstraction
+level between a raw integer and an enum value. So,&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; ItemIndex = &lt;span class="hl-keyword"&gt;enum&lt;/span&gt;(&lt;span class="hl-type"&gt;u32&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;    _&lt;/span&gt;
+&lt;span class="line"&gt;};&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;is a way to spell “&lt;code&gt;u32&lt;/code&gt;, but a distinct type”. Note that there’s no &lt;em&gt;strong&lt;/em&gt; encapsulation
+boundary here, anyone can &lt;code&gt;@enumFromInt&lt;/code&gt;. Zig just doesn’t provide language-enforced encapsulation
+mechanisms.&lt;/p&gt;
+&lt;p&gt;Putting everything together, this is how I would model n-ary tree with parent pointers in Zig:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;pub&lt;/span&gt; &lt;span class="hl-keyword"&gt;const&lt;/span&gt; Tree = &lt;span class="hl-keyword"&gt;struct&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;   nodes: []&lt;span class="hl-keyword"&gt;const&lt;/span&gt; Node.Data,&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;   &lt;span class="hl-keyword"&gt;pub&lt;/span&gt; &lt;span class="hl-keyword"&gt;const&lt;/span&gt; Node = &lt;span class="hl-keyword"&gt;enum&lt;/span&gt;(&lt;span class="hl-type"&gt;u32&lt;/span&gt;) {&lt;/span&gt;
+&lt;span class="line"&gt;       root = &lt;span class="hl-numbers"&gt;0&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;       invalid = std.math.maxInt(&lt;span class="hl-type"&gt;u32&lt;/span&gt;),&lt;/span&gt;
+&lt;span class="line"&gt;       _,&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;       &lt;span class="hl-keyword"&gt;pub&lt;/span&gt; &lt;span class="hl-keyword"&gt;const&lt;/span&gt; Data = &lt;span class="hl-keyword"&gt;struct&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;           parent: Node, &lt;span class="hl-comment"&gt;// .invalid means no parent.&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;           children: &lt;span class="hl-keyword"&gt;struct&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;               index: &lt;span class="hl-type"&gt;u32&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;               count: &lt;span class="hl-type"&gt;u32&lt;/span&gt;,&lt;/span&gt;
+&lt;span class="line"&gt;           },&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;           &lt;span class="hl-keyword"&gt;comptime&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;               assert(&lt;span class="hl-built_in"&gt;@sizeOf&lt;/span&gt;(Data) &lt;span class="hl-operator"&gt;==&lt;/span&gt; &lt;span class="hl-numbers"&gt;12&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;           }&lt;/span&gt;
+&lt;span class="line"&gt;       };&lt;/span&gt;
+&lt;span class="line"&gt;   };&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;   &lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; get&lt;/span&gt;(&lt;/span&gt;
+&lt;span class="line"&gt;       tree: &lt;span class="hl-operator"&gt;*&lt;/span&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; Tree,&lt;/span&gt;
+&lt;span class="line"&gt;       node: Node,&lt;/span&gt;
+&lt;span class="line"&gt;   ) Node.Data {&lt;/span&gt;
+&lt;span class="line"&gt;       &lt;span class="hl-keyword"&gt;return&lt;/span&gt; tree.nodes[&lt;span class="hl-built_in"&gt;@intFromEnum&lt;/span&gt;(node)];&lt;/span&gt;
+&lt;span class="line"&gt;   }&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;   &lt;span class="hl-keyword"&gt;pub&lt;/span&gt; &lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; parent&lt;/span&gt;(&lt;/span&gt;
+&lt;span class="line"&gt;       tree: &lt;span class="hl-operator"&gt;*&lt;/span&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; Tree,&lt;/span&gt;
+&lt;span class="line"&gt;       node: Node,&lt;/span&gt;
+&lt;span class="line"&gt;   ) ?Node {&lt;/span&gt;
+&lt;span class="line"&gt;       &lt;span class="hl-keyword"&gt;const&lt;/span&gt; result = tree.get(node).parent;&lt;/span&gt;
+&lt;span class="line"&gt;       &lt;span class="hl-keyword"&gt;return&lt;/span&gt; &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (result &lt;span class="hl-operator"&gt;==&lt;/span&gt; .invalid) &lt;span class="hl-literal"&gt;null&lt;/span&gt; &lt;span class="hl-keyword"&gt;else&lt;/span&gt; result;&lt;/span&gt;
+&lt;span class="line"&gt;   }&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;   &lt;span class="hl-keyword"&gt;pub&lt;/span&gt; &lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; children&lt;/span&gt;(&lt;/span&gt;
+&lt;span class="line"&gt;       tree: &lt;span class="hl-operator"&gt;*&lt;/span&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; Tree,&lt;/span&gt;
+&lt;span class="line"&gt;       node: Node,&lt;/span&gt;
+&lt;span class="line"&gt;   ) []&lt;span class="hl-keyword"&gt;const&lt;/span&gt; Node {&lt;/span&gt;
+&lt;span class="line"&gt;       &lt;span class="hl-keyword"&gt;const&lt;/span&gt; range = tree.get(node).children;&lt;/span&gt;
+&lt;span class="line"&gt;       &lt;span class="hl-keyword"&gt;return&lt;/span&gt; tree.nodes[range.index..][&lt;span class="hl-numbers"&gt;0&lt;/span&gt;..range.count];&lt;/span&gt;
+&lt;span class="line"&gt;   }&lt;/span&gt;
+&lt;span class="line"&gt;};&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Some points of note:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+As usual with indexes, you start with defining the collective noun first, a &lt;code&gt;Tree&lt;/code&gt; rather than a
+&lt;code&gt;Node&lt;/code&gt;.
+&lt;/li&gt;
+&lt;li&gt;
+In my experience, you usually don’t want &lt;code&gt;Index&lt;/code&gt; suffix in your index types, so &lt;code&gt;Node&lt;/code&gt; is just
+&lt;code&gt;enum(u32)&lt;/code&gt;, not the underlying data.
+&lt;/li&gt;
+&lt;li&gt;
+Nested types are good! &lt;code&gt;Node.Data&lt;/code&gt; feels just right.
+&lt;/li&gt;
+&lt;li&gt;
+For readability, the order is fields, then nested types, then functions.
+&lt;/li&gt;
+&lt;li&gt;
+In &lt;code&gt;Node&lt;/code&gt;, we have a couple of symbolic constants. &lt;code&gt;.root&lt;/code&gt; is for the root node that is stored
+first, &lt;code&gt;.invalid&lt;/code&gt; for whenever we want to apply offensive programing and make bad indexes blow up.
+Here, we use &lt;code&gt;.invalid&lt;/code&gt; for “null” parent. An alternative would be to use &lt;code&gt;?Node&lt;/code&gt;, but that would
+waste of space, or making the root its own parent.
+&lt;/li&gt;
+&lt;li&gt;
+If you care about performance, its a good idea to &lt;code&gt;comptime assert&lt;/code&gt; sizes of structures, not to
+prevent changes, but as a comment that explains to the reader just how the large the struct is.
+&lt;/li&gt;
+&lt;li&gt;
+I don’t know if I like &lt;code&gt;index/count&lt;/code&gt; or &lt;code&gt;start/end&lt;/code&gt; more for representing ranges, but I use the
+former just because the names align in length.
+&lt;/li&gt;
+&lt;li&gt;
+Both &lt;code&gt;tree.method(node)&lt;/code&gt; and &lt;code&gt;node.method(tree)&lt;/code&gt; are reasonable shapes for the API. I don’t know
+which one I prefer more. I default to the former because it works even if there are several node
+arguments.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;P.S. Apparently I also wrote a Rust version of this post a while back?
+&lt;span class="display"&gt;&lt;a href="https://matklad.github.io/2018/06/04/newtype-index-pattern.html" class="url"&gt;https://matklad.github.io/2018/06/04/newtype-index-pattern.html&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2025/12/23/zig-newtype-index-pattern</guid>
+      <pubDate>Tue, 23 Dec 2025 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Static Allocation For Compilers</title>
+      <link>https://matklad.github.io/2025/12/23/static-allocation-compilers.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Static Allocation For Compilers&lt;/h1&gt;
+  &lt;time class="meta" datetime="2025-12-23"&gt;Dec 23, 2025&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;TigerBeetle famously
+&lt;a href="https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/internals/ARCHITECTURE.md#static-memory-allocation"&gt;uses “static allocation”&lt;/a&gt;.
+Infamously, the use of the term is idiosyncratic: what is meant is &lt;em&gt;not&lt;/em&gt; &lt;code&gt;static&lt;/code&gt; arrays, as found
+in embedded development, but rather a weaker “no allocation after startup” form. The amount of
+memory TigerBeetle process uses is not hard-coded into the Elf binary. It depends on the runtime
+command line arguments. However, all allocation happens at startup, and there’s no deallocation. The
+long-lived event loop goes round and round happily without &lt;code&gt;alloc&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;I’ve wondered for years if a similar technique is applicable to compilers. It seemed impossible, but
+today I’ve managed to extract something actionable from this idea?&lt;/p&gt;
+&lt;section id="Static-Allocation"&gt;
+
+&lt;h2&gt;&lt;a href="#Static-Allocation"&gt;Static Allocation&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Static allocation depends on the physics of the underlying problem. And distributed databases have
+surprisingly simple physics, at least in the case of TigerBeetle.&lt;/p&gt;
+&lt;p&gt;The only inputs and outputs of the system are messages. Each message is finite in size (1MiB). The
+actual data of the system is stored on disk and can be arbitrarily large. But the diff applied by a
+single message is finite. And, if your input is finite, and your output is finite, it’s actually
+quite hard to need to allocate extra memory!&lt;/p&gt;
+&lt;p&gt;This is worth emphasizing — it might seem like doing static allocation is tough and requires
+constant vigilance and manual accounting for resources. In practice, I learned that it is
+surprisingly compositional. As long as inputs and outputs of a system are finite, non-allocating
+processing is easy. And you can put two such systems together without much trouble.
+&lt;a href="https://github.com/tigerbeetle/tigerbeetle/blob/0.16.67/src/vsr/routing.zig"&gt;routing.zig&lt;/a&gt; is a good
+example of such an isolated subsystem.&lt;/p&gt;
+&lt;p&gt;The only issue here is that there isn’t a physical limit on how many messages can arrive at the same
+time. Obviously, you can’t process arbitrary many messages simultaneously. But in  the context of a
+distributed system over an unreliable network, a safe move is to drop a message on the floor if the
+required processing resources are not available.&lt;/p&gt;
+&lt;p&gt;Counter-intuitively, not allocating is simpler than allocating, provided that you can pull it off!&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="For-Compilers"&gt;
+
+&lt;h2&gt;&lt;a href="#For-Compilers"&gt;For Compilers&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Alas, it seems impossible to pull it off for compilers. You &lt;em&gt;could&lt;/em&gt; say something like “hey, the
+largest program will have at most one million functions”, but that will lead to both wasted memory
+and poor user experience. You &lt;em&gt;could&lt;/em&gt; also use a single yolo arena of a fixed size, like I did in
+&lt;a href="https://matklad.github.io/2022/10/06/hard-mode-rust.html"&gt;&lt;em&gt;Hard Mode Rust&lt;/em&gt;&lt;/a&gt;, but that isn’t at all
+similar to “static allocation”. With arenas, the size is fixed explicitly, but you can OOM. With
+static allocation it is the opposite — no OOM, but you don’t know how much memory you’ll need
+until startup finishes!&lt;/p&gt;
+&lt;p&gt;The “problem size” for a compiler isn’t fixed — both the input (source code) and the output
+(executable) can be arbitrarily large. But that is &lt;em&gt;also&lt;/em&gt; the case for TigerBeetle — the size of
+the database is not fixed, it’s just that TigerBeetle gets to cheat and store it on disk, rather
+than in RAM. And TigerBeetle doesn’t do “static allocation” on disk, it can fail with &lt;code&gt;ENOSPACE&lt;/code&gt; at
+runtime, and it includes a dynamic block allocator to avoid that as long as possible by re-using no
+longer relevant sectors.&lt;/p&gt;
+&lt;p&gt;So what we could say is that a compiler consumes arbitrarily large input, and produces arbitrarily
+large output, but those “do not count” for the purpose of static memory allocation. At the start, we
+set aside an “output arena” for storing finished, immutable results of compiler’s work. We then say
+that this output is accumulated after processing a sequence of chunks, where chunk size is strictly
+finite.  While limiting the total size of the code-base is unreasonable, limiting a single file to,
+say, 4 MiB (runtime-overridable) is fine. Compiling then essentially becomes a “stream processing”
+problem, where both inputs and outputs are arbitrary large, but the filter program itself must
+execute in O(1) memory.&lt;/p&gt;
+&lt;p&gt;With this setup, it is natural to use indexes rather than pointers for “output data”, which then
+makes it easy to persist it to disk between changes. And it’s also natural to think about “chunks of
+changes” not only spatially (compiler sees a new file), but also temporally (compiler sees a new
+version of an old file).&lt;/p&gt;
+&lt;p&gt;Is there any practical benefits here? I don’t know! But seems worth playing around with! I feel that
+a strict separation between O(N) compiler output and O(1) intermediate processing artifacts can
+clarify compiler’s architecture, and I won’t be too surprised if O(1) processing in compilers would
+lead to simpler code the same way it does for databases?&lt;/p&gt;
+&lt;/section&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2025/12/23/static-allocation-compilers</guid>
+      <pubDate>Tue, 23 Dec 2025 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Do Not Optimize Away</title>
+      <link>https://matklad.github.io/2025/12/09/do-not-optimize-away.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Do Not Optimize Away&lt;/h1&gt;
+  &lt;time class="meta" datetime="2025-12-09"&gt;Dec 9, 2025&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;Compilers are sneaky beasts. If you time code like this:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;var&lt;/span&gt; total: &lt;span class="hl-type"&gt;u32&lt;/span&gt; = &lt;span class="hl-numbers"&gt;0&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;for&lt;/span&gt; (&lt;span class="hl-numbers"&gt;0&lt;/span&gt;..N) &lt;span class="hl-operator"&gt;|&lt;/span&gt;i&lt;span class="hl-operator"&gt;|&lt;/span&gt; total &lt;span class="hl-operator"&gt;+=&lt;/span&gt; i;&lt;/span&gt;
+&lt;span class="line"&gt;print(&lt;span class="hl-string"&gt;&amp;quot;total={}&amp;quot;&lt;/span&gt;, .{total});&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;You will discover that LLVM is as smart as a little kid named Gauss, and replaces the summation
+with an equivalent formula &lt;span class="display"&gt;
+&lt;math&gt;
+&lt;mfrac&gt;
+&lt;mrow&gt;
+&lt;mi&gt;N&lt;/mi&gt;
+&lt;mo&gt;(&lt;/mo&gt;
+&lt;mi&gt;N&lt;/mi&gt;
+&lt;mo&gt;+&lt;/mo&gt;
+&lt;mn&gt;1&lt;/mn&gt;
+&lt;mo&gt;)&lt;/mo&gt;
+&lt;/mrow&gt;
+&lt;mn&gt;2&lt;/mn&gt;
+&lt;/mfrac&gt;
+&lt;/math&gt;
+.&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;What’s more, if you write something more complicated like &lt;span class="display"&gt;&lt;code&gt;total += i + 2*i*i - i*i*i&lt;/code&gt;,&lt;/span&gt;
+you’ll see that LLVM figures out a closed-form expression for that as well (a generalization
+of the Gauss trick I proudly figured out in 11th grade). See for yourself:
+&lt;a href="https://godbolt.org/z/T9EcTb8zq" class="display url"&gt;https://godbolt.org/z/T9EcTb8zq&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Usually, this kind of thing is desirable — code runs faster! Except when you are trying to
+benchmark your code, and instead end up benchmarking an elaborate no-op.&lt;/p&gt;
+&lt;p&gt;There are two pitfalls with benchmarking. &lt;em&gt;First&lt;/em&gt;, in&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; start = now();&lt;/span&gt;
+&lt;span class="line"&gt;_ = computation()&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; elapsed = now() &lt;span class="hl-operator"&gt;-&lt;/span&gt; start;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;a reasonable compiler can notice that &lt;code&gt;computation&lt;/code&gt;’s result is not used, and optimize the entire
+computation away.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Second&lt;/em&gt;, in&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; parameter_a = &lt;span class="hl-numbers"&gt;1_000_000&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; parameter_b = &lt;span class="hl-numbers"&gt;1_000&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; start = now();&lt;/span&gt;
+&lt;span class="line"&gt;_ = computation(parameter_a, parameter_b);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; elapsed = now() &lt;span class="hl-operator"&gt;-&lt;/span&gt; start;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;even if the computation is not elided as a whole, compiler can constant-fold parts of it, taking
+advantage of the fact that values of parameters are known at compile time.&lt;/p&gt;
+&lt;section id="Time-To-Be-Killing-The-Dragon-Again"&gt;
+
+&lt;h2&gt;&lt;a href="#Time-To-Be-Killing-The-Dragon-Again"&gt;Time To Be Killing The Dragon Again&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Usually languages provide some sort of an explicit “please do not optimize this away” function, like
+Rust’s &lt;code&gt;hint::black_box&lt;/code&gt; or Zig’s &lt;code&gt;mem.doNotOptimizeAway&lt;/code&gt;, but they always felt like dragon oil to
+me:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Their meaning is tricky. The whole compilation pipeline is based on erasing everything about the
+original form of the code, maintaining only the semantics. But &lt;code&gt;black_box&lt;/code&gt; is transparent in the
+semantic spectrum! It is unexplainable using the normal “semantics-preserving transformations”
+compiler vocabulary.
+&lt;/li&gt;
+&lt;li&gt;
+There’s a &lt;em&gt;simpler&lt;/em&gt; and &lt;em&gt;more direct&lt;/em&gt; way to achieve the desired result. Just open the box and
+check if the cat is there!
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;It’s easier to explain via an example. Let’s say I am benchmarking binary search:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; insertion_point&lt;/span&gt;(xs: []&lt;span class="hl-keyword"&gt;const&lt;/span&gt; &lt;span class="hl-type"&gt;u32&lt;/span&gt;, x: &lt;span class="hl-type"&gt;u32&lt;/span&gt;) &lt;span class="hl-type"&gt;usize&lt;/span&gt; { ... }&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;I would use the following benchmarking scaffold:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; benchmark&lt;/span&gt;(arena: Allocator) &lt;span class="hl-operator"&gt;!&lt;/span&gt;&lt;span class="hl-type"&gt;void&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; element_count =&lt;/span&gt;
+&lt;span class="line hl-line"&gt;        &lt;span class="hl-keyword"&gt;try&lt;/span&gt; parameter(&lt;span class="hl-string"&gt;&amp;quot;element_count&amp;quot;&lt;/span&gt;, &lt;span class="hl-numbers"&gt;1_000_000&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; search_count =&lt;/span&gt;
+&lt;span class="line hl-line"&gt;        &lt;span class="hl-keyword"&gt;try&lt;/span&gt; parameter(&lt;span class="hl-string"&gt;&amp;quot;search_count&amp;quot;&lt;/span&gt;, &lt;span class="hl-numbers"&gt;10_000&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; elements: []&lt;span class="hl-keyword"&gt;const&lt;/span&gt; &lt;span class="hl-type"&gt;u32&lt;/span&gt; =&lt;/span&gt;
+&lt;span class="line"&gt;        make_elements(arena, element_count);&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; searches: []&lt;span class="hl-keyword"&gt;const&lt;/span&gt; &lt;span class="hl-type"&gt;u32&lt;/span&gt; =&lt;/span&gt;
+&lt;span class="line"&gt;        make_searches(arena, search_count);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; start = now();&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;var&lt;/span&gt; hash: &lt;span class="hl-type"&gt;u32&lt;/span&gt; = &lt;span class="hl-numbers"&gt;0&lt;/span&gt;;&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;for&lt;/span&gt; (searches) &lt;span class="hl-operator"&gt;|&lt;/span&gt;key&lt;span class="hl-operator"&gt;|&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line hl-line"&gt;        hash &lt;span class="hl-operator"&gt;+%=&lt;/span&gt; insertion_point(elements, key);&lt;/span&gt;
+&lt;span class="line"&gt;    }&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; elapsed = now().duration_since(start);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line hl-line"&gt;    print(&lt;span class="hl-string"&gt;&amp;quot;hash={}&lt;span class="hl-string"&gt;\n&lt;/span&gt;&amp;quot;&lt;/span&gt;, .{hash});&lt;/span&gt;
+&lt;span class="line"&gt;    print(&lt;span class="hl-string"&gt;&amp;quot;elapsed={}&lt;span class="hl-string"&gt;\n&lt;/span&gt;&amp;quot;&lt;/span&gt;, .{elapsed});&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;fn&lt;/span&gt;&lt;span class="hl-function"&gt; parameter&lt;/span&gt;(&lt;span class="hl-keyword"&gt;comptime&lt;/span&gt; name: []&lt;span class="hl-keyword"&gt;const&lt;/span&gt; &lt;span class="hl-type"&gt;u8&lt;/span&gt;, default: &lt;span class="hl-type"&gt;u64&lt;/span&gt;) &lt;span class="hl-operator"&gt;!&lt;/span&gt;&lt;span class="hl-type"&gt;u64&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;const&lt;/span&gt; value = &lt;span class="hl-keyword"&gt;if&lt;/span&gt; (process.hasEnvVarConstant(name))&lt;/span&gt;
+&lt;span class="line"&gt;        &lt;span class="hl-keyword"&gt;try&lt;/span&gt; process.parseEnvVarInt(name, &lt;span class="hl-type"&gt;u64&lt;/span&gt;, &lt;span class="hl-numbers"&gt;10&lt;/span&gt;)&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-keyword"&gt;else&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;        default;&lt;/span&gt;
+&lt;span class="line"&gt;    print(name &lt;span class="hl-operator"&gt;+&lt;/span&gt;&lt;span class="hl-operator"&gt;+&lt;/span&gt; &lt;span class="hl-string"&gt;&amp;quot;={}&lt;span class="hl-string"&gt;\n&lt;/span&gt;&amp;quot;&lt;/span&gt;, .{value});&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;On the input side, the &lt;code&gt;parameter&lt;/code&gt; function takes a symbolic name and a default value. It looks up
+the value among the environmental variables, with fallback. Because the value &lt;em&gt;can&lt;/em&gt; be specified at
+runtime, compiler can’t optimize assuming a particular constant. And you also get a convenient way
+to re-run benchmark with a different set of parameters without recompiling.&lt;/p&gt;
+&lt;p&gt;On the output side, we compute an (extremely weak) “hash” of the results. For our binary search —
+just the sum of all the indexes. Then we print this hash together with the timing information.
+Because we use the results of our computation, compiler can’t optimize them away!&lt;/p&gt;
+&lt;p&gt;Similarly to the &lt;code&gt;parameter&lt;/code&gt; function, we also get a bonus feature for free. You know who also
+&lt;em&gt;loves&lt;/em&gt; making code faster by deleting “unnecessary” functionality? I do! Though I am not as smart
+as a compiler, and usually end up deleting code that actually &lt;em&gt;is&lt;/em&gt; required to get the right answer.
+With the hash, if I mess my optimization work to the point of getting a wrong answer, I
+&lt;em&gt;immediately&lt;/em&gt; see that reflected in an unexpected value of the hash.&lt;/p&gt;
+&lt;p&gt;Consider avoiding black boxes for your next benchmark. Instead, stick to natural
+anti-optimizing-compiler remedies:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Make input parameters runtime overridable (with compile time defaults),
+&lt;/li&gt;
+&lt;li&gt;
+print the result (or the hash thereof).
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/section&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2025/12/09/do-not-optimize-away</guid>
+      <pubDate>Tue, 09 Dec 2025 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Mechanical Habits</title>
+      <link>https://matklad.github.io/2025/12/06/mechanical-habits.html</link>
+      <description>
+&lt;header&gt;
+  &lt;h1&gt;Mechanical Habits&lt;/h1&gt;
+  &lt;time class="meta" datetime="2025-12-06"&gt;Dec 6, 2025&lt;/time&gt;
+&lt;/header&gt;
+&lt;p&gt;My schtick as a software engineer is establishing automated processes — mechanically enforced
+patterns of behavior. I have collected a Santa Claus bag of specific tricks I’ve learned from
+different people, and want to share them in turn.&lt;/p&gt;
+&lt;p&gt;Caution: engineering processes can be tricky to apply in a useful way. A process is a logical cut
+— there’s some goal we &lt;em&gt;actually&lt;/em&gt; want, and automation can be a shortcut to achieve it, but
+automation per se doesn’t explain what the original goal is. Keep the goal and adjust the processes
+on the go. Sanity checks: A) automation should reduce toil. If robots create work for humans, down
+with the robots! B) good automation usually is surprisingly simple, simplistic even. Long live the
+duct tape!&lt;/p&gt;
+&lt;section id="Weekly-Releases"&gt;
+
+&lt;h2&gt;&lt;a href="#Weekly-Releases"&gt;Weekly Releases&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;By far the most impactful trick — make a release of your software every Friday. The first order
+motivation here is to reduce the stress and effort required for releases. If releases are small,
+writing changelogs is easy, assessing the riskiness of release doesn’t require anything more than
+mentally recalling a week’s worth of work, and there’s no need to aim to land features into a
+particular releases. Delaying a feature by a week is nothing, delaying by a year is a reason to put
+in an all-nighter.&lt;/p&gt;
+&lt;p&gt;As an example, this Friday I was filling my US visa application, so I was feeling somewhat tired in
+the evening. I was also the release manager. So I just messaged “sorry, I am feeling too tired to
+make a release, we are skipping this one” without thinking much about it. It’s cheap to skip the
+release, so there’s no temptation to push yourself to get the release done (and quickly follow up
+with a point release, the usual consequence).&lt;/p&gt;
+&lt;p&gt;But the real gem is the second order effect — weekly releases force you to fix all &lt;em&gt;other&lt;/em&gt;
+processes to keep the codebase healthy all the time. And it is &lt;em&gt;much&lt;/em&gt; easier to keep the flywheel
+going at roughly the same speed, rather than periodically to struggle to get it going. Temporal
+locality is the king: “I don’t have time to fix X right now, I’ll do it before the release” is the
+killer. By the time of release you’ll need 2X time just to load X in your head! It’s much faster
+overall to immediately make every line of code releasable. Work the iron while it is hot!&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Epistemic-Aside"&gt;
+
+&lt;h2&gt;&lt;a href="#Epistemic-Aside"&gt;Epistemic Aside&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;I’ve done releases every Friday in IntelliJ Rust, rust-analyzer, and TigerBeetle, to a great
+success. It’s worth reflecting how I got there. The idea has two parents:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Pieter Hintjens writings, specifically, the idea of
+&lt;a href="https://hintjens.gitbooks.io/social-architecture/content/chapter4.html#:~:text=Maintainers%20SHALL%20merge%20correct%20patches%20rapidly."&gt;Optimistic Merging&lt;/a&gt;
+&lt;/li&gt;
+&lt;li&gt;
+Rust’s &lt;a href="https://blog.rust-lang.org/2014/10/30/Stability/"&gt;six-weekly release process&lt;/a&gt; (itself inspired by the browser world)
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Both seemed worthwhile to try for me, and I figured that a nice synthesis would be to release
+every Monday, not every six weeks (I later moved cutting the release to Friday, so that it can bake
+in beta/fuzzers during the weekend). I just finished University at that point, and had almost zero
+working experience! The ideas made sense to me not based on my past experiences, or on being
+promulgated by some big names, but because they made sense if you just think about them from first
+principles. It’s the other way around — I fell in love with Rust and Pieter’s writing because of
+the quality of the ideas. And I only needed common sense to assess the ideas, no decade in the
+industry required.&lt;/p&gt;
+&lt;p&gt;This applies to the present blog post — engage with ideas, remix them, and improve them. Don’t
+treat the article as a mere cook book, it is not.&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Not-Rocket-Science-Rule"&gt;
+
+&lt;h2&gt;&lt;a href="#Not-Rocket-Science-Rule"&gt;Not Rocket Science Rule&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;I feel like I link
+&lt;a href="https://graydon2.dreamwidth.org/1597.html" class="display url"&gt;https://graydon2.dreamwidth.org/1597.html&lt;/a&gt;
+from every second post of mine, so I’ll keep it short this time.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Only advance the tip of the master branch to a commit hash, for which you &lt;em&gt;already know&lt;/em&gt; the tests
+results. That is, make a detached merge commit, test that, then move the tip.
+&lt;/li&gt;
+&lt;li&gt;
+Don’t do it yourself, let the robot do it.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The &lt;em&gt;direct&lt;/em&gt; benefit is asynchronizing the process of getting the code in. When you submit PR, you
+don’t need to wait until CI is complete, and then make a judgement call if the results are fresh
+enough or you need to rebase to the new version of master branch. You just tell the robot “merge
+when the merge commit is green”. The standard setup uses robots to create work for humans. Merge
+queue inverts this.&lt;/p&gt;
+&lt;p&gt;But the true benefit is second-order! You can’t really ask the robot nicely to let your very
+important PR in, despite a completely unrelated flaky failure elsewhere. You are forced to keep your
+CI setup tidy.&lt;/p&gt;
+&lt;p&gt;There’s also a third-order benefit. NRSR encourages a holistic view of your CI, as a set of invariants
+that &lt;em&gt;actually&lt;/em&gt; hold for your software, a type-system of sorts. And that thinking makes you realize
+that every automatable check can be a test. Again, good epistemology helps: it’s not the idea of bors
+that is most valuable, it’s the reasoning behind that: “automatically maintain a repository of code
+that always passes all the tests”, “monotonically increasing test coverage”. Go re-read Graydon’s
+post!&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Tidy-Script"&gt;
+
+&lt;h2&gt;&lt;a href="#Tidy-Script"&gt;Tidy Script&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;This is another idea borrowed from Rust. Use a &lt;code&gt;tidy&lt;/code&gt; file to collect various project-specific
+linting checks as tests. The biggest value of such
+&lt;a href="https://github.com/tigerbeetle/tigerbeetle/blob/0.16.66/src/tidy.zig"&gt;&lt;code&gt;tidy.zig&lt;/code&gt;&lt;/a&gt;
+is its mere existence. It’s much easier to add a new check than to create “checking infrastructure”.
+Some checks we do at TigerBeetle:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+No large binary blobs in big history. Don’t repeat my rust-analyzer mistake here, and look for
+actual git objects, not just files in the working repository. Someone once sneaked 1MiB of
+reverted protobuf nonsense past me and my file-based check.
+&lt;/li&gt;
+&lt;li&gt;
+Line &amp;amp; function length.
+&lt;/li&gt;
+&lt;li&gt;
+No problematic (for our use case) std APIs are used.
+&lt;/li&gt;
+&lt;li&gt;
+No &lt;code&gt;// FIXME&lt;/code&gt; comments. This is used positively — I add &lt;code&gt;// FIXME&lt;/code&gt; comments to code I want to
+change before the merge (this one is also from Rust!).
+&lt;/li&gt;
+&lt;li&gt;
+No dead code (Zig specific, as the compiler is not well-positioned to tackle that, due to lazy
+compilation model).
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Pro tip for writing tidings — shell out to &lt;code&gt;git ls-files -z&lt;/code&gt; to figure out what needs tidying.&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="DevHub"&gt;
+
+&lt;h2&gt;&lt;a href="#DevHub"&gt;DevHub&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;I don’t remember the origin here, but
+&lt;a href="https://deno.com/benchmarks" class="display url"&gt;https://deno.com/benchmarks&lt;/a&gt;
+certainly is an influence.&lt;/p&gt;
+&lt;p&gt;The habit is to maintain, for every large project, a directory with static files which is directly
+deployed from the master branch as a project’s internal web page. E.g., for TigerBeetle:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;a href="https://github.com/tigerbeetle/tigerbeetle/tree/0.16.66/src/devhub" class="url"&gt;https://github.com/tigerbeetle/tigerbeetle/tree/0.16.66/src/devhub&lt;/a&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;a href="http://tigerbeetle.github.io/tigerbeetle/" class="url"&gt;http://tigerbeetle.github.io/tigerbeetle/&lt;/a&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Again, the motivation is mere existence and removal of friction. This is an office whiteboard which you
+can just write on, for whatever purpose! Things we use ours for:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+Release rotation.
+&lt;/li&gt;
+&lt;li&gt;
+Benchmark&amp;amp;fuzzing results. This is a bit of social engineering: you check DevHub out of anxiety,
+to make sure its not your turn to make a release this week, but you get to spot performance
+regressions!
+&lt;/li&gt;
+&lt;li&gt;
+Issues in needs of triaging.
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;I gave a talk about using DevHub for visualizing fuzzing results for HYTRADBOI
+(&lt;a href="https://www.hytradboi.com/2025/c222d11a-6f4d-4211-a243-f5b7fafc8d79-rocket-science-of-simulation-testing"&gt;video&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;Another tip: JSON file in a git repository is a fine database to power such an internal website.
+&lt;a href="https://tailscale.com/blog/an-unlikely-database-migration"&gt;JSONMutexDB&lt;/a&gt; for the win.&lt;/p&gt;
+&lt;/section&gt;
+&lt;section id="Micro-Benchmarks"&gt;
+
+&lt;h2&gt;&lt;a href="#Micro-Benchmarks"&gt;Micro Benchmarks&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;The last one for today, and the one that prompted this article! I am designing a new mechanical
+habit for TigerBeetle and I want to capture the process while it is still fresh in my mind.&lt;/p&gt;
+&lt;p&gt;It starts with something rotten. Micro benchmarks are hard. You write one when you are working on
+the code, but then it bitrots, and by the time the next person has a brilliant optimization idea,
+they can not compile the benchmark anymore, and they also have no idea which part of the three pages
+of output is important.&lt;/p&gt;
+&lt;p&gt;A useful trick for solving bitrot is to chain a new habit onto an existing one. Avoid multiplying
+entry points (&lt;a href="https://matklad.github.io/2023/12/31/O(1)-build-file.html"&gt;&lt;em&gt;O(1) Build File&lt;/em&gt;&lt;/a&gt;). The
+appropriate entry point here are the tests. So each micro benchmark is going to be just a test:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;test&lt;/span&gt; &lt;span class="hl-string"&gt;&amp;quot;benchmark: binary search&amp;quot;&lt;/span&gt; {&lt;/span&gt;
+&lt;span class="line"&gt;    &lt;span class="hl-comment"&gt;// ...&lt;/span&gt;&lt;/span&gt;
+&lt;span class="line"&gt;}&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;Bitrot problem solved. Now we have two new ones. &lt;em&gt;First&lt;/em&gt; is that you generally want to run the
+benchmark long enough to push the times into human range (~2 seconds), so that any improvements are
+immediately, viscerally perceived. But 2 seconds are too slow for a test, &lt;em&gt;and&lt;/em&gt; test are usually run
+in Debug mode. The second problem is that you want to see the timing outcome of the benchmark
+printed when you run that benchmark. But you don’t want to see the output when you run the tests!&lt;/p&gt;
+&lt;p&gt;So, we really want two modes here: in the first mode, we really are running a benchmark, it is
+compiled with optimizations, we aim to make runtime low seconds at least, and we want to print the
+seconds afterwards. In the second mode, we are running our test suite, and we want to run the
+benchmark just for some token amount of time. DWIM (do what I mean) principle helps here. We run
+the entire test suite as
+&lt;span class="display"&gt;&lt;code&gt;./zig/zig build test&lt;/code&gt;,&lt;/span&gt;
+and a single benchmark as
+&lt;span class="display"&gt;&lt;code&gt;./zig/zig build test -- "benchmark: search"&lt;/code&gt;&lt;/span&gt;
+So we use the shape of CLI invocation to select benchmarking mode.&lt;/p&gt;
+&lt;p&gt;This &lt;code&gt;mode&lt;/code&gt; then determines whether we should pick large or small parameters. Playing around with
+the code, it feels like the following is a nice shape of code to get parameter values:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;var&lt;/span&gt; bench = Bench.init();&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; element_count =&lt;/span&gt;
+&lt;span class="line"&gt;    bench.parameter(&lt;span class="hl-string"&gt;&amp;quot;element_count&amp;quot;&lt;/span&gt;, &lt;span class="hl-numbers"&gt;1_000&lt;/span&gt;, &lt;span class="hl-numbers"&gt;10_000_000&lt;/span&gt;);&lt;/span&gt;
+&lt;span class="line"&gt;&lt;/span&gt;
+&lt;span class="line"&gt;&lt;span class="hl-keyword"&gt;const&lt;/span&gt; search_count =&lt;/span&gt;
+&lt;span class="line"&gt;    bench.parameter(&lt;span class="hl-string"&gt;&amp;quot;search_count&amp;quot;&lt;/span&gt;, &lt;span class="hl-numbers"&gt;5_000&lt;/span&gt;, &lt;span class="hl-numbers"&gt;500_000&lt;/span&gt;);&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;The small value is test mode, the big value is benchmark mode, and the name is useful to print
+actual parameter value:&lt;/p&gt;
+
+&lt;figure class="code-block"&gt;
+
+
+&lt;pre&gt;&lt;code&gt;&lt;span class="line"&gt;bench.report(&lt;span class="hl-string"&gt;&amp;quot;{s}={}&amp;quot;&lt;/span&gt;, .{ name, value });&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+
+&lt;/figure&gt;
+&lt;p&gt;This &lt;code&gt;report&lt;/code&gt; function is what decides whether to swallow (test mode) or show (benchmark mode) the
+output. Printing the values is useful to make copy-pasted benchmarking results obvious without
+context. And, now that we have put the names in, we get to override values of parameters via
+environmental variables for free!&lt;/p&gt;
+&lt;p&gt;And this is more or less it? We now have a standard pattern to grow the set of microbenchmarks,
+which feels like it should hold up with the time passing?&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://github.com/tigerbeetle/tigerbeetle/pull/3405" class="url"&gt;https://github.com/tigerbeetle/tigerbeetle/pull/3405&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Check back in a couple of years to see if this mechanical habit sticks!&lt;/p&gt;
+&lt;/section&gt;
+</description>
+      <guid isPermaLink="true">https://matklad.github.io/2025/12/06/mechanical-habits</guid>
+      <pubDate>Sat, 06 Dec 2025 00:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

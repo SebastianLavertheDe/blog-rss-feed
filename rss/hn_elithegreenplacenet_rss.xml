@@ -1,0 +1,892 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss version="2.0">
+  <channel>
+    <title>eli.thegreenplace.net</title>
+    <link>https://eli.thegreenplace.net</link>
+    <description>RSS feed from eli.thegreenplace.net</description>
+    <language>en</language>
+    <lastBuildDate>Mon, 02 Feb 2026 12:07:39 +0000</lastBuildDate>
+    <item>
+      <title>Compiling Scheme to WebAssembly</title>
+      <link>https://eli.thegreenplace.net/2026/compiling-scheme-to-webassembly/</link>
+      <description>&lt;p&gt;One of my oldest open-source projects - &lt;a class="reference external" href="https://github.com/eliben/bobscheme"&gt;Bob&lt;/a&gt;
+- has &lt;a class="reference external" href="https://eli.thegreenplace.net/2010/11/06/bob-a-scheme-interpreter-compiler-and-vm-in-python"&gt;celebrated 15 a couple of months ago&lt;/a&gt;.
+Bob is a suite of implementations of the Scheme programming language in Python,
+including an interpreter, a compiler and a VM. Back then I was doing some hacking
+on CPython internals and was very curious about how CPython-like bytecode VMs
+work; Bob was an experiment to find out, by implementing one from scratch for
+R5RS Scheme.&lt;/p&gt;
+&lt;p&gt;Several months later I &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/04/09/a-c-vm-added-to-bob"&gt;added a C++ VM to Bob&lt;/a&gt;,
+as an exercise to learn how such VMs are implemented in a low-level language
+without all the runtime support Python provides; most importantly, without the
+built-in GC. The C++ VM in Bob implements its own mark-and-sweep GC.&lt;/p&gt;
+&lt;p&gt;After many quiet years (with just a sprinkling of cosmetic changes, porting to
+GitHub, updates to Python 3, etc), I felt the itch to work on Bob again just
+before the holidays. Specifically, I decided to add another compiler to the
+suite - this one from Scheme directly to WebAssembly.&lt;/p&gt;
+&lt;p&gt;The goals of this effort were two-fold:&lt;/p&gt;
+&lt;ol class="arabic simple"&gt;
+&lt;li&gt;Experiment with lowering a real, high-level language like Scheme to
+WebAssembly. Experiments like the recent &lt;a class="reference external" href="https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/"&gt;Let's Build a Compiler&lt;/a&gt;
+compile toy languages that are at the C level (no runtime). Scheme has built-in
+data structures, lexical closures, garbage collection, etc. It's much more challenging.&lt;/li&gt;
+&lt;li&gt;Get some hands-on experience with the WASM GC extension &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;. I have several
+samples of using WASM GC in the &lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples"&gt;wasm-wat-samples repository&lt;/a&gt;,
+but I really wanted to try it for something &amp;quot;real&amp;quot;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Well, it's done now; here's an updated schematic of the Bob project:&lt;/p&gt;
+&lt;img alt="Bob project diagram with all the components it includes" class="align-center" src="https://eli.thegreenplace.net/images/2026/bob_toplevel.png" /&gt;
+&lt;p&gt;The new part is the rightmost vertical path. A &lt;a class="reference external" href="https://github.com/eliben/bobscheme/blob/main/bob/wasmcompiler.py"&gt;WasmCompiler&lt;/a&gt;
+class lowers parsed Scheme expressions all the way down to WebAssembly text,
+which can then be compiled to a binary and executed using standard WASM tools &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;.&lt;/p&gt;
+&lt;div class="section" id="highlights"&gt;
+&lt;h2&gt;Highlights&lt;/h2&gt;
+&lt;p&gt;The most interesting aspect of this project was working with WASM GC to
+represent Scheme objects. As long as we properly box/wrap all values in
+&lt;tt class="docutils literal"&gt;ref&lt;/tt&gt;s, the underlying WASM execution environment will take care of the
+memory management.&lt;/p&gt;
+&lt;p&gt;For Bob, here's how some key Scheme objects are represented:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;;; PAIR holds the car and cdr of a cons cell.
+(type $PAIR (struct (field (mut (ref null eq))) (field (mut (ref null eq)))))
+
+;; BOOL represents a Scheme boolean. zero -&amp;gt; false, nonzero -&amp;gt; true.
+(type $BOOL (struct (field i32)))
+
+;; SYMBOL represents a Scheme symbol. It holds an offset in linear memory
+;; and the length of the symbol name.
+(type $SYMBOL (struct (field i32) (field i32)))
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;&lt;tt class="docutils literal"&gt;$PAIR&lt;/tt&gt; is of particular interest, as it may contain arbitrary objects in
+its fields; &lt;tt class="docutils literal"&gt;(ref null eq)&lt;/tt&gt; means &amp;quot;a nullable reference to something that
+has identity&amp;quot;. &lt;tt class="docutils literal"&gt;ref.test&lt;/tt&gt; can be used to check - for a given
+reference - the run-time type of the value it refers to.&lt;/p&gt;
+&lt;p&gt;You may wonder - what about numeric values? Here WASM has a trick - the &lt;tt class="docutils literal"&gt;i31&lt;/tt&gt;
+type can be used to represent a reference to an integer, but without
+actually boxing it (one bit is used to distinguish such an object from a
+real reference). So we don't need a separate type to hold references to numbers.&lt;/p&gt;
+&lt;p&gt;Also, the &lt;tt class="docutils literal"&gt;$SYMBOL&lt;/tt&gt; type looks unusual - how is it represented with two
+numbers? The key to the mystery is that WASM has no built-in support for
+strings; they should be implemented manually using offsets to linear memory.
+The Bob WASM compiler emits the string values of all symbols encountered into
+linear memory, keeping track of the offset and length of each one; these are
+the two numbers placed in &lt;tt class="docutils literal"&gt;$SYMBOL&lt;/tt&gt;. This also allows to fairly easily
+implement the string interning feature of Scheme; multiple instances of the
+same symbol will only be allocated once.&lt;/p&gt;
+&lt;p&gt;Consider this trivial Scheme snippet:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;write&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;20&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;foo&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The compiler emits the symbols &amp;quot;foo&amp;quot; and &amp;quot;bar&amp;quot; into linear memory as follows &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(data (i32.const 2048) &amp;quot;foo&amp;quot;)
+(data (i32.const 2051) &amp;quot;bar&amp;quot;)
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;And looking for one of these addresses in the rest of the emitted code, we'll
+find:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(struct.new $SYMBOL (i32.const 2051) (i32.const 3))
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;As part of the code for constructing the constant &lt;tt class="docutils literal"&gt;cons&lt;/tt&gt; list representing the
+argument to &lt;tt class="docutils literal"&gt;write&lt;/tt&gt;; address 2051 and length 3: this is the symbol &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;Speaking of &lt;tt class="docutils literal"&gt;write&lt;/tt&gt;, implementing this builtin was quite interesting. For
+compatibility with the other Bob implementations in my repository, &lt;tt class="docutils literal"&gt;write&lt;/tt&gt;
+needs to be able to print recursive representations of arbitrary Scheme values,
+including lists, symbols, etc.&lt;/p&gt;
+&lt;p&gt;Initially I was reluctant to implement all of this functionality by hand in
+WASM text, but all alternatives ran into challenges:&lt;/p&gt;
+&lt;ol class="arabic simple"&gt;
+&lt;li&gt;Deferring this to the host is difficult because the host environment has
+no access to WASM GC references - they are completely opaque.&lt;/li&gt;
+&lt;li&gt;Implementing it in another language (maybe C?) and lowering to WASM is also
+challenging for a similar reason - the other language is unlikely to have
+a good representation of WASM GC objects.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;So I bit the bullet and - with some AI help for the tedious parts - just wrote
+an implementation of &lt;tt class="docutils literal"&gt;write&lt;/tt&gt; directly in WASM text; it wasn't really that
+bad. I import only two functions from the host:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(import &amp;quot;env&amp;quot; &amp;quot;write_char&amp;quot; (func $write_char (param i32)))
+(import &amp;quot;env&amp;quot; &amp;quot;write_i32&amp;quot; (func $write_i32 (param i32)))
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Though emitting integers &lt;a class="reference external" href="https://eli.thegreenplace.net/2023/itoa-integer-to-string-in-webassembly/"&gt;directly from WASM isn't hard&lt;/a&gt;,
+I figured this project already has enough code and some host help here would
+be welcome. For all the rest, only the lowest level &lt;tt class="docutils literal"&gt;write_char&lt;/tt&gt; is used.
+For example, here's how booleans are emitted in the canonical Scheme notation
+(&lt;tt class="docutils literal"&gt;#t&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;#f&lt;/tt&gt;):&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(func $emit_bool (param $b (ref $BOOL))
+    (call $emit (i32.const 35)) ;; &amp;#39;#&amp;#39;
+    (if (i32.eqz (struct.get $BOOL 0 (local.get $b)))
+        (then (call $emit (i32.const 102))) ;; &amp;#39;f&amp;#39;
+        (else (call $emit (i32.const 116))) ;; &amp;#39;t&amp;#39;
+    )
+)
+&lt;/pre&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="conclusion"&gt;
+&lt;h2&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;This was a really fun project, and I learned quite a bit about realistic code
+emission to WASM. Feel free to check out the source code of &lt;a class="reference external" href="https://github.com/eliben/bobscheme/blob/main/bob/wasmcompiler.py"&gt;WasmCompiler&lt;/a&gt; - it's
+very well documented. While it's a bit over 1000 LOC in total &lt;a class="footnote-reference" href="#footnote-4" id="footnote-reference-4"&gt;[4]&lt;/a&gt;, more than half
+of that is actually WASM text snippets that implement the builtin types and
+functions needed by a basic Scheme implementation.&lt;/p&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The GC proposal &lt;a class="reference external" href="https://github.com/WebAssembly/gc"&gt;is documented here&lt;/a&gt;.
+It was officially added to the WASM spec in Oct 2023.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;p class="first"&gt;In Bob this is currently done with &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;bytecodealliance/wasm-tools&lt;/span&gt;&lt;/tt&gt; for the
+text-to-binary conversion and Node.js for the execution environment, but
+this can change in the future.&lt;/p&gt;
+&lt;p class="last"&gt;I actually wanted to use Python bindings to wasmtime, but these don't
+appear to support WASM GC yet.&lt;/p&gt;
+&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;2048 is just an arbitrary offset the compiler uses as the beginning of
+the section for symbols in memory. We could
+also use the multiple memories feature of WASM and dedicate a separate
+linear memory just for symbols.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-4" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-4"&gt;[4]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;To be clear, this is just the WASM compiler class; it uses the &lt;tt class="docutils literal"&gt;Expr&lt;/tt&gt;
+representation of Scheme that is created by Bob's parser (and lexer);
+the code of these other components is shared among all Bob
+implementations and isn't counted here.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-01-17:/2026/compiling-scheme-to-webassembly/</guid>
+      <pubDate>Sat, 17 Jan 2026 22:40:40 -0800</pubDate>
+    </item>
+    <item>
+      <title>Revisiting "Let's Build a Compiler"</title>
+      <link>https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/</link>
+      <description>&lt;p&gt;There's an old compiler-building tutorial that has become part of the field's
+lore: the &lt;a class="reference external" href="https://compilers.iecc.com/crenshaw/"&gt;Let's Build a Compiler&lt;/a&gt;
+series by Jack Crenshaw (published between 1988 and 1995).&lt;/p&gt;
+&lt;p&gt;I &lt;a class="reference external" href="https://eli.thegreenplace.net/2003/07/29/great-compilers-tutorial"&gt;ran into it in 2003&lt;/a&gt;
+and was very impressed, but it's now 2025 and this tutorial is still being mentioned quite
+often &lt;a class="reference external" href="https://hn.algolia.com/?dateRange=pastYear&amp;amp;page=0&amp;amp;prefix=true&amp;amp;query=crenshaw&amp;amp;sort=byDate&amp;amp;type=all"&gt;in Hacker News threads&lt;/a&gt;.
+Why is that? Why does a tutorial from 35
+years ago, built in Pascal and emitting Motorola 68000 assembly - technologies that
+are virtually unknown for the new generation of programmers - hold sway over
+compiler enthusiasts? I've decided to find out.&lt;/p&gt;
+&lt;p&gt;The tutorial is &lt;a class="reference external" href="https://compilers.iecc.com/crenshaw/"&gt;easily available and readable online&lt;/a&gt;, but
+just re-reading it seemed insufficient. So I've decided on meticulously
+translating the compilers built in it to Python and emit a more modern target -
+WebAssembly. It was an enjoyable process and I want to share the outcome and
+some insights gained along the way.&lt;/p&gt;
+&lt;p&gt;The result is &lt;a class="reference external" href="https://github.com/eliben/letsbuildacompiler"&gt;this code repository&lt;/a&gt;.
+Of particular interest is the &lt;a class="reference external" href="https://github.com/eliben/letsbuildacompiler/blob/main/TUTORIAL.md"&gt;TUTORIAL.md file&lt;/a&gt;,
+which describes how each part in the original tutorial is mapped to my code. So
+if you want to read the original tutorial but play with code you can actually
+easily try on your own, feel free to follow my path.&lt;/p&gt;
+&lt;div class="section" id="a-sample"&gt;
+&lt;h2&gt;A sample&lt;/h2&gt;
+&lt;p&gt;To get a taste of the input language being compiled and the output my compiler
+generates, here's a sample program in the KISS language designed by Jack
+Crenshaw:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;var X=0
+
+ { sum from 0 to n-1 inclusive, and add to result }
+ procedure addseq(n, ref result)
+     var i, sum  { 0 initialized }
+     while i &amp;lt; n
+         sum = sum + i
+         i = i + 1
+     end
+     result = result + sum
+ end
+
+ program testprog
+ begin
+     addseq(11, X)
+ end
+ .
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;It's from part 13 of the tutorial, so it showcases procedures along with control
+constructs like the &lt;tt class="docutils literal"&gt;while&lt;/tt&gt; loop, and passing parameters both by value and by
+reference. Here's the WASM text generated by my compiler for part 13:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;module&lt;/span&gt;
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;memory&lt;/span&gt; &lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="c1"&gt;;; Linear stack pointer. Used to pass parameters by ref.&lt;/span&gt;
+  &lt;span class="c1"&gt;;; Grows downwards (towards lower addresses).&lt;/span&gt;
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;global&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mf"&gt;65536&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;global&lt;/span&gt; &lt;span class="nv"&gt;$X&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$ADDSEQ&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="nv"&gt;$N&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="nv"&gt;$RESULT&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;local&lt;/span&gt; &lt;span class="nv"&gt;$I&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;local&lt;/span&gt; &lt;span class="nv"&gt;$SUM&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;loop&lt;/span&gt; &lt;span class="nv"&gt;$loop1&lt;/span&gt;
+      &lt;span class="k"&gt;block&lt;/span&gt; &lt;span class="nv"&gt;$breakloop1&lt;/span&gt;
+        &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$I&lt;/span&gt;
+        &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$N&lt;/span&gt;
+        &lt;span class="nb"&gt;i32.lt_s&lt;/span&gt;
+        &lt;span class="nb"&gt;i32.eqz&lt;/span&gt;
+        &lt;span class="nb"&gt;br_if&lt;/span&gt; &lt;span class="nv"&gt;$breakloop1&lt;/span&gt;
+        &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$SUM&lt;/span&gt;
+        &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$I&lt;/span&gt;
+        &lt;span class="nb"&gt;i32.add&lt;/span&gt;
+        &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="nv"&gt;$SUM&lt;/span&gt;
+        &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$I&lt;/span&gt;
+        &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+        &lt;span class="nb"&gt;i32.add&lt;/span&gt;
+        &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="nv"&gt;$I&lt;/span&gt;
+        &lt;span class="nb"&gt;br&lt;/span&gt; &lt;span class="nv"&gt;$loop1&lt;/span&gt;
+      &lt;span class="k"&gt;end&lt;/span&gt;
+    &lt;span class="k"&gt;end&lt;/span&gt;
+    &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$RESULT&lt;/span&gt;
+    &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$RESULT&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.load&lt;/span&gt;
+    &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$SUM&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.add&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.store&lt;/span&gt;
+  &lt;span class="p"&gt;)&lt;/span&gt;
+
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$main&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;export&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;main&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;11&lt;/span&gt;
+    &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt;      &lt;span class="c1"&gt;;; make space on stack&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.sub&lt;/span&gt;
+    &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt;
+    &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt;
+    &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$X&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.store&lt;/span&gt;
+    &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt;    &lt;span class="c1"&gt;;; push address as parameter&lt;/span&gt;
+    &lt;span class="nb"&gt;call&lt;/span&gt; &lt;span class="nv"&gt;$ADDSEQ&lt;/span&gt;
+    &lt;span class="c1"&gt;;; restore parameter X by ref&lt;/span&gt;
+    &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;
+    &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$X&lt;/span&gt;
+    &lt;span class="c1"&gt;;; clean up stack for ref parameters&lt;/span&gt;
+    &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;
+    &lt;span class="nb"&gt;i32.add&lt;/span&gt;
+    &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__sp&lt;/span&gt;
+    &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$X&lt;/span&gt;
+  &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;You'll notice that there is some trickiness in the emitted code w.r.t. handling
+the by-reference parameter (my &lt;a class="reference external" href="https://eli.thegreenplace.net/2025/notes-on-the-wasm-basic-c-abi/"&gt;previous post&lt;/a&gt;
+deals with this issue in more detail). In general, though, the emitted code is
+inefficient - there is close to 0 optimization applied.&lt;/p&gt;
+&lt;p&gt;Also, if you're very diligent you'll notice something odd about the global
+variable &lt;tt class="docutils literal"&gt;X&lt;/tt&gt; - it seems to be implicitly returned by the generated &lt;tt class="docutils literal"&gt;main&lt;/tt&gt;
+function. This is just a testing facility that makes my compiler easy to test.
+All the compilers are extensively tested - usually by running the
+generated WASM code &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt; and verifying expected results.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="insights-what-makes-this-tutorial-so-special"&gt;
+&lt;h2&gt;Insights - what makes this tutorial so special?&lt;/h2&gt;
+&lt;p&gt;While reading the original tutorial again, I had on opportunity to reminisce on
+what makes it so effective. Other than the very fluent and conversational
+writing style of Jack Crenshaw, I think it's a combination of two key
+factors:&lt;/p&gt;
+&lt;ol class="arabic simple"&gt;
+&lt;li&gt;The tutorial builds a recursive-descent parser step by step, rather than
+giving a long preface on automata and table-based parser generators. When
+I first encountered it (in 2003), it was taken for granted that if you want
+to write a parser then lex + yacc are the way to go &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;. Following the
+development of a simple and clean hand-written
+parser was a revelation that wholly changed my approach to the subject;
+subsequently, hand-written recursive-descent parsers have been my go-to approach
+&lt;a class="reference external" href="https://eli.thegreenplace.net/tag/recursive-descent-parsing"&gt;for almost 20 years now&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;Rather than getting stuck in front-end minutiae, the tutorial goes straight
+to generating working assembly code, from very early on. This was also a
+breath of fresh air for engineers who grew up with more traditional courses
+where you spend 90% of the time on parsing, type checking and other semantic
+analysis and often run entirely out of steam by the time code generation
+is taught.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;To be honest, I don't think either of these are a big problem with modern
+resources, but back in the day the tutorial clearly hit the right nerve with
+many people.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="what-else-does-it-teach-us"&gt;
+&lt;h2&gt;What else does it teach us?&lt;/h2&gt;
+&lt;p&gt;Jack Crenshaw's tutorial takes the &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Syntax-directed_translation"&gt;syntax-directed translation&lt;/a&gt;
+approach, where code is emitted &lt;em&gt;while parsing&lt;/em&gt;, without having to divide the
+compiler into explicit phases with IRs. As I said above, this is a fantastic
+approach for getting started, but in the latter parts of the tutorial it starts
+showing its limitations. Especially once we get to types, it becomes painfully
+obvious that it would be very nice if we knew the types of expressions &lt;em&gt;before&lt;/em&gt;
+we generate code for them.&lt;/p&gt;
+&lt;p&gt;I don't know if this is implicated in Jack Crenshaw's abandoning the tutorial
+at some point after part 14, but it may very well be. He keeps writing how
+the emitted code is clearly sub-optimal &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt; and can be improved, but IMHO it's
+just not that easy to improve using the syntax-directed translation strategy.
+With perfect hindsight vision, I would probably use Part 14 (types) as a turning
+point - emitting some kind of AST from the parser and then doing simple type
+checking and analysis on that AST prior to generating code from it.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="conclusion"&gt;
+&lt;h2&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;All in all, the original tutorial remains a wonderfully readable introduction
+to building compilers. This post and the &lt;a class="reference external" href="https://github.com/eliben/letsbuildacompiler"&gt;GitHub repository&lt;/a&gt;
+it describes are a modest
+contribution that aims to improve the experience of folks reading the original
+tutorial today and not willing to use obsolete technologies. As always, let
+me know if you run into any issues or have questions!&lt;/p&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;This is done using the &lt;a class="reference external" href="https://pypi.org/project/wasmtime/"&gt;Python bindings to wasmtime&lt;/a&gt;.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;By the way, gcc switched from YACC to hand-written recursive-descent
+parsing in the 2004-2006 timeframe, and Clang has been implemented with
+a recursive-descent parser from the start (2007).&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;p class="first"&gt;Concretely: when we compile &lt;tt class="docutils literal"&gt;subexpr1 + subexpr2&lt;/tt&gt; and the two sides have different
+types, it would be mighty nice to know that &lt;em&gt;before&lt;/em&gt; we actually generate
+the code for both sub-expressions. But the syntax-directed translation
+approach just doesn't work that way.&lt;/p&gt;
+&lt;p class="last"&gt;To be clear: it's easy to generate &lt;em&gt;working&lt;/em&gt; code; it's just not easy
+to generate optimal code without some sort of type analysis that's
+done before code is actually generated.&lt;/p&gt;
+&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2025-12-09:/2025/revisiting-lets-build-a-compiler/</guid>
+      <pubDate>Sat, 17 Jan 2026 22:40:40 -0800</pubDate>
+    </item>
+    <item>
+      <title>Summary of reading: October - December 2025</title>
+      <link>https://eli.thegreenplace.net/2025/summary-of-reading-october-december-2025/</link>
+      <description>&lt;ul class="simple"&gt;
+&lt;li&gt;&amp;quot;The Origins of Political Order: From Prehuman Times to the French Revolution&amp;quot;
+by Francis Fukuyama - while reading this book it occurred to me that domains
+of study like political sciense must be incredibly difficult and frustrating.
+Imagine trying to match a model onto a set of data; the model has thousands
+of parameters, but you only have dozens or a couple of hundred of data points.
+This is what political sciense is like; there's a huge number of parameters
+and variables, far more than actual historical examples. And moreover, the
+historical examples are vague and often based on very partial memory and
+sketchy records. So books like this
+most often just devolve to history. As a history book, this one isn't bad,
+but I found it hard to draw wide conclusions from the themes it presents.&lt;/li&gt;
+&lt;li&gt;&amp;quot;Exploding the Phone: The Untold Story of the Teenagers and Outlaws Who
+Hacked Ma Bell&amp;quot; by Phil Lapsley - a detailed history of phone phreaking.
+While I wish it focused more on the technical details than on the legal
+escapades of well-known phreaks, it's still a good book that provides decent
+coverage of an important era in the history of computing.&lt;/li&gt;
+&lt;li&gt;&amp;quot;The Zone&amp;quot; by Sergei Dovlatov - (read in Russian) a satirical novella about
+the life of a guard in a Soviet prison camp in the 1960s. I liked this book
+less than &amp;quot;The Compromise&amp;quot;.&lt;/li&gt;
+&lt;li&gt;&amp;quot;The Joy of SET&amp;quot; by McMahon and Gordon x3 - explores the various mathematical
+dimensions of the SET card game. It's surprising how much interesting math
+there is around the game! Combinatorics and probability sure, but also
+modular arithmetic, vectors, linear algebra and affine geometry. This is a fun
+book for fans of the game (and of math); it's well written and even contains
+exercises. Don't expect it to teach you to become better at playing SET
+though - that's really not its goal.&lt;/li&gt;
+&lt;li&gt;&amp;quot;Doom Guy: Life in First Person&amp;quot; by John Romero - Romero's auto-biography,
+also read by himself in the Audible version. Very good book, gives another
+angle at id software and the seminal games they developed. &amp;quot;Masters of Doom&amp;quot;
+is one of my favorite books, and this one complements it very nicely.&lt;/li&gt;
+&lt;li&gt;&amp;quot;Buffett: The Making of an American Capitalist&amp;quot; by Roger Lowenstein - a
+detailed biography of Warren Buffett. Great book, very informative and
+interesting; the only issue is that it was written in 1995, and doesn't
+mention the last 30 years. It would be interesting to read an up-to-date
+biography at some point.&lt;/li&gt;
+&lt;li&gt;&amp;quot;The Great Democracies: A History of the English Speaking Peoples, Volume IV&amp;quot;
+by Winston Churchill - the final volume, covering the years 1815 - 1901.
+There's still focus on England, but also coverage of the American civil war,
+Australia, and some of Britain's colonial interests in Africa.&lt;/li&gt;
+&lt;li&gt;&amp;quot;Starburst and Luminary, an Apollo Memoir&amp;quot; Don Eyles - the author worked on
+coding the landing programs for the lunar module of several Apollo missions as
+a young engineer in MIT. The book must be based on fairly detailed journals,
+because it contains an astonishing amount of detail (given that it was
+written 50 years after the events described). Pretty interesting insight into
+that era, all in all, though I didn't care much about the author's mixing in
+his love life into it. It's his book, of course, and he can write whatever he
+wants in it, but IMO it just dilutes the other great material and makes it
+generally less suitable for younger audiences.&lt;/li&gt;
+&lt;li&gt;&amp;quot;Stoner&amp;quot; by John Williams - I have mixed feelings about this book, and they
+will probably take (at least) another read to resolve. On one hand, the
+writing is clearly masterful and &amp;quot;mood-evoking&amp;quot; in a way that only few
+authors managed to do for me. Character development is beautiful, and there
+are glimpses of the flow of learning described amazingly well w.r.t. Stoner's
+own work. On the other hand, the characters are also too extreme - almost
+caricatures, and not very well connected to each other. There are huge amounts
+of page real-estate allocated to certain topics that are barely mentioned
+later on; this happens again and again. Edith, in particular, is a very
+troubling character, and since Stoner is clearly presented as someone who
+is not a pushover when he wants to, his behavior is puzzling to me.&lt;/li&gt;
+&lt;li&gt;&amp;quot;The Magic Mountain&amp;quot; by Thomas Mann. A young German college student arrives
+to a sanatorium in the Swiss Alps to visit his cousin who suffers from TB,
+and stays for years, chronicling the odd personas flowing through the
+establishment. There's always some risk with trying famous books from over 100
+years ago, and in this case the risk materialized - I found this one to be
+tedious, rambling and outdated. It's not all bad; there are certainly good
+parts, funny parts and some timeless lessons about human nature. But on the
+balance, I didn't enjoy this book and the only reason I managed to actually
+finish it cover to cover is because of the audiobook format (which let me zone
+out at times while doing something else).&lt;/li&gt;
+&lt;li&gt;&amp;quot;Breaking Through: My Life in Science&amp;quot; by Katalin Karikó - an autobiography
+by the molecular biologist who contributed significantly to therapeutic uses
+of mRNA, including its use for the COVID-19 vaccine. Highly recommended.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Re-reads:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;&amp;quot;Thinking Fast and Slow&amp;quot; by Daniel Kahneman - still a great book, though I
+did not enjoy the re-read as much as I'd thought I would.&lt;/li&gt;
+&lt;li&gt;&amp;quot;The Man Who Changed Everything&amp;quot; by Basil Mahon&lt;/li&gt;
+&lt;li&gt;&amp;quot;Of mice and men&amp;quot; by John Steinbeck&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2025-12-31:/2025/summary-of-reading-october-december-2025/</guid>
+      <pubDate>Fri, 02 Jan 2026 11:41:18 -0800</pubDate>
+    </item>
+    <item>
+      <title>Plugins case study: mdBook preprocessors</title>
+      <link>https://eli.thegreenplace.net/2025/plugins-case-study-mdbook-preprocessors/</link>
+      <description>&lt;p&gt;&lt;a class="reference external" href="https://rust-lang.github.io/mdBook/index.html"&gt;mdBook&lt;/a&gt; is a tool for easily
+creating books out of Markdown files. It's very popular in the Rust ecosystem,
+where it's used (among other things) to publish &lt;a class="reference external" href="https://doc.rust-lang.org/book/"&gt;the official Rust book&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;mdBook has a simple yet effective plugin mechanism that can be used to modify
+the book output in arbitrary ways, using any programming language or tool. This
+post describes the mechanism and how it aligns with the
+&lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;fundamental concepts of plugin infrastructures&lt;/a&gt;.&lt;/p&gt;
+&lt;div class="section" id="mdbook-preprocessors"&gt;
+&lt;h2&gt;mdBook preprocessors&lt;/h2&gt;
+&lt;p&gt;mdBook's architecture is pretty simple: your contents go into a directory tree
+of Markdown files. mdBook then renders these into a book, with one file per
+chapter. The book's output is HTML by default, but mdBook supports other
+outputs like PDF.&lt;/p&gt;
+&lt;p&gt;The &lt;a class="reference external" href="https://rust-lang.github.io/mdBook/for_developers/preprocessors.html"&gt;preprocessor mechanism&lt;/a&gt;
+lets us register an arbitrary program that runs on the book's source after
+it's loaded from Markdown files; this program can modify the book's contents in
+any way it wishes before it all gets sent to the renderer for generating output.&lt;/p&gt;
+&lt;img alt="Preprocessor flow for mdbook" class="align-center" src="https://eli.thegreenplace.net/images/2025/mdbook-preprocessor.png" /&gt;
+&lt;p&gt;The official documentation &lt;a class="reference external" href="https://rust-lang.github.io/mdBook/for_developers/preprocessors.html#hooking-into-mdbook"&gt;explains this process very well&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="sample-plugin"&gt;
+&lt;h2&gt;Sample plugin&lt;/h2&gt;
+&lt;p&gt;I rewrote &lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;my classical &amp;quot;nacrissist&amp;quot; plugin&lt;/a&gt;
+for mdBook; the code is &lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2025/plugin-mdbook"&gt;available here&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;In fact, there are two renditions of the same plugin there:&lt;/p&gt;
+&lt;ol class="arabic simple"&gt;
+&lt;li&gt;One in Python, to demonstrate how mdBook can invoke preprocessors written in
+any programming language.&lt;/li&gt;
+&lt;li&gt;One in Rust, to demonstrate how mdBook exposes an application API to plugins
+written in Rust (since mdBook is itself written in Rust).&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+&lt;div class="section" id="fundamental-plugin-concepts-in-this-case-study"&gt;
+&lt;h2&gt;Fundamental plugin concepts in this case study&lt;/h2&gt;
+&lt;p&gt;Let's see how this case study of mdBook preprocessors measures against the
+&lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;Fundamental plugin concepts&lt;/a&gt;
+that were covered &lt;a class="reference external" href="https://eli.thegreenplace.net/tag/plugins"&gt;several times on this blog&lt;/a&gt;.&lt;/p&gt;
+&lt;div class="section" id="discovery"&gt;
+&lt;h3&gt;Discovery&lt;/h3&gt;
+&lt;p&gt;Discovery in mdBook is very explicit. For every plugin we want mdBook to use,
+it has to be listed in the project's &lt;tt class="docutils literal"&gt;book.toml&lt;/tt&gt; configuration file. For
+example, in &lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2025/plugin-mdbook"&gt;the code sample for this post&lt;/a&gt;, the Python narcissist plugin
+is noted in &lt;tt class="docutils literal"&gt;book.toml&lt;/tt&gt; as follows:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;[preprocessor.narcissistpy]
+command = &amp;quot;python3 ../preprocessor-python-narcissist/narcissist.py&amp;quot;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Each preprocessor is a command for &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; to execute in a sub-process.
+Here it uses Python, but it can be anything else that can be validly executed.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="registration"&gt;
+&lt;h3&gt;Registration&lt;/h3&gt;
+&lt;p&gt;For the purpose of registration, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; actually invokes the plugin command
+&lt;em&gt;twice&lt;/em&gt;. The first time, it passes the arguments &lt;tt class="docutils literal"&gt;supports &amp;lt;renderer&amp;gt;&lt;/tt&gt; where
+&lt;tt class="docutils literal"&gt;&amp;lt;renderer&amp;gt;&lt;/tt&gt; is the name of the renderer (e.g. &lt;tt class="docutils literal"&gt;html&lt;/tt&gt;). If the command
+returns 0, it means the preprocessor supports this renderer; otherwise, it
+doesn't.&lt;/p&gt;
+&lt;p&gt;In the second invocation, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; passes some metadata plus the entire book
+in JSON format to the preprocessor through stdin, and expects the preprocessor
+to return the modified book as JSON to stdout (using the same schema).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="hooks"&gt;
+&lt;h3&gt;Hooks&lt;/h3&gt;
+&lt;p&gt;In terms of hooks, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; takes a very coarse-grained approach. The
+preprocessor gets the &lt;em&gt;entire book&lt;/em&gt; in a single JSON object (along with a
+context object that contains metadata), and is expected to emit the entire
+modified book in a single JSON object.
+It's up to the preprocessor to figure out which parts of the book to read and
+which parts to modify.&lt;/p&gt;
+&lt;p&gt;Given that books and other documentation typically have limited sizes, this
+is a reasonable design choice. Even tens of MiB of JSON-encoded data are very
+quick to pass between sub-processes via stdout and marshal/unmarshal. But we
+wouldn't be able to implement Wikipedia using this design.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="exposing-an-application-api-to-plugins"&gt;
+&lt;h3&gt;Exposing an application API to plugins&lt;/h3&gt;
+&lt;p&gt;This is tricky, given that the preprocessor mechanism is language-agnostic.
+Here, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; offers some additional utilities to preprocessors implemented
+in Rust, however. These get access to &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt;'s API to unmarshal the JSON
+representing the context metadata and book's contents. &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; offers the
+&lt;a class="reference external" href="https://docs.rs/mdbook-preprocessor/latest/mdbook_preprocessor/trait.Preprocessor.html"&gt;Preprocessor trait&lt;/a&gt;
+Rust preprocessors can implement, which makes it easier to wrangle the book's
+contents. See &lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2025/plugin-mdbook/preprocessor-rust-narcissist"&gt;my Rust version of the narcissist preprocessor&lt;/a&gt;
+for a basic example of this.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="renderers-backends"&gt;
+&lt;h2&gt;Renderers / backends&lt;/h2&gt;
+&lt;p&gt;Actually, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; has &lt;em&gt;another&lt;/em&gt; plugin mechanism, but it's very similar
+conceptually to preprocessors. A &lt;em&gt;renderer&lt;/em&gt; (also called a &lt;em&gt;backend&lt;/em&gt; in some
+of &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt;'s own doc pages) takes the same input as a preprocessor, but is
+free to do whatever it wants with it. The default renderer emits the HTML
+for the book; &lt;a class="reference external" href="https://github.com/rust-lang/mdBook/wiki/Third-party-plugins#backends"&gt;other renderers&lt;/a&gt;
+can do other things.&lt;/p&gt;
+&lt;p&gt;The idea is that the book can go through multiple preprocessors, but at the
+end a &lt;em&gt;single&lt;/em&gt; renderer.&lt;/p&gt;
+&lt;p&gt;The data a renderer receives is exactly the same as a preprocessor - JSON
+encoded book contents. Due to this similarity, there's no real point getting
+deeper into renderers in this post.&lt;/p&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2025-12-17:/2025/plugins-case-study-mdbook-preprocessors/</guid>
+      <pubDate>Thu, 18 Dec 2025 02:10:51 -0800</pubDate>
+    </item>
+    <item>
+      <title>Notes on the WASM Basic C ABI</title>
+      <link>https://eli.thegreenplace.net/2025/notes-on-the-wasm-basic-c-abi/</link>
+      <description>&lt;p&gt;The &lt;a class="reference external" href="https://github.com/WebAssembly/tool-conventions/tree/main"&gt;WebAssembly/tool-conventions&lt;/a&gt;
+repository contains &amp;quot;Conventions supporting interoperability between tools
+working with WebAssembly&amp;quot;.&lt;/p&gt;
+&lt;p&gt;Of special interest, in contains the &lt;a class="reference external" href="https://github.com/WebAssembly/tool-conventions/blob/main/BasicCABI.md"&gt;Basic C ABI&lt;/a&gt; - an ABI
+for representing C programs in WASM. This ABI is followed by compilers like Clang
+with the &lt;tt class="docutils literal"&gt;wasm32&lt;/tt&gt; target. Rust is &lt;a class="reference external" href="https://blog.rust-lang.org/2025/04/04/c-abi-changes-for-wasm32-unknown-unknown/"&gt;also switching to this ABI&lt;/a&gt;
+for &lt;tt class="docutils literal"&gt;extern &amp;quot;C&amp;quot;&lt;/tt&gt; code.&lt;/p&gt;
+&lt;p&gt;This post contains some notes on this ABI, with annotated code samples and
+diagrams to help visualize what the emitted WASM code is doing. Hereafter, &amp;quot;the
+ABI&amp;quot; refers to this Basic C ABI.&lt;/p&gt;
+&lt;div class="section" id="preface-the-wasm-value-stack-and-linear-memory"&gt;
+&lt;h2&gt;Preface: the WASM value stack and linear memory&lt;/h2&gt;
+&lt;p&gt;In these notes, annotated WASM snippets often contain descriptions of the state
+of the WASM value stack at a given point in time. Unless otherwise specified,
+&amp;quot;TOS&amp;quot; refers to &amp;quot;Top Of value Stack&amp;quot;, and the notation &lt;tt class="docutils literal"&gt;[ x&amp;nbsp; y ]&lt;/tt&gt; means the
+stack has &lt;tt class="docutils literal"&gt;y&lt;/tt&gt; on top, with &lt;tt class="docutils literal"&gt;x&lt;/tt&gt; right under it (and possibly some other
+stuff that's not relevant to the discussion under &lt;tt class="docutils literal"&gt;x&lt;/tt&gt;); in this notation,
+the stack grows &amp;quot;to the right&amp;quot;.&lt;/p&gt;
+&lt;p&gt;The WASM value stack has no linear memory representation and cannot be
+addressed, so it's meaningless to discuss whether the stack grows towards lower
+or higher addresses. The value stack is simply an abstract stack, where values
+can be pushed onto or popped off its &amp;quot;top&amp;quot;.&lt;/p&gt;
+&lt;p&gt;Whenever addressing is required, the ABI specifies explicitly managing a
+separate stack in linear memory. This stack is very similar to how stacks are
+managed in hardware assembly languages (except that in the ABI this stack
+pointer is held in a global variable, and is not a special register), and it's
+called the &amp;quot;linear stack&amp;quot;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="scalar-parameters-and-returns"&gt;
+&lt;h2&gt;Scalar parameters and returns&lt;/h2&gt;
+&lt;p&gt;By &amp;quot;scalar&amp;quot; I mean basic C types like &lt;tt class="docutils literal"&gt;int&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;double&lt;/tt&gt; or &lt;tt class="docutils literal"&gt;char&lt;/tt&gt;. For
+these, using the WASM value stack is sufficient, since WASM functions can accept
+an arbitrary number of scalar parameters.&lt;/p&gt;
+&lt;p&gt;This C function:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;add_three&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Will be compiled into something like:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$add_three&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;     &lt;span class="c1"&gt;;; [ y ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;     &lt;span class="c1"&gt;;; [ y  x ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;         &lt;span class="c1"&gt;;; [ x+y ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;     &lt;span class="c1"&gt;;; [ x+y  z ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;         &lt;span class="c1"&gt;;; [ x+y+z ]&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;And can be called by pushing three values onto the stack and invoking
+&lt;tt class="docutils literal"&gt;call $add_three&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;The ABI specifies that all integral types 32-bit and smaller will be passed
+as &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt;, with the smaller types appropriately sign or zero extended. For
+example, consider this C function:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;add_three_chars&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;It's compiled to the almost same code as &lt;tt class="docutils literal"&gt;add_three&lt;/tt&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$add_three_chars&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;
+  &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="err"&gt;.ext&lt;/span&gt;&lt;span class="k"&gt;end&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="err"&gt;_s&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Except the last &lt;tt class="docutils literal"&gt;i32.extend8_s&lt;/tt&gt;, which takes the lowest 8 bits of the value
+on TOS and sign-extends them to the full &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; (effectively ignoring all
+the higher bits). Similarly, when &lt;tt class="docutils literal"&gt;$add_three_chars&lt;/tt&gt; is called, each of its
+parameters goes through &lt;tt class="docutils literal"&gt;i32.extend8_s&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;There are additional oddities that we won't get deep into, like passing
+&lt;tt class="docutils literal"&gt;__int128&lt;/tt&gt; values via two &lt;tt class="docutils literal"&gt;i64&lt;/tt&gt; parameters.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="pointers"&gt;
+&lt;h2&gt;Pointers&lt;/h2&gt;
+&lt;p&gt;C pointers are just scalars, but it's still educational to review how
+they are handled in the ABI. Pointers to any type are passed in &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; values;
+the compiler knows they are pointers, though, and emits the appropriate
+instructions. For example:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;add_indirect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;sum&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Is compiled to:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$add_indirect&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;         &lt;span class="c1"&gt;;; [ ptr_sum ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;         &lt;span class="c1"&gt;;; [ ptr_sum  y ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;         &lt;span class="c1"&gt;;; [ ptr_sum  y  x ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;             &lt;span class="c1"&gt;;; [ ptr_sum  x+y ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.tee&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;         &lt;span class="c1"&gt;;; x &amp;lt;- x+y, leaving stack intact&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.store&lt;/span&gt;           &lt;span class="c1"&gt;;; store x+y into *ptr_sum&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;         &lt;span class="c1"&gt;;; [ x+y ] for returning&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Recall that in WASM, there's no difference between an &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; representing an
+address in linear memory and an &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; representing just a number.
+&lt;tt class="docutils literal"&gt;i32.store&lt;/tt&gt; expects &lt;tt class="docutils literal"&gt;[ addr&amp;nbsp; value ]&lt;/tt&gt; on TOS, and does &lt;tt class="docutils literal"&gt;*addr = value&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;Note that the &lt;tt class="docutils literal"&gt;x&lt;/tt&gt; parameter isn't needed any longer after the sum is
+computed, so it's reused later on to hold the return value. WASM parameters are
+treated just like other locals (as in C).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="passing-parameters-through-linear-memory"&gt;
+&lt;h2&gt;Passing parameters through linear memory&lt;/h2&gt;
+&lt;p&gt;According to the ABI, while scalars and single-element structs or unions are
+passed to a callee via WASM function parameters (as shown above), for larger
+aggregates the compiler utilizes linear memory.&lt;/p&gt;
+&lt;p&gt;Specifically, each function gets a &amp;quot;frame&amp;quot; in a region of linear memory
+allocated for the linear stack. This region grows downwards from high
+to low addresses &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;, and the global &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; points at the bottom
+of the frame:&lt;/p&gt;
+&lt;img alt="WASM C ABI linear stack" class="align-center" src="https://eli.thegreenplace.net/images/2025/wasm-c-abi-linear-stack.png" /&gt;
+&lt;p&gt;Consider this code:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="n"&gt;__attribute__&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;noinline&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pair_calculate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pair&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pair&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pair&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;do_work&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;){&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pair_calculate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;When &lt;tt class="docutils literal"&gt;do_work&lt;/tt&gt; is compiled to WASM, prior to calling &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; it
+copies &lt;tt class="docutils literal"&gt;pp&lt;/tt&gt; into a location in linear memory, and passes the address of this
+location to &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt;. This location is on the linear stack, which
+is maintained using the &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; global. Here's the compiled WASM
+for &lt;tt class="docutils literal"&gt;do_work&lt;/tt&gt; (I also gave its local variable a meaningful name, for
+readability):&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$do_work&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;local&lt;/span&gt; &lt;span class="nv"&gt;$sp&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.sub&lt;/span&gt;
+  &lt;span class="nb"&gt;local.tee&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; sp &amp;lt;- __stack_pointer - 16&lt;/span&gt;
+  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; update __stack_pointer as well&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.store&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;12&lt;/span&gt;           &lt;span class="c1"&gt;;; mem[sp+12] = y&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.store&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;            &lt;span class="c1"&gt;;; mem[sp+8] = x&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp  sp ]&lt;/span&gt;
+
+  &lt;span class="c1"&gt;;; Do a 64-bit load from mem[sp+8], this loads the entire pair into&lt;/span&gt;
+  &lt;span class="c1"&gt;;; a single i64.&lt;/span&gt;
+  &lt;span class="nb"&gt;i64.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt; &lt;span class="k"&gt;align&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;
+  &lt;span class="nb"&gt;i64.store&lt;/span&gt;                     &lt;span class="c1"&gt;;; mem[sp] = pair-as-i64&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp ]&lt;/span&gt;
+  &lt;span class="nb"&gt;call&lt;/span&gt; &lt;span class="nv"&gt;$pair_calculate&lt;/span&gt;          &lt;span class="c1"&gt;;; call pair_calculate, passing it sp&lt;/span&gt;
+  &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; x = result&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ sp+16 ]&lt;/span&gt;
+  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; __stack_pointer back to its original value&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ x ] for return&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Some notes about this code:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;There are two instance of the pair &lt;tt class="docutils literal"&gt;pp&lt;/tt&gt; in linear memory prior to the call
+to &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt;: the original one from the initialization statement
+(at offset 8), and a copy created for passing into &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; (at
+offset 0). Theoretically, as &lt;tt class="docutils literal"&gt;pp&lt;/tt&gt; is unused used after the call, the
+compiler could do better here and keep only a single copy.&lt;/li&gt;
+&lt;li&gt;The stack pointer is decremented by 16, and restored at the end of the
+function.&lt;/li&gt;
+&lt;li&gt;The first few instructions - where the stack pointer is adjusted - are
+usually called the &lt;em&gt;prologue&lt;/em&gt; of the function. In the same vein, the last
+few instructions where the stack pointer is reset back to where it was at
+the entry are called the &lt;em&gt;epilogue&lt;/em&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Before &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; is called, the linear stack looks like this:&lt;/p&gt;
+&lt;img alt="WASM C ABI linear stack view at entry to pair_calculate" class="align-center" src="https://eli.thegreenplace.net/images/2025/wasm-c-abi-passing-pair.png" /&gt;
+&lt;p&gt;Following the ABI, the code emitted for &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; takes &lt;tt class="docutils literal"&gt;Pair*&lt;/tt&gt;
+(by reference, instead of by value as the original C code):&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$pair_calculate&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;           &lt;span class="c1"&gt;;; [ addr ]&lt;/span&gt;
+
+  &lt;span class="c1"&gt;;; Recall that what&amp;#39;s stored at mem[addr] is a pair, with &amp;#39;x&amp;#39;, followed by &amp;#39;y&amp;#39;.&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;     &lt;span class="c1"&gt;;; [ pair.y ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;               &lt;span class="c1"&gt;;; [ 3*pair.y ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.load&lt;/span&gt;              &lt;span class="c1"&gt;;; [ 3*pair.y  pair.x ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;7&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;               &lt;span class="c1"&gt;;; [ 3*pair.y  7*pair.x ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;               &lt;span class="c1"&gt;;; [ 3*pair.y+7*pair.x ]&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Each function that needs linear stack space is responsible for adjusting the
+stack pointer and restoring it to its original place at the end. This naturally
+enables nested function calls; suppose we have some function &lt;tt class="docutils literal"&gt;a&lt;/tt&gt; calling
+function &lt;tt class="docutils literal"&gt;b&lt;/tt&gt; which, in turn, calls function &lt;tt class="docutils literal"&gt;c&lt;/tt&gt;, and let's assume all of
+these need to allocate space on the linear stack. This is how the linear
+stack looks after &lt;tt class="docutils literal"&gt;c&lt;/tt&gt;'s prologue:&lt;/p&gt;
+&lt;img alt="WASM C ABI linear stack showing nested frames" class="align-center" src="https://eli.thegreenplace.net/images/2025/wasm-c-abi-nested-frames.png" /&gt;
+&lt;p&gt;Since each function knows how much stack space it has allocated, it's able to
+properly restore &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; to the bottom of its caller's frame
+before returning.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="returning-values-through-linear-memory"&gt;
+&lt;h2&gt;Returning values through linear memory&lt;/h2&gt;
+&lt;p&gt;What about returning values of aggregate types? According to the ABI, these
+are also handled indirectly; a pointer parameter is &lt;em&gt;prepended&lt;/em&gt; to the
+parameter list of the function. The function writes its return value into
+this address.&lt;/p&gt;
+&lt;p&gt;The following function:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;make_pair&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Is compiled to:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="c1"&gt;;; Note that the WASM function has three parameters an no return values.&lt;/span&gt;
+&lt;span class="c1"&gt;;; The first parameter (local 0) is the address where it should store its&lt;/span&gt;
+&lt;span class="c1"&gt;;; return value.&lt;/span&gt;
+&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$make_pair&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.store&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;      &lt;span class="c1"&gt;;; ret_addr[4] = y&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.store&lt;/span&gt;               &lt;span class="c1"&gt;;; ret_addr[0] = x&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Here's a function that calls it:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;do_work&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;make_pair&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;And the corresponding WASM:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$do_work&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="c1"&gt;;; local 2 to hold the address for make_pair&amp;#39;s return value.&lt;/span&gt;
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;local&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; sp &amp;lt;- __stack_pointer - 16&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.sub&lt;/span&gt;
+  &lt;span class="nb"&gt;local.tee&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; save sp in local 2&lt;/span&gt;
+  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;8&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ sp+8 ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp+8  x ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp+8  x  y ]&lt;/span&gt;
+
+  &lt;span class="c1"&gt;;; make_pair is called with three parameters: the address for where to&lt;/span&gt;
+  &lt;span class="c1"&gt;;; store its return pair, x and y.&lt;/span&gt;
+  &lt;span class="nb"&gt;call&lt;/span&gt; &lt;span class="nv"&gt;$make_pair&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;
+  &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; local 1 = pp.x&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;12&lt;/span&gt;
+  &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;                   &lt;span class="c1"&gt;;; local 0 = pp.y&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;
+  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; __stack_pointer back to its original value&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ 3*pp.y ]&lt;/span&gt;
+  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;7&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ 3*pp.y  7*pp.x ]&lt;/span&gt;
+  &lt;span class="nb"&gt;i32.add&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ 3*pp.y+7*pp.x ]&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Note that this function only uses 8 bytes of its stack frame, but allocates 16;
+this is because the ABI dictates 16-byte alignment for the stack pointer.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="advanced-topics"&gt;
+&lt;h2&gt;Advanced topics&lt;/h2&gt;
+&lt;p&gt;There are some advanced topics mentioned in the ABI that these notes don't cover
+(at least for now), but I'll mention them here for completeness:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;&amp;quot;Red zone&amp;quot; - leaf functions have access to 128 bytes of &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64"&gt;red zone&lt;/a&gt;
+below the
+stack pointer. I found this difficult to observe in practice &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;.
+Since we don't issue system calls directly
+in WASM, it's tricky to conjure a realistic leaf function that requires
+the linear stack (instead of just using WASM locals).&lt;/li&gt;
+&lt;li&gt;A separate frame pointer (global value) to be used for functions that require
+dynamic stack allocation (such as using &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Variable-length_array"&gt;C's VLAs&lt;/a&gt;).&lt;/li&gt;
+&lt;li&gt;A separate base pointer to be used for functions that require
+alignment &amp;gt; 16 bytes on the stack.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;p class="first"&gt;This is similar &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/02/04/where-the-top-of-the-stack-is-on-x86/"&gt;to x86&lt;/a&gt;.
+For the WASM C ABI, a good reason is provided for the direction: WASM
+load and store instructions have an &lt;em&gt;unsigned&lt;/em&gt; constant called
+&lt;tt class="docutils literal"&gt;offset&lt;/tt&gt; that can be used to add a positive offset to the address
+parameter without extra instructions.&lt;/p&gt;
+&lt;p class="last"&gt;Since &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; points to the lowest address in the frame,
+these offsets can be used to efficiently access any value on the stack.&lt;/p&gt;
+&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;If you have a nice example showing it using Clang/LLVM, please drop me
+a note!&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2025-11-24:/2025/notes-on-the-wasm-basic-c-abi/</guid>
+      <pubDate>Tue, 25 Nov 2025 03:49:52 -0800</pubDate>
+    </item>
+  </channel>
+</rss>

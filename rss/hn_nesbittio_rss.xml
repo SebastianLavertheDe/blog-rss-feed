@@ -1,0 +1,1137 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss version="2.0">
+  <channel>
+    <title>nesbitt.io</title>
+    <link>https://nesbitt.io</link>
+    <description>RSS feed from nesbitt.io</description>
+    <language>en</language>
+    <lastBuildDate>Mon, 02 Feb 2026 12:07:08 +0000</lastBuildDate>
+    <item>
+      <title>Will AI Make Package Managers Redundant?</title>
+      <link>https://nesbitt.io/2026/01/30/will-ai-make-package-managers-redundant.html</link>
+      <description>&lt;p&gt;A &lt;a href="https://medium.com/@marcelo.emmerich/the-package-manager-of-the-future-95408980478f"&gt;recent post by Marcelo Emmerich&lt;/a&gt; proposes replacing package managers with a “prompt registry.” Instead of publishing code, library authors would publish AI prompts. Developers paste the prompt into their AI tool, which generates a self-contained implementation on the spot. No transitive dependencies, no supply chain attacks, no version conflicts. The code is generated fresh each time, tailored to your language and project.&lt;/p&gt;
+
+&lt;p&gt;It’s a naive vision, but it points at real problems. Supply chain attacks are serious. Transitive dependency trees are genuinely hard to reason about. The appeal of generating exactly what you need, with nothing extra, is obvious.&lt;/p&gt;
+
+&lt;p&gt;The generated code still has to implement TLS, parse JSON, handle Unicode. The complexity doesn’t vanish because you stopped calling it a dependency; it just moves elsewhere. But I love going down a rabbit hole, so let’s see where this leads.&lt;/p&gt;
+
+&lt;h3 id="down-the-rabbit-hole"&gt;Down the rabbit hole&lt;/h3&gt;
+
+&lt;p&gt;Suppose you’re writing the prompt for an HTTP client library. The prompt needs to describe the behavior precisely enough that the AI generates something correct. Not just the happy path. You need to specify connection pooling, redirect handling, timeout behavior, retry logic, TLS certificate verification, proxy support. Each of those has edge cases that vary across operating systems, architectures and runtime versions.&lt;/p&gt;
+
+&lt;p&gt;So you write tests. The prompt needs to come with a test suite, or at least a prompt that generates a test suite, because otherwise you have no way to know whether the generated code actually works. Those tests need to cover the matrix of platforms and runtimes. An HTTP client that works on Linux x86 with Python 3.12 but silently drops headers on macOS ARM with Python 3.10 isn’t a working HTTP client. And the model itself is another axis in the matrix: GPT-4o might generate correct TLS handling where Claude produces a subtle bug, or vice versa, or the same model might produce different code after a provider updates it. You’d need to re-run your test suite every time a model version changes. By the time you’ve written a prompt detailed enough to specify all this behavior, plus a test generation prompt thorough enough to verify it, you’ve likely produced something larger than the library you were trying to replace.&lt;/p&gt;
+
+&lt;p&gt;Now the prompt author improves the prompt. Maybe they add HTTP/2 support, or fix the connection pooling specification. Downstream users need to know about this. They need to choose when to adopt the new version. So you version the prompts. You need a way to say “I’m using v2.3 of the HTTP client prompt” and have that mean something stable. You’ll want a changelog. You’ll want the ability to pin to a known-good version while others test the new one.&lt;/p&gt;
+
+&lt;p&gt;Then you notice the test cases for an HTTP client are very similar regardless of the target language. The edge cases around TLS verification don’t change just because you’re generating Python instead of Go. So you extract the shared test specifications into reusable modules. Other prompt authors want to use those modules too. Now the test spec modules need their own versions, because a change to the shared TLS test suite shouldn’t silently break the HTTP client prompt or the WebSocket prompt that also depends on it.&lt;/p&gt;
+
+&lt;p&gt;At this point the HTTP client prompt declares that it works with v1.2 to v1.x of the TLS test module, and v2.0 or higher of the connection pooling spec module. These are dependency declarations. You need a resolver to figure out which versions of these prompt modules are compatible with each other. You need a lockfile (a &lt;code class="language-plaintext highlighter-rouge"&gt;Promptfile.lock&lt;/code&gt;, if you will) so that everyone on the team generates from the same set of prompt versions.&lt;/p&gt;
+
+&lt;p&gt;The prompts themselves are getting long and repetitive. You find yourself writing the same patterns over and over: “handle timeouts by…”, “verify certificates by…”, “follow redirects up to N hops, preserving headers except…” You start defining shorthand. “Implements HTTP-REDIRECT-SPEC-v2” instead of spelling it out every time. Other prompt authors adopt your shorthand. Someone writes a document defining exactly what HTTP-REDIRECT-SPEC-v2 means, and now you have a specification language.&lt;/p&gt;
+
+&lt;p&gt;The specification language gets more precise over time, because natural language is ambiguous and different models interpret the same prompt differently. You add more structure. You define exact function signatures. You specify return types. You nail down error handling behavior with enough precision that two different models should produce interchangeable output. The specification starts looking less like English prose and more like a programming language. A formal, deterministic description of behavior that a machine can reliably execute.&lt;/p&gt;
+
+&lt;p&gt;At this point, you have built a package manager. You just avoid calling it one. You have versioned prompt modules, a dependency resolver, a lockfile, a specification language, and the growing realization that what you actually want is a deterministic, formally specified description of behavior that produces the same output every time. Or, to borrow &lt;a href="https://en.wikipedia.org/wiki/Greenspun%27s_tenth_rule"&gt;Greenspun’s tenth rule&lt;/a&gt;:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Any sufficiently complicated prompt registry contains an ad-hoc, informally-specified, bug-ridden, slow implementation of half of a package manager.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;This assumes good faith throughout. The prompt registry would also face supply chain attacks targeted directly at LLMs and AI coding agents, from &lt;a href="/2025/12/01/promptver.html"&gt;prompt injection via package metadata&lt;/a&gt; to &lt;a href="/2025/12/10/slopsquatting-meets-dependency-confusion.html"&gt;slopsquatting combined with dependency confusion&lt;/a&gt;.&lt;/p&gt;
+
+&lt;h3 id="what-packages-provide"&gt;What packages provide&lt;/h3&gt;
+
+&lt;p&gt;A package’s value isn’t primarily its implementation code. Anyone can rewrite curl in Rust in a weekend, as Daniel Stenberg has &lt;a href="https://daniel.haxx.se/blog/2021/05/20/i-could-rewrite-curl/"&gt;heard many times&lt;/a&gt;. What they can’t rewrite is the twenty years of bug reports, the weird edge cases someone hit in production and took the time to fix, the arguments in issue threads that eventually settled on the right behavior. That knowledge is spread across the package’s history and it grew organically. No prompt captures it.&lt;/p&gt;
+
+&lt;p&gt;Package names and version numbers are flags that people rally around. They’re points of coordination that developers come back to later to check whether someone made an improvement. When a maintainer fixes a bug in a widely-used library, that fix flows outward through the dependency graph. Thousands of projects get the improvement by running a version update. Nobody coordinated this. The maintainer didn’t know most of the downstream consumers existed. The downstream developers didn’t need to understand the internals of the fix. Semver gave them a protocol for expressing “this is safe to take” without requiring explicit coordination between every pair of producer and consumer.&lt;/p&gt;
+
+&lt;p&gt;Michiel Buddingh wrote about the &lt;a href="https://michiel.buddingh.eu/enclosure-feedback-loop"&gt;enclosure feedback loop&lt;/a&gt; in AI: as developers move from public forums to private AI assistants, collective knowledge gets fenced off and the commons degrades. Package ecosystems are the opposite dynamic. Knowledge flows outward through shared code, and improvements compound over time. Each independently maintained library gets better over time through bug reports, security patches, performance work and feature additions from people who actually use it in production. The improvements are unevenly distributed and sometimes messy, but they accumulate. A project with 200 dependencies is quietly benefiting from the maintenance work of hundreds of people it has no direct relationship with.&lt;/p&gt;
+
+&lt;p&gt;In the prompt registry world, that loop is broken. You generate your HTTP client code from a prompt. Six months later, someone discovers a subtle TLS verification bug in the pattern that prompt tends to produce. In the package manager world, the library maintainer fixes it, cuts a release, and you update. In the prompt world, your code is already generated, sitting in your repo, probably modified since then. The prompt itself might produce different code now because the underlying model has changed. You have no stable identity for what you’re running and no way to diff it against what the prompt produces today. Nobody else is running your exact output, so there’s no community finding bugs in the same code. Each generation is isolated.&lt;/p&gt;
+
+&lt;p&gt;There’s something else the prompt registry assumes: that the prompt author has fully specified the behavior they want. But half the value of a mature library is behavior the author never thought to specify. It’s emergent correctness from years of bug reports. Someone hit a weird proxy configuration in 2019 and filed an issue. Someone else found a race condition under high concurrency in 2021. A third person noticed that a particular header combination broke on older TLS stacks. Each of those fixes is now baked into the library. You can’t prompt your way into a decade of production bug reports.&lt;/p&gt;
+
+&lt;h3 id="who-governs-the-prompts"&gt;Who governs the prompts&lt;/h3&gt;
+
+&lt;p&gt;Package registries aren’t just file hosts. They decide who owns names, how disputes resolve, what gets removed, and how compromised accounts are handled. They’re &lt;a href="/2025/12/22/package-registries-are-governance-as-a-service.html"&gt;governance providers&lt;/a&gt;, making judgment calls that keep ecosystems healthy: removing malware, transferring abandoned packages, enforcing naming policies. When npm restored left-pad after Azer Koçulu unpublished it, that was a governance decision that kept thousands of builds from breaking. A prompt registry has none of this. Who decides that a prompt is malicious? Who resolves conflicts when two prompt authors claim the same specification name? Who steps in when a widely-used prompt starts producing vulnerable code? These are governance questions, and they need institutions to answer them.&lt;/p&gt;
+
+&lt;p&gt;Yes, we’ve automated a lot of this collaboration, maybe too much if you’ve ever looked inside a node_modules folder. But underneath the automation there’s still a core human process: people building on each other’s work without needing to talk to each other, and that kind of coordination can’t be specified in a prompt.&lt;/p&gt;
+
+&lt;p&gt;AI agents aren’t going to stop using packages. Packages feature heavily in the training data, and every coding agent already reaches for &lt;code class="language-plaintext highlighter-rouge"&gt;npm install&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;pip install&lt;/code&gt; as a first instinct. The interesting work is happening in the opposite direction: making agents better at working &lt;em&gt;with&lt;/em&gt; package managers rather than replacing them. I’ve been building &lt;a href="/2026/01/21/an-ai-skill-for-skeptical-dependency-management.html"&gt;a skill that makes coding agents evaluate packages skeptically&lt;/a&gt; before suggesting them, checking that they exist, that they’re maintained, that the standard library doesn’t already cover the use case. There’s also a broader opportunity to give agents a &lt;a href="/2026/01/22/a-protocol-for-package-management.html"&gt;shared protocol for package management&lt;/a&gt;, a common vocabulary for resolution, publishing and governance that works across ecosystems. &lt;a href="/2026/01/23/package-management-is-a-wicked-problem.html"&gt;Package management is a wicked problem&lt;/a&gt;, and AI that understands package managers deeply seems more useful than AI that tries to make them disappear.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/30/will-ai-make-package-managers-redundant</guid>
+      <pubDate>Fri, 30 Jan 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Zig and the M×N Supply Chain Problem</title>
+      <link>https://nesbitt.io/2026/01/29/zig-and-the-mxn-supply-chain-problem.html</link>
+      <description>&lt;p&gt;Zig shipped a built-in package manager in version 0.11 in August 2023. It uses &lt;code class="language-plaintext highlighter-rouge"&gt;build.zig.zon&lt;/code&gt; files for manifests and fetches dependencies directly from URLs, usually tarballs on GitHub. There’s no central registry yet, though the community runs unofficial indexes like &lt;a href="https://github.com/zigtools/zpm"&gt;zpm&lt;/a&gt; and &lt;a href="https://aquila.red/"&gt;aquila&lt;/a&gt;.&lt;sup id="fnref:1"&gt;&lt;a href="#fn:1" class="footnote" rel="footnote" role="doc-noteref"&gt;1&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;The package manager works well enough for declaring dependencies, fetching them, and building against them. The hard part is everything else: the ecosystem of tools, services, and infrastructure that makes a package manager usable in production.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/01/03/the-package-management-landscape.html"&gt;The package management landscape&lt;/a&gt; spans dozens of categories and hundreds of tools. For Zig to have the same tooling support as npm or Cargo, each of those tools either needs to add Zig support, or the Zig community needs to build alternatives.&lt;/p&gt;
+
+&lt;h3 id="what-the-community-has-to-build"&gt;What the community has to build&lt;/h3&gt;
+
+&lt;p&gt;Some things only the Zig community can do. Nobody else will write the &lt;code class="language-plaintext highlighter-rouge"&gt;build.zig.zon&lt;/code&gt; parser. Nobody else knows the resolution semantics. These are the parts that require language expertise:&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Manifest and lockfile parsing.&lt;/strong&gt; Tools like &lt;a href="https://github.com/librariesio/bibliothecary"&gt;bibliothecary&lt;/a&gt;, &lt;a href="https://github.com/anchore/syft"&gt;syft&lt;/a&gt;, and &lt;a href="https://github.com/google/osv-scalibr"&gt;osv-scalibr&lt;/a&gt; parse dependency files across ecosystems. Each needs a Zig parser added. Right now, none of them support &lt;code class="language-plaintext highlighter-rouge"&gt;build.zig.zon&lt;/code&gt;.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Vulnerability scanning.&lt;/strong&gt; &lt;a href="https://github.com/pypa/pip-audit"&gt;pip-audit&lt;/a&gt;, &lt;a href="https://github.com/rubysec/bundler-audit"&gt;bundler-audit&lt;/a&gt;, and &lt;a href="https://github.com/rustsec/rustsec"&gt;cargo-audit&lt;/a&gt; are language-specific tools that check dependencies against advisory databases. Zig needs a &lt;code class="language-plaintext highlighter-rouge"&gt;zig-audit&lt;/code&gt; equivalent, plus an advisory database to check against.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;SBOM generation.&lt;/strong&gt; &lt;a href="https://github.com/CycloneDX/cdxgen"&gt;cdxgen&lt;/a&gt; and &lt;a href="https://github.com/anchore/syft"&gt;syft&lt;/a&gt; generate SBOMs from project files. They need to understand Zig’s dependency format to include Zig packages in the bill of materials.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Dependency tree visualization.&lt;/strong&gt; Cargo has &lt;code class="language-plaintext highlighter-rouge"&gt;cargo tree&lt;/code&gt;, npm has &lt;code class="language-plaintext highlighter-rouge"&gt;npm ls&lt;/code&gt;. Zig needs something equivalent to show the resolved dependency graph.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Registry software.&lt;/strong&gt; If Zig wants a central registry, someone has to build and run it. Crates.io, RubyGems.org, PyPI all required significant engineering effort. The unofficial indexes exist but aren’t authoritative.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;PURL and VERS types.&lt;/strong&gt; The &lt;a href="https://github.com/package-url/purl-spec"&gt;Package URL spec&lt;/a&gt; and &lt;a href="https://github.com/package-url/purl-spec/blob/master/VERSION-RANGE-SPEC.rst"&gt;version range spec&lt;/a&gt; are standards, but they’re essentially maps of existing ecosystems rather than higher-order abstractions. Each new package manager has to propose a type, document its semantics, and get the PR merged. Zig doesn’t have a PURL type yet, so Zig packages can’t be referenced in SBOMs, advisory databases, or cross-ecosystem tooling in a standardized way.&lt;/p&gt;
+
+&lt;h3 id="what-vendors-need-to-care-about"&gt;What vendors need to care about&lt;/h3&gt;
+
+&lt;p&gt;Other integrations require buy-in from companies who may not care about Zig yet. Market share matters here. If you’re a SaaS vendor prioritizing what to support next, Zig is competing against languages with larger user bases. Even if the Zig community does everything right, they’re still waiting on Dependabot, Renovate, and Snyk to care. You can’t get adoption without tooling, and you can’t get tooling without adoption.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Dependency update tools.&lt;/strong&gt; &lt;a href="https://github.com/dependabot"&gt;Dependabot&lt;/a&gt; supports a fixed set of ecosystems. Adding a new one requires GitHub engineering time. &lt;a href="https://www.mend.io/renovate/"&gt;Renovate&lt;/a&gt; is more extensible but still needs a &lt;a href="https://github.com/renovatebot/renovate/tree/main/lib/modules/manager"&gt;manager plugin&lt;/a&gt;, and neither supports Zig yet. There’s a &lt;a href="https://github.com/dependabot/dependabot-core/issues/8166"&gt;Dependabot issue&lt;/a&gt; and a &lt;a href="https://github.com/renovatebot/renovate/discussions/24309"&gt;Renovate discussion&lt;/a&gt;, both from 2023, both stalled.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Vulnerability databases.&lt;/strong&gt; The &lt;a href="https://github.com/advisories"&gt;GitHub Advisory Database&lt;/a&gt;, &lt;a href="https://osv.dev"&gt;OSV&lt;/a&gt;, &lt;a href="https://www.cve.org/"&gt;CVE.org&lt;/a&gt; (MITRE), and the &lt;a href="https://nvd.nist.gov/"&gt;NVD&lt;/a&gt; all need to recognize Zig packages and file advisories against them using Zig’s identifier scheme. That requires agreeing on how to identify Zig packages, but there’s no PURL type for Zig yet.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;SCA tools.&lt;/strong&gt; &lt;a href="https://snyk.io"&gt;Snyk&lt;/a&gt;, &lt;a href="https://socket.dev"&gt;Socket&lt;/a&gt;, &lt;a href="https://www.sonatype.com"&gt;Sonatype&lt;/a&gt;, and others would need to add Zig support. Each vendor makes independent decisions about what’s worth supporting.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Enterprise artifact repositories.&lt;/strong&gt; &lt;a href="https://jfrog.com/artifactory/"&gt;JFrog Artifactory&lt;/a&gt; and &lt;a href="https://www.sonatype.com/products/sonatype-nexus-repository"&gt;Sonatype Nexus&lt;/a&gt; support proxying and hosting packages for many ecosystems, but Zig isn’t among them.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Metadata platforms.&lt;/strong&gt; &lt;a href="https://deps.dev"&gt;deps.dev&lt;/a&gt;, &lt;a href="https://libraries.io"&gt;Libraries.io&lt;/a&gt;, and &lt;a href="https://ecosyste.ms"&gt;ecosyste.ms&lt;/a&gt; aggregate package data across ecosystems. Each needs to understand Zig’s package format and index Zig packages from wherever they’re published.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Forge integrations.&lt;/strong&gt; GitHub’s dependency graph, GitLab’s dependency scanning, and Gitea’s security features all need to parse Zig manifests to show Zig dependencies in their UIs.&lt;/p&gt;
+
+&lt;h3 id="what-else-needs-updating"&gt;What else needs updating&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;SBOM formats.&lt;/strong&gt; CycloneDX and SPDX have ecosystem-specific guidance. Zig needs representation in both.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Trusted publishing.&lt;/strong&gt; PyPI’s &lt;a href="https://docs.pypi.org/trusted-publishers/"&gt;Trusted Publishers&lt;/a&gt; and npm’s &lt;a href="https://docs.npmjs.com/generating-provenance-statements"&gt;provenance&lt;/a&gt; rely on Sigstore and registry-specific OIDC flows. If Zig gets a central registry, it needs this infrastructure too.&lt;/p&gt;
+
+&lt;h3 id="how-this-usually-goes"&gt;How this usually goes&lt;/h3&gt;
+
+&lt;p&gt;The typical path looks like this:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;Package manager ships with the language&lt;/li&gt;
+  &lt;li&gt;Early adopters manage dependencies manually&lt;/li&gt;
+  &lt;li&gt;Community builds minimal tooling (a parser here, an index there)&lt;/li&gt;
+  &lt;li&gt;Language gains traction, vendors start noticing&lt;/li&gt;
+  &lt;li&gt;Major tools add support one by one, in no particular order&lt;/li&gt;
+  &lt;li&gt;Eventually, enough coverage exists that the ecosystem feels complete&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;This process takes years. Go modules shipped in 2018 and still lacks full tooling parity with older ecosystems. Rust has been around since 2015 and Cargo is well-supported now, but that’s a decade of incremental integration.&lt;/p&gt;
+
+&lt;p&gt;Somewhere along the way, package manager designers realize that some of their early decisions make integration harder. Maybe they didn’t assign unique identifiers to packages. Maybe their version scheme doesn’t map cleanly to PURL. Maybe they fetch dependencies from URLs instead of a registry, which breaks assumptions baked into every SBOM tool. By then, users depend on the current behavior. Changing a package manager after launch is like changing the hull of a submarine while it’s searching for the Titanic.&lt;/p&gt;
+
+&lt;p&gt;Each new package manager goes through the same loop. Each tool vendor reimplements the same patterns: parse a manifest, extract dependencies, check against advisories. The work is duplicated dozens of times across the ecosystem, with each implementation making slightly different decisions about edge cases.&lt;/p&gt;
+
+&lt;p&gt;Beyond the engineering, there’s human coordination. Shepherding PRs through repos maintained by volunteers with different priorities. Getting PURL proposals reviewed by a committee that meets sporadically. Convincing SCA vendors to prioritize your ecosystem over the next one in line. It’s part of why &lt;a href="/2026/01/23/package-management-is-a-wicked-problem.html"&gt;package management is a wicked problem&lt;/a&gt;: too many stakeholders, no single authority, solutions that create new problems.&lt;/p&gt;
+
+&lt;h3 id="what-would-make-this-easier"&gt;What would make this easier&lt;/h3&gt;
+
+&lt;p&gt;Package management is in its pre-LSP era. Before the &lt;a href="https://microsoft.github.io/language-server-protocol/"&gt;Language Server Protocol&lt;/a&gt;, every IDE had to implement support for every language: M editors × N languages = M×N integrations. LSP changed that to M+N. Each editor implements the protocol once, each language implements a server once, and they all work together.&lt;/p&gt;
+
+&lt;p&gt;Package management has the same M×N problem. Every tool (Dependabot, Snyk, Syft, deps.dev) implements support for every ecosystem (npm, PyPI, Cargo, Go) separately, each integration custom, and when Zig arrives it goes to the back of every queue.&lt;/p&gt;
+
+&lt;p&gt;Every codebase is a dependency graph. The syntax varies, the resolution algorithms differ, the registries have different APIs, but the structure is the same: nodes are packages, edges are version constraints, and the goal is a consistent set of concrete versions. Zig’s graph looks like Cargo’s graph looks like npm’s graph, once you strip away the surface differences.&lt;/p&gt;
+
+&lt;p&gt;We need a Dependency Lifecycle Protocol (DLP), an LSP for the package management world. In &lt;a href="/2026/01/22/a-protocol-for-package-management.html"&gt;A Protocol for Package Management&lt;/a&gt;, I sketched what this might look like: common definitions for manifest structure, resolution behavior, registry APIs. If it existed, a new package manager could implement against it. Tools that speak the protocol would get Zig support without each SCA vendor adding it separately.&lt;/p&gt;
+
+&lt;h3 id="the-same-problem-twice"&gt;The same problem twice&lt;/h3&gt;
+
+&lt;p&gt;&lt;a href="/2026/01/28/the-dependency-layer-in-digital-sovereignty.html"&gt;The dependency layer in digital sovereignty&lt;/a&gt; makes a similar point from a different angle: dependencies are a chokepoint that nation-states and institutions don’t control. The Zig problem and the sovereignty problem are the same problem. One is “why can’t a new language ecosystem bootstrap quickly” and the other is “why can’t institutions control their own dependency infrastructure.” Both point to missing abstraction layers that would allow substitution.&lt;/p&gt;
+
+&lt;p&gt;The lack of a protocol creates lock-in by default, through gravity more than malice. If you’re Zig, you need Dependabot and Snyk and GitHub’s dependency graph. If you’re a European institution, you need those same tools because that’s where the vulnerability data lives. A protocol would make the dependency layer contestable: run your own registry that federates with others, stand up a regional vulnerability database that speaks the same language, use tooling that isn’t controlled by three American companies.&lt;/p&gt;
+
+&lt;p&gt;Governments already mandate standards for procurement: accessibility, security certifications, data residency. If US federal or EU procurement required dependency tooling that implements a common protocol, the incentive structure inverts. Government procurement is a massive market that moves in blocks. If you can’t sell to governments without protocol compliance, every vendor finds budget for it overnight. Zig gets support as a side effect: if Snyk implements the protocol to keep selling to governments, Zig gets coverage by conforming to the same spec.&lt;/p&gt;
+
+&lt;p&gt;The &lt;a href="https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act"&gt;Cyber Resilience Act&lt;/a&gt; is already pushing in this direction with SBOM requirements. PURL, OSV, and CycloneDX are attempts at standards, but they document what exists rather than defining what should exist. The CRA mandates outputs without mandating the interoperability layer that would make those outputs meaningful across ecosystems.&lt;/p&gt;
+
+&lt;p&gt;Right now, the cost of launching a new package manager includes rebuilding the entire surrounding infrastructure. Languages stick with existing tools even when they’re not a great fit, because the integration burden is too high. Zig is going through this now, and &lt;a href="https://rue-lang.dev/"&gt;Rue&lt;/a&gt;, a research language exploring memory safety with a gentler learning curve than Rust, doesn’t have a package manager yet. When it does, it will face the same integration slog, as will every new language until the protocol layer exists.&lt;/p&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:1"&gt;
+      &lt;p&gt;This is similar to how Go modules launched, fetching directly from version control hosts. Go eventually added &lt;a href="https://proxy.golang.org/"&gt;proxy.golang.org&lt;/a&gt; and &lt;a href="https://sum.golang.org/"&gt;sum.golang.org&lt;/a&gt; to provide caching, checksums, and availability guarantees. &lt;a href="#fnref:1" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/29/zig-and-the-mxn-supply-chain-problem</guid>
+      <pubDate>Thu, 29 Jan 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>The Dependency Layer in Digital Sovereignty</title>
+      <link>https://nesbitt.io/2026/01/28/the-dependency-layer-in-digital-sovereignty.html</link>
+      <description>&lt;p&gt;David Eaves recently argued that &lt;a href="https://www.techpolicy.press/the-path-to-a-sovereign-tech-stack-is-via-a-commodified-tech-stack/"&gt;the path to tech sovereignty runs through commodification&lt;/a&gt;, not duplication. Europe shouldn’t try to build its own AWS. Instead, governments should use procurement power to enforce interoperability standards. The S3 API became a de facto standard that lets you move between providers, reducing switching costs. If governments required that kind of compatibility as a condition for contracts, smaller providers could compete. Sovereignty through standards rather than state-owned infrastructure.&lt;/p&gt;
+
+&lt;p&gt;The same logic applies to &lt;a href="/2026/01/03/the-package-management-landscape.html"&gt;the software supply chain&lt;/a&gt;, though that layer gets less attention in sovereignty discussions than cloud and storage.&lt;/p&gt;
+
+&lt;p&gt;Most git forges are US-based:&lt;/p&gt;
+
+&lt;table&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th&gt;Forge&lt;/th&gt;
+      &lt;th&gt;Owner&lt;/th&gt;
+      &lt;th&gt;Country&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;td&gt;GitHub&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;GitLab&lt;/td&gt;
+      &lt;td&gt;GitLab Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Gitea&lt;/td&gt;
+      &lt;td&gt;Gitea Ltd&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;HuggingFace&lt;/td&gt;
+      &lt;td&gt;Hugging Face Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;Codeberg runs &lt;a href="https://codeberg.org/forgejo/forgejo"&gt;Forgejo&lt;/a&gt;, which doesn’t have dependency graph features yet, so it’s outside the scope here.&lt;/p&gt;
+
+&lt;p&gt;The dependency intelligence layer built on top of these forges is almost entirely US-based:&lt;/p&gt;
+
+&lt;table&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th&gt;Service&lt;/th&gt;
+      &lt;th&gt;Owner&lt;/th&gt;
+      &lt;th&gt;Country&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Snyk&lt;/td&gt;
+      &lt;td&gt;Snyk Ltd&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Socket&lt;/td&gt;
+      &lt;td&gt;Socket Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Sonatype&lt;/td&gt;
+      &lt;td&gt;Sonatype Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Veracode&lt;/td&gt;
+      &lt;td&gt;Veracode Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Black Duck&lt;/td&gt;
+      &lt;td&gt;Synopsys&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Dependabot&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Renovate&lt;/td&gt;
+      &lt;td&gt;Mend.io&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;deps.dev&lt;/td&gt;
+      &lt;td&gt;Google&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;GitHub Dependency Graph&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;GitHub Advisory Database&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;NVD&lt;/td&gt;
+      &lt;td&gt;NIST&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Sigstore&lt;/td&gt;
+      &lt;td&gt;Google/OpenSSF&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;JFrog Artifactory&lt;/td&gt;
+      &lt;td&gt;JFrog&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;GitHub Packages&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;AWS CodeArtifact&lt;/td&gt;
+      &lt;td&gt;Amazon&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Azure Artifacts&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Google Artifact Registry&lt;/td&gt;
+      &lt;td&gt;Google&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Docker Hub&lt;/td&gt;
+      &lt;td&gt;Docker Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Amazon ECR&lt;/td&gt;
+      &lt;td&gt;Amazon&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Quay&lt;/td&gt;
+      &lt;td&gt;Red Hat/IBM&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;The &lt;a href="/2025/12/29/categorizing-package-registries.html"&gt;package registries&lt;/a&gt; follow a similar pattern, with a few European exceptions:&lt;/p&gt;
+
+&lt;table&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th&gt;Registry&lt;/th&gt;
+      &lt;th&gt;Owner&lt;/th&gt;
+      &lt;th&gt;Country&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;td&gt;npm&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;PyPI&lt;/td&gt;
+      &lt;td&gt;Python Software Foundation&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;RubyGems&lt;/td&gt;
+      &lt;td&gt;Ruby Central&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Maven Central&lt;/td&gt;
+      &lt;td&gt;Sonatype&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;NuGet&lt;/td&gt;
+      &lt;td&gt;Microsoft&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Crates.io&lt;/td&gt;
+      &lt;td&gt;Rust Foundation&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Go module proxy&lt;/td&gt;
+      &lt;td&gt;Google&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Docker Hub&lt;/td&gt;
+      &lt;td&gt;Docker Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Conda/Anaconda&lt;/td&gt;
+      &lt;td&gt;Anaconda Inc&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;CocoaPods&lt;/td&gt;
+      &lt;td&gt;CocoaPods&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Pub.dev&lt;/td&gt;
+      &lt;td&gt;Google&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;CPAN&lt;/td&gt;
+      &lt;td&gt;Perl Foundation&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Homebrew&lt;/td&gt;
+      &lt;td&gt;Homebrew&lt;/td&gt;
+      &lt;td&gt;US&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Hex.pm&lt;/td&gt;
+      &lt;td&gt;Six Colors AB&lt;/td&gt;
+      &lt;td&gt;Sweden&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Packagist&lt;/td&gt;
+      &lt;td&gt;Private Packagist&lt;/td&gt;
+      &lt;td&gt;Netherlands&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;CRAN&lt;/td&gt;
+      &lt;td&gt;R Foundation&lt;/td&gt;
+      &lt;td&gt;Austria&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;Clojars&lt;/td&gt;
+      &lt;td&gt;Clojars&lt;/td&gt;
+      &lt;td&gt;Germany&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;The security and metadata tooling built on top of these registries tends to be US-based regardless of where the registry itself is hosted.&lt;/p&gt;
+
+&lt;p&gt;A European company running Forgejo for code hosting still typically uses US services for dependency updates, vulnerability scanning, license compliance, and SBOM generation. Self-hosting the forge doesn’t change the intelligence layer.&lt;/p&gt;
+
+&lt;p&gt;Ploum made a related point: &lt;a href="https://ploum.net/2026-01-22-why-no-european-google.html"&gt;Europe doesn’t need a European Google&lt;/a&gt;. The European contribution to software has been infrastructure that serves as collective commons: the web, Linux, Git, VLC, OpenStreetMap. “We don’t want a European Google Maps! We want our institutions at all levels to contribute to OpenStreetMap.” The same framing applies to dependency tooling. Rather than building European alternatives to each US service, invest in open infrastructure that anyone can use.&lt;/p&gt;
+
+&lt;p&gt;Dries Buytaert &lt;a href="https://dri.es/funding-open-source-for-digital-sovereignty"&gt;extended this to procurement&lt;/a&gt;: governments buy from system integrators who package and resell open source, but that money doesn’t reach the maintainers who build it. If procurement scoring rewarded upstream contributions, money would flow differently. Open source is “the only software you can run without permission” and therefore useful for sovereignty, but it needs funding to work.&lt;/p&gt;
+
+&lt;h3 id="where-standards-exist-and-where-they-dont"&gt;Where standards exist and where they don’t&lt;/h3&gt;
+
+&lt;p&gt;Eaves’s commodification argument depends on standards to reduce switching costs. In &lt;a href="/2026/01/03/the-package-management-landscape.html"&gt;the package management landscape&lt;/a&gt;, some de facto standards have emerged. Git is nearly universal for source hosting. Semver is the dominant versioning scheme, even if ecosystems interpret it differently. &lt;a href="/2026/01/17/lockfile-format-design-and-tradeoffs.html"&gt;Lockfile formats&lt;/a&gt; vary by ecosystem, but they’ve become standards in practice: every dependency scanning company builds the same set of parsers to extract dependency information from all of them. Syft, bibliothecary, gemnasium, osv-scalibr, and others all parse the same formats. I made a &lt;a href="https://github.com/ecosyste-ms/package-manager-manifest-examples"&gt;dataset covering manifest and lockfile examples&lt;/a&gt; across ecosystems, and a similar &lt;a href="https://github.com/ecosyste-ms/package-manager-openapi-schemas"&gt;collection of OpenAPI schemas&lt;/a&gt; for registry APIs. These are what made git-pkgs come together quickly.&lt;/p&gt;
+
+&lt;p&gt;Beyond those de facto standards, some areas have formal specifications. PURL provides a standardized way to reference packages across ecosystems. OSV and OpenVEX let advisory data flow between systems. CycloneDX and SPDX handle SBOMs. SLSA, in-toto, and TUF cover provenance. OCI standardizes container images.&lt;/p&gt;
+
+&lt;p&gt;Other areas don’t, which keeps switching costs high. Dependency graph APIs vary by platform, vulnerability scanning integration is proprietary per forge, Dependabot and Renovate each have their own config format, and package metadata APIs differ across registries.&lt;/p&gt;
+
+&lt;p&gt;Most standards work in this space focuses on compliance artifacts: SBOMs for the Cyber Resilience Act, attestations for procurement requirements. Less attention goes to the underlying tools developers actually use. The dependency graph that feeds the SBOM generator, the metadata lookup that powers vulnerability scanning, the notification when a new version ships.&lt;/p&gt;
+
+&lt;p&gt;The gap between these columns is where standardization would reduce switching costs. A common dependency graph API would matter more than a European deps.dev. Standardizing how dependency updates get proposed would matter more than a European Dependabot. &lt;a href="/2026/01/22/a-protocol-for-package-management.html"&gt;A protocol for package management&lt;/a&gt; could let different implementations compete on the same interfaces.&lt;/p&gt;
+
+&lt;p&gt;GitHub and GitLab bundle dependency features into their platforms: dependency graphs, vulnerability alerts, automated updates. A self-hosted Forgejo or Gitea instance doesn’t have equivalent tooling. But if those features were built on open standards and open data sources, switching forges wouldn’t mean losing supply chain visibility. The dependency intelligence could come from any provider that implements the same interfaces, rather than being locked to the forge vendor.&lt;/p&gt;
+
+&lt;p&gt;Some gaps need new standards rather than adoption of existing ones. There’s no good specification for package version history across registries. Codemeta describes a package at a point in time, not its release history. &lt;a href="/2026/01/25/pkgfed-activitypub-for-package-releases.html"&gt;PkgFed&lt;/a&gt; proposes using ActivityPub to federate release announcements, similar to how ForgeFed handles forge events.&lt;/p&gt;
+
+&lt;h3 id="what-governments-and-funders-could-do"&gt;What governments and funders could do&lt;/h3&gt;
+
+&lt;p&gt;The strategy is to &lt;a href="/2025/12/02/what-is-a-package-manager.html"&gt;unbundle the parts of a package manager&lt;/a&gt; and standardize them individually. Registry APIs, dependency graphs, vulnerability feeds, update notifications. Each piece can be commodified without replacing entire systems.&lt;/p&gt;
+
+&lt;p&gt;Treat dependency intelligence as infrastructure worth funding directly. The Sovereign Tech Fund model applies: direct funding to open source projects that serve as foundations. Ecosyste.ms, VulnerableCode, OSV, PURL implementations, CycloneDX/SPDX tooling, Forgejo’s dependency features all fit this category.&lt;/p&gt;
+
+&lt;p&gt;Procurement requirements could include open supply chain tooling. If an agency requires SBOMs, they could also require that generation doesn’t depend on proprietary services. If they require vulnerability scanning, the scanner could consume open advisory databases. Germany’s ZenDiS and openCode.de initiatives are relevant here. Connecting them with existing open solutions would be more efficient than starting fresh.&lt;/p&gt;
+
+&lt;p&gt;Supporting Forgejo with work on dependency features would help too. The goal would be feature parity with GitHub and GitLab so self-hosted forges work with the same security tooling.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/01/23/package-management-is-a-wicked-problem.html"&gt;Package management is a wicked problem&lt;/a&gt;, but the dependency intelligence layer is more tractable. Standards exist (PURL, OSV, CycloneDX) and open implementations exist (ecosyste.ms, VulnerableCode), so the gap is investment rather than invention.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/28/the-dependency-layer-in-digital-sovereignty</guid>
+      <pubDate>Wed, 28 Jan 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>The C-Shaped Hole in Package Management</title>
+      <link>https://nesbitt.io/2026/01/27/the-c-shaped-hole-in-package-management.html</link>
+      <description>&lt;p&gt;System package managers and language package managers are both called package managers. They both resolve dependencies, download code, and install software. But they evolved to solve different problems, and the overlap is where all the friction lives. If you drew a venn diagram, C libraries would sit right in the middle: needed by language packages, provided by system packages, understood by neither in a way the other can use. As Kristoffer Grönlund &lt;a href="https://lwn.net/Articles/712318/"&gt;put it in 2017&lt;/a&gt;: “Why are we trying to manage packages from one package manager with a different package manager?”&lt;/p&gt;
+
+&lt;p&gt;apt, dnf, pacman, and the rest emerged because Linux distributions had to &lt;a href="https://utcc.utoronto.ca/~cks/space/blog/unix/PackagingHistory"&gt;assemble a coherent system from parts built independently by different groups&lt;/a&gt;. Nobody was writing all the pieces. The kernel came from one place, libc from another, coreutils from another. Packaging systems were the glue that made this work, tracking what was installed and what depended on what. Decomposing things into shared libraries and managing security updates came later. A package like &lt;code class="language-plaintext highlighter-rouge"&gt;python3-requests&lt;/code&gt; isn’t there because the Python ecosystem wanted it. It’s there because some GUI application or system tool needed it, and the distro maintainers packaged it.&lt;/p&gt;
+
+&lt;p&gt;System package managers generally keep only one version of each package at a time. This massively simplifies dependency resolution, but it means getting a newer or older version is hard for individual users without upgrading the whole system. It’s a stop-the-world model. Hacks like naming packages &lt;code class="language-plaintext highlighter-rouge"&gt;python3&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;python2&lt;/code&gt; exist to work around this when you really need multiple versions, but they’re exceptions.&lt;/p&gt;
+
+&lt;p&gt;npm, pip, cargo, and gem went the other direction. They’re dependency assembly tools that help developers build projects. They keep every version around indefinitely, letting projects pin exactly what they need. They’re also cross-platform by design: pip doesn’t know if it’s running on Debian or Fedora or macOS, so it can’t just shell out to the system package manager to install C dependencies even if it wanted to. The fact that you can &lt;code class="language-plaintext highlighter-rouge"&gt;pip install httpie&lt;/code&gt; and get a working command-line tool is incidental. These tools exist so you can declare &lt;code class="language-plaintext highlighter-rouge"&gt;requests&amp;gt;=2.28&lt;/code&gt; in a manifest and get a working dependency tree.&lt;/p&gt;
+
+&lt;p&gt;The difference shows up in how they handle the same library. A distro maintainer sees a new OpenSSL release and asks: will this break existing applications? Can we backport security fixes without changing behavior? A language package manager asks: does this satisfy version constraints? Can multiple versions coexist? When you need both, the seams show.&lt;/p&gt;
+
+&lt;p&gt;Edward Yang &lt;a href="https://blog.ezyang.com/2014/08/the-fundamental-problem-of-programming-language-package-management/"&gt;wrote about this in 2014&lt;/a&gt;: “The different communities don’t talk to each other.” They don’t need to, most of the time. But language packages that wrap C libraries have to deal with C dependencies somehow, and that’s system package manager territory. The language package manager has no vocabulary for it.&lt;/p&gt;
+
+&lt;h3 id="the-c-shaped-hole"&gt;The C-shaped hole&lt;/h3&gt;
+
+&lt;p&gt;C never developed a canonical package registry. It predates the model of “download dependencies from the internet,” and by the time that model became standard, the ecosystem was too fragmented to converge. pkg-config exists as a partial vocabulary for discovering installed libraries, but it only queries what’s already on your system rather than declaring or fetching dependencies. &lt;a href="https://conan.io/"&gt;Conan&lt;/a&gt; and &lt;a href="https://vcpkg.io/"&gt;vcpkg&lt;/a&gt; exist now and are actively maintained, but neither has the cultural ubiquity of crates.io or npm. There’s no default answer to “how do I depend on libcurl” the way there is for “how do I depend on serde.”&lt;/p&gt;
+
+&lt;p&gt;System package managers filled this gap by default. If you need libcurl or OpenSSL or zlib, you install them through apt or dnf or brew. This makes your system package manager the de facto C package manager whether it was designed for that or not. And every distro names packages differently: libssl-dev on Debian, openssl-devel on Fedora, openssl on Alpine, openssl@3 on Homebrew. Same library, four names, no mapping between them.&lt;/p&gt;
+
+&lt;p&gt;Every language that needs C bindings solves distribution independently. Python has wheels that bundle compiled extensions. Node has node-gyp that compiles against system headers at install time. Rust has build.rs scripts that call pkg-config. Go has cgo with its own linking story. Ruby has native extensions that compile on &lt;code class="language-plaintext highlighter-rouge"&gt;gem install&lt;/code&gt;.&lt;/p&gt;
+
+&lt;p&gt;None of these mechanisms really declare C dependencies in a machine-readable way. If your Python package needs libffi, that requirement lives in a README or a Dockerfile or maybe just tribal knowledge. There’s no field in pyproject.toml that says “requires libffi &amp;gt;= 3.4” in a way that pip can act on. &lt;a href="https://peps.python.org/pep-0725/"&gt;PEP 725&lt;/a&gt; proposes adding exactly this, but it’s been in draft since 2023.&lt;/p&gt;
+
+&lt;p&gt;You end up with two dependency graphs that overlap on C libraries but can’t communicate. pip knows your Python dependencies. apt knows your system dependencies. Neither knows what the other is doing, and the place where they meet is held together by humans who know which system packages to install before running pip install. Or the language package just bundles the C library inside itself: Nokogiri ships libxml2, NumPy ships OpenBLAS, and the system package manager never sees them.&lt;/p&gt;
+
+&lt;p&gt;Rust is starting to create a similar gap. Python packages that wrap Rust libraries need cargo available at build time, and the Rust dependencies don’t appear in Python’s dependency metadata. It’s not as messy as C: cargo handles its own resolution cleanly, and there’s no equivalent of the header/library version mismatch problem. But the cross-language boundary is structurally the same: two dependency graphs that can’t see each other.&lt;/p&gt;
+
+&lt;p&gt;Containers solved the deployment side of this. As I &lt;a href="/2025/12/18/docker-is-the-lockfile-for-system-packages.html"&gt;wrote previously&lt;/a&gt;, Docker acts as the lockfile that system package managers never provided. Build an image and every machine running it gets identical bytes. But containers don’t solve the visibility problem. The C dependencies are still invisible to tooling, still not in any manifest that connects to vulnerability scanning or funding flows. The Dockerfile lists apt packages, but nothing maps those to the upstream projects or the language packages that need them. Tools like &lt;a href="https://github.com/anchore/syft"&gt;Syft&lt;/a&gt; crawl container filesystems looking for known binaries and package manifests in well-known locations. It’s a blunt instrument because it has to be: the metadata doesn’t exist, so Syft reconstructs what it can from filesystem heuristics.&lt;/p&gt;
+
+&lt;h3 id="phantom-dependencies"&gt;Phantom dependencies&lt;/h3&gt;
+
+&lt;p&gt;Endor Labs coined the term “phantom dependencies” for this: dependencies bundled into packages but not represented in metadata. Vlad Harbuz covers &lt;a href="https://vlad.website/how-binary-dependencies-work"&gt;how binary dependencies actually work&lt;/a&gt; at the technical level. Seth Larson, Security Developer-in-Residence at the Python Software Foundation, has been &lt;a href="https://www.youtube.com/watch?v=zIE8QW4vx2A"&gt;working on solutions&lt;/a&gt; involving standards and tooling.&lt;/p&gt;
+
+&lt;p&gt;NumPy depends heavily on OpenBLAS, but that dependency doesn’t appear in its package metadata. The wheel bundles a compiled libopenblas.so.0 inside the package, invisible to pip and invisible to any tool that only looks at Python dependency information. If you want to know what NumPy actually depends on, you need tools like &lt;code class="language-plaintext highlighter-rouge"&gt;nm&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;readelf&lt;/code&gt; to inspect the binary symbols. The &lt;a href="https://pypackaging-native.github.io/key-issues/native-dependencies/"&gt;pypackaging-native&lt;/a&gt; project documents this problem thoroughly: “The key problems are (1) not being able to express dependencies in metadata, and (2) the design of Python packaging and the wheel spec forcing vendoring dependencies.”&lt;/p&gt;
+
+&lt;h3 id="the-middle-ground"&gt;The middle ground&lt;/h3&gt;
+
+&lt;p&gt;&lt;a href="https://docs.conda.io/"&gt;Conda&lt;/a&gt; is probably the most successful attempt at bridging these worlds. It packages C libraries, Python, R, and other languages in a single dependency graph. You can declare dependencies on both libcurl and requests (or libcurl and an R package), and Conda understands what that means.&lt;/p&gt;
+
+&lt;p&gt;This took off in scientific Python, where C dependencies are a nightmare. NumPy linking against BLAS, SciPy needing LAPACK, HDF5 bindings for data science work. These projects have complex native codebases that are painful to compile from source and need careful matching between Python wrappers and underlying C libraries. Conda packages all of this with proper metadata and version constraints.&lt;/p&gt;
+
+&lt;p&gt;But Conda never became universal. Part of the reason is that it bundles the hard problem (managing C dependencies) with a less compelling solution for the easy problem (pure Python packages). If you don’t need compiled extensions, Conda is more than you need. And even when you do need it, conda environments are heavier than virtual environments and the resolver used to be infamously slow. Mamba exists largely because conda’s dependency resolution took forever on nontrivial environments.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://spack.io/"&gt;Spack&lt;/a&gt; and &lt;a href="https://easybuild.io/"&gt;EasyBuild&lt;/a&gt; occupy similar territory but for HPC, where you need fine-grained control over compiler flags, MPI implementations, and hardware-specific optimizations. Spack in particular has an exceptionally sophisticated dependency model, versioning compilers at various points in the dependency chain and recording everything involved in a build for reproducibility. It’s impressive engineering, but the complexity is justified by use cases most developers never encounter.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://nixos.org/"&gt;Nix&lt;/a&gt; and &lt;a href="https://guix.gnu.org/"&gt;Guix&lt;/a&gt; come at it another way, with content-addressed storage and reproducibility as core design goals. They’re still system package managers, still delivering applications, but they have a better model for mapping language packages into that world. They repackage what’s on PyPI and npm, expressing C dependencies alongside Python ones in a single dependency graph. There’s a large community keeping these mappings current, encoding which Python and npm packages depend on which system libraries. It works, but it’s still one system absorbing the other rather than the two talking to each other, and the mappings live in nixpkgs, not in the upstream package metadata where other tools could use them.&lt;/p&gt;
+
+&lt;h3 id="making-the-invisible-visible"&gt;Making the invisible visible&lt;/h3&gt;
+
+&lt;p&gt;Today the gap gets filled by humans. You run pip install, hit a compilation error about missing headers, google which apt package provides them. Dockerfiles accumulate RUN apt-get install lines that encode this knowledge.&lt;/p&gt;
+
+&lt;p&gt;Vlad and I have been &lt;a href="https://github.com/ecosyste-ms/packages/issues/1261"&gt;investigating how to automate this&lt;/a&gt; through ecosyste.ms: mine symbols from binaries across ecosystems, build an index that maps symbols to system libraries to upstream projects.&lt;/p&gt;
+
+&lt;p&gt;Tools like &lt;code class="language-plaintext highlighter-rouge"&gt;nm&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;objdump&lt;/code&gt;, and &lt;code class="language-plaintext highlighter-rouge"&gt;readelf&lt;/code&gt; can list the symbols a library exports. Run this across apt, apk, rpm, and Homebrew packages, and you get a database: the symbol &lt;code class="language-plaintext highlighter-rouge"&gt;SSL_connect&lt;/code&gt; comes from libssl, packaged as libssl3 in Debian and openssl in Alpine and openssl@3 in Homebrew. Do the same for wheels and gems and native Node modules, recording which symbols are undefined and which libraries are bundled inside the package. Then cross-reference: when a wheel has an undefined symbol, the database tells you which system library provides it. When a wheel bundles a library, you can identify the upstream project and version.&lt;/p&gt;
+
+&lt;p&gt;The output might look like: numpy@1.26.0 (PyPI) depends on libopenblas.so.0 (bundled), which is OpenBLAS 0.3.21 upstream, packaged as libopenblas0 in apt, openblas in apk, openblas in rpm, and openblas in brew. Ultimately I want to index these links into &lt;a href="https://ecosyste.ms/"&gt;ecosyste.ms&lt;/a&gt; alongside the regular dependency data, so the cross-ecosystem connections become queryable like any other dependency.&lt;/p&gt;
+
+&lt;p&gt;The motivation here is sustainability. Vlad works on the &lt;a href="https://opensourcepledge.com/"&gt;Open Source Pledge&lt;/a&gt;, which asks companies to pay maintainers of their dependencies. But dependencies on system libraries aren’t surfaced anywhere, which means they’re invisible to funding. NumPy depends heavily on OpenBLAS, but that relationship doesn’t show up when someone sponsors NumPy or analyzes its dependency tree. The OpenBLAS maintainers don’t get credit for the work that makes NumPy fast. Tracing these connections across package managers and languages is the first step toward fixing that. If &lt;a href="https://force11.org/info/software-citation-principles-published-2016/"&gt;software citation&lt;/a&gt; takes off in academia, the same problem applies: papers citing NumPy should propagate credit to BLAS, but only if we can trace the dependency.&lt;/p&gt;
+
+&lt;p&gt;The same data has security applications. If a C library has a CVE, nobody can currently tell which wheels or npm packages or gems bundle an affected version. Vulnerability scanners look at language package metadata and see nothing. With a symbol database, you could trace from CVE to upstream library to every package that vendors it, across ecosystems. It also makes SBOMs more accurate: right now, generating an SBOM for a project misses all the C libraries bundled inside packages.&lt;/p&gt;
+
+&lt;p&gt;Vlad is presenting this at &lt;a href="https://fosdem.org/2026/schedule/track/package-management/"&gt;FOSDEM 2026&lt;/a&gt; in the Package Management devroom, which I’m co-organizing.&lt;/p&gt;
+
+&lt;p&gt;Any serious attempt at &lt;a href="/2026/01/22/a-protocol-for-package-management.html"&gt;a protocol for package management&lt;/a&gt; needs to grapple with this. Cross-ecosystem dependencies are everywhere, just invisible, and making them first-class is the missing layer between these two worlds.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/27/the-c-shaped-hole-in-package-management</guid>
+      <pubDate>Tue, 27 Jan 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Introducing Package Chaos Monkey</title>
+      <link>https://nesbitt.io/2026/01/26/introducing-package-chaos-monkey.html</link>
+      <description>&lt;p&gt;We are excited to announce general availability of Package Chaos Monkey, a new addition to the Resilience Engineering suite designed to help teams build confidence in their software supply chain.&lt;/p&gt;
+
+&lt;p&gt;Modern applications rely on hundreds of third-party packages, yet most teams have never validated their systems against the failure modes that occur in production. Package Chaos Monkey addresses this gap by padding left on supply chain resilience, continuously injecting realistic faults into your dependency resolution process, helping you discover weaknesses before they become incidents.&lt;/p&gt;
+
+&lt;p&gt;Getting started takes minutes. Simply add our registry proxy to your package manager configuration. Package Chaos Monkey will begin improving your resilience immediately.&lt;/p&gt;
+
+&lt;h3 id="features"&gt;Features&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;Registry Propagation Simulation.&lt;/strong&gt; Ensures your systems handle the delay between package publication and global CDN availability. When you install a package, there’s a small chance we’ll return the previous version from one CDN edge while serving the new version from another. Just like in production.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Yank-in-Flight Testing.&lt;/strong&gt; Validates your retry logic by occasionally yanking packages between the metadata fetch and tarball download. Your resolver already fetched the index, committed to a version, and now it’s gone. This happens in the wild more often than you’d think.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Lockfile Integrity Challenges.&lt;/strong&gt; Periodically invalidates entries in your lockfile by removing specific versions from our registry mirror. This helps teams discover which of their pinned versions would cause cascading failures if they disappeared, and whether anyone would notice.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Dependency Oscillation Mode.&lt;/strong&gt; Introduces controlled instability in diamond dependency resolution by varying traversal order between runs. If your dependency graph resolves differently depending on which order the resolver visits nodes, you’ll want to know that before release day.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Cache Corruption Scenarios.&lt;/strong&gt; Silently alters checksums in your local cache at configurable intervals, helping you verify that your tooling actually validates what it claims to validate. Most don’t.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Concurrent Publish Races.&lt;/strong&gt; Simulates the exciting experience of two package versions racing to be published, with different CDN edges observing different outcomes. Your CI server and your laptop might resolve the same manifest differently. Package Chaos Monkey makes this a feature.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Signature Key Rotation Events.&lt;/strong&gt; Randomly rotates signing keys mid-session, verifying that your tooling handles cryptographic transitions gracefully. The package was signed with the old key, but the metadata now expects the new one. We call this “Tuesday at a large registry.”&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Transitive Phantom Dependencies.&lt;/strong&gt; Occasionally hoists dependencies in ways that make packages work locally but fail when published. If your monorepo’s test suite passes because a sibling workspace provides an undeclared dependency, Package Chaos Monkey will help you find out.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Registry Partition Mode.&lt;/strong&gt; Simulates upstream registry outages by returning stale metadata from your proxy while the origin remains unreachable. How stale? You’ll find out. Does your tooling know it’s working with cached data? Probably not.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Docker Hub Policy Roulette.&lt;/strong&gt; Randomly changes rate limits, authentication requirements, and image retention policies mid-pipeline. We’ve studied Docker’s historical policy announcements and recreated them as a Markov chain. Your CI will never know what to expect, just like the real thing.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Time Dilation for TOCTOU Testing.&lt;/strong&gt; Introduces random delays between dependency resolution phases, maximizing the window for time-of-check to time-of-use discrepancies. Resolve at 10:00, fetch at 10:15. The world has moved on.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Automated Dependency Reduction.&lt;/strong&gt; Our GitHub integration opens pull requests that roll back recent upgrades or remove dependencies entirely, but only when CI continues to pass. This helps teams discover which dependencies their test suites don’t actually exercise, and which packages they forgot they were paying for. If the PR merges, you probably didn’t need it. If production breaks a week later, now you know your tests need work.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Weekend Rewrite Simulation.&lt;/strong&gt; Occasionally replaces one of your dependencies with a brand new Rust implementation that appeared on Friday afternoon. The API is almost compatible. The maintainer is very excited about it. There are no tests yet but it’s blazingly fast.&lt;/p&gt;
+
+&lt;h3 id="enterprise-tier"&gt;Enterprise tier&lt;/h3&gt;
+
+&lt;p&gt;For teams requiring additional resilience validation, Package Chaos Monkey Enterprise includes:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;strong&gt;Coordinated Multi-Registry Chaos.&lt;/strong&gt; Synchronize failures across npm, PyPI, and RubyGems simultaneously for realistic polyglot incident scenarios.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;AI-Assisted Fault Selection.&lt;/strong&gt; Our models analyze your dependency graph to identify the packages whose failure would cause maximum disruption, then prioritize those for chaos injection. We pay special attention to packages maintained by a single person in Nebraska.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Compliance Reporting.&lt;/strong&gt; Generate audit logs demonstrating that your systems were tested against supply chain failures, useful for SOC 2 and FedRAMP attestations.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;SBOM Discrepancy Generator.&lt;/strong&gt; Produces SBOMs in SPDX, CycloneDX, and SWID formats that all describe the same build but disagree on package counts, versions, and license classifications. Perfect for testing whether your compliance team actually reads these.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Left-Pad Anniversary Mode.&lt;/strong&gt; Every March 22nd, we remove a random package from the bottom of your dependency tree. This commemorative feature builds organizational muscle memory.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Lottery Factor Testing.&lt;/strong&gt; We donate a million dollars to a randomly selected maintainer in your dependency tree and measure how long until their next release. Helps teams identify packages maintained by people who still need the money.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Bus Factor Testing.&lt;/strong&gt; In partnership with Tesla’s new autonomous bus division. Results may vary.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Security Fatigue Assessment.&lt;/strong&gt; We submit a steady stream of plausible but incorrect vulnerability reports to maintainers in your dependency tree until they disable their HackerOne. Validates whether your supply chain depends on people who still read their security inbox.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3 id="getting-started"&gt;Getting started&lt;/h3&gt;
+
+&lt;p&gt;Package Chaos Monkey integrates with all major package managers and CI/CD platforms. Point your registry configuration at &lt;code class="language-plaintext highlighter-rouge"&gt;chaos.pkg.example&lt;/code&gt;, run your usual install command, and let resilience engineering begin.&lt;/p&gt;
+
+&lt;p&gt;Documentation and API references are available at docs.example/chaos. The community tier is free for open source projects.&lt;/p&gt;
+
+&lt;p&gt;Build resilient. Build with chaos.&lt;/p&gt;
+
+&lt;p&gt;&lt;em&gt;Package Chaos Monkey is a fictional offering and nothing herein constitutes an offer, solicitation, or invitation to disrupt your supply chain. Any resemblance to actual services, announced, discontinued, or quietly sunsetted, is purely coincidental. Please do not build this. If reading this gave you anxiety, that’s the point. The failure modes described are real. See &lt;a href="/2026/01/19/a-jepsen-test-for-package-managers"&gt;A Jepsen Test for Package Managers&lt;/a&gt; for the serious version. For more package management think pieces, see &lt;a href="/2026/01/20/the-lesser-evil-of-compliance"&gt;The Lesser Evil of Compliance&lt;/a&gt; and &lt;a href="/2026/01/10/16-best-practices-for-reducing-dependabot-noise"&gt;16 Best Practices for Reducing Dependabot Noise&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/26/introducing-package-chaos-monkey</guid>
+      <pubDate>Mon, 26 Jan 2026 08:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>PkgFed: ActivityPub for Package Releases</title>
+      <link>https://nesbitt.io/2026/01/25/pkgfed-activitypub-for-package-releases.html</link>
+      <description>&lt;p&gt;&lt;a href="https://forgefed.org/"&gt;ForgeFed&lt;/a&gt; extends ActivityPub for software forges. The idea is that GitLab, Gitea, Forgejo, and other forges could federate with each other the way Mastodon instances do: follow users across servers, get notified when they push commits, comment on issues from a different instance. It’s been in development since 2019, slow going but still alive. Forgejo is the main implementer.&lt;/p&gt;
+
+&lt;p&gt;ForgeFed’s spec covers repositories, commits, issues, pull requests. It even has a &lt;a href="https://forgefed.org/spec/#release"&gt;Release type and ReleaseTracker actor&lt;/a&gt; for forge releases, the kind of thing GitHub Releases does: a tagged commit with attached binaries and notes. But publishing to npm or crates.io is a different event from tagging a commit on your forge. The registry is a separate system with its own namespace, its own versioning, its own announcements. Package releases are also immutable in a way forge releases aren’t: once you publish 1.0.0, that version is locked. ForgeFed doesn’t cover that yet.&lt;/p&gt;
+
+&lt;p&gt;The same approach could work for package registries:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;strong&gt;Registry&lt;/strong&gt; = Mastodon instance&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Package&lt;/strong&gt; = Actor (has inbox/outbox, can be followed)&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Release&lt;/strong&gt; = Post (immutable, like toots should be)&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Repository&lt;/strong&gt; = Actor that follows packages (its dependencies)&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;ForgeFed already defines repositories as actors. A Forgejo repo has an inbox, an outbox, followers. PkgFed would let that repo follow packages. The follow is the dependency declaration. When &lt;code class="language-plaintext highlighter-rouge"&gt;my-project@forgejo.example.org&lt;/code&gt; follows &lt;code class="language-plaintext highlighter-rouge"&gt;serde@crates.io&lt;/code&gt;, it’s saying “I depend on this.” The repo’s following list is its manifest, rendered as a social graph. Parse the lockfile, follow the packages, and the dependency relationship exists in the fediverse as a first-class object.&lt;/p&gt;
+
+&lt;p&gt;This makes dependencies bidirectional. Right now, a lockfile points at packages, but packages don’t point back. Maintainers can see download counts but not who’s downloading. With repos as actors, packages can see their followers. The maintainer of &lt;code class="language-plaintext highlighter-rouge"&gt;serde&lt;/code&gt; could see every public project that depends on it, organized by forge, by organization, by whatever metadata the repos expose. That’s useful for prioritizing issues, understanding your user base, reaching out about breaking changes.&lt;/p&gt;
+
+&lt;p&gt;You can also follow packages from your existing Mastodon account. &lt;code class="language-plaintext highlighter-rouge"&gt;serde@crates.io&lt;/code&gt; shows up in your timeline when it releases, when a security advisory drops, or when a version gets yanked, without requiring a new app or account. Maintainers already announce releases on social media manually. This makes it native.&lt;/p&gt;
+
+&lt;p&gt;Federating package resolution itself hits &lt;a href="/2025/12/21/federated-package-management.html"&gt;Zooko’s triangle&lt;/a&gt;, and PkgFed sidesteps that entirely. The naming problem remains unsolved. But notification is a different problem than naming. You can follow &lt;code class="language-plaintext highlighter-rouge"&gt;rails&lt;/code&gt; on RubyGems and &lt;code class="language-plaintext highlighter-rouge"&gt;express&lt;/code&gt; on npm without needing those names to live in the same namespace. The registry stays authoritative for what a package is. ActivityPub handles what happened to it.&lt;/p&gt;
+
+&lt;p&gt;CVEs and security advisories could be replies to release posts, threading the vulnerability to the version it affects. Yanking a version is a delete. Boosts mean “this registry mirrors or vouches for this package.” The social graph primitives map surprisingly well onto supply chain relationships.&lt;/p&gt;
+
+&lt;h3 id="the-follower-graph-as-dependency-graph"&gt;The follower graph as dependency graph&lt;/h3&gt;
+
+&lt;p&gt;When a repository follows the packages it depends on, the following relationships become a dependency graph. Not the private lockfile-derived graph that sits in your repo, but a social graph of stated interest. If ten thousand repos follow &lt;code class="language-plaintext highlighter-rouge"&gt;left-pad&lt;/code&gt;, that’s visible in a way that lockfile analysis isn’t. When &lt;code class="language-plaintext highlighter-rouge"&gt;left-pad&lt;/code&gt; posts a deprecation notice, those ten thousand followers get it immediately. Packages can see their followers, giving maintainers an instant dependents list.&lt;/p&gt;
+
+&lt;p&gt;Dependabot and Renovate already do something like this, scraping registries for new versions, but they poll rather than subscribe. They operate as centralized services that know about your dependencies because you gave them access to your repos. A federated notification layer would work the other way: you announce what you depend on, and updates come to you. The dependency relationship becomes public, or at least as public as your ActivityPub profile.&lt;/p&gt;
+
+&lt;p&gt;The data is also machine readable. ActivityPub is JSON-LD under the hood, structured and parseable. A self-hosted Forgejo instance could subscribe to packages and automatically open pull requests when new versions arrive, the same way &lt;a href="/2026/01/02/how-dependabot-actually-works.html"&gt;Dependabot works on GitHub&lt;/a&gt;. No need to grant a third-party service access to your repos. The bot runs on your infrastructure, consuming the same federated feed that shows up in your Mastodon timeline. Self-hosted forges get self-hosted dependency updates. And for private repos that don’t want to declare their dependencies publicly, they can poll the ActivityPub feeds directly without following. The outbox is public; you don’t have to announce yourself to read it.&lt;/p&gt;
+
+&lt;p&gt;It would also make indexing easier. &lt;a href="https://ecosyste.ms"&gt;Ecosyste.ms&lt;/a&gt; currently needs custom integrations for each registry, polling APIs with different shapes, rate limits, and quirks. If registries published releases as ActivityPub activities, an indexer could subscribe once and receive updates from any registry that speaks the protocol, and the long tail of smaller package managers would become indexable without dedicated engineering effort.&lt;/p&gt;
+
+&lt;p&gt;That visibility cuts both ways. Right now, maintainers have no idea who uses their packages. Downloads are anonymous. Issues come from strangers. An ActivityPub follower list would let maintainers see their audience. Maybe that helps with &lt;a href="/2017/11/10/what-does-a-sustainable-open-source-project-look-like.html"&gt;sustainability&lt;/a&gt;: you’d know which companies depend on you, and could reach them directly about sponsorship. Maybe it helps with security: if a critical CVE drops, you could notify followers instead of waiting for them to notice.&lt;/p&gt;
+
+&lt;p&gt;The consumer graph would also be useful for security research. Dependency confusion works because attackers know the public graph but not the private one. If the following network is public, researchers could map which packages have large followings, identify patterns in how dependencies cluster, track how quickly security advisories propagate through the network. The data would be noisy, since following doesn’t mean depending, but it would be better than the nothing we have now.&lt;/p&gt;
+
+&lt;p&gt;Some organizations don’t want to advertise what they depend on. Their dependency graph is competitive intelligence, or a security liability, or just nobody’s business. For private packages, don’t force ActivityPub into places where auth and firewalls make it awkward. Just use RSS. The public fediverse is for public packages; private infrastructure can stay private.&lt;/p&gt;
+
+&lt;p&gt;Naming gets awkward. npm scoped packages like &lt;code class="language-plaintext highlighter-rouge"&gt;@types/node&lt;/code&gt; would become actors, but the &lt;code class="language-plaintext highlighter-rouge"&gt;@&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;/&lt;/code&gt; in the name will confuse Mastodon’s mention parsing. The ActivityPub spec handles it fine if you URL-encode the characters, but whether existing clients render it correctly is another question.&lt;/p&gt;
+
+&lt;p&gt;The protocol also needs to survive spam and impersonation. Anyone can spin up an ActivityPub server and claim to be RubyGems.org. Webfinger and domain verification help, but the real registries would need to publish their ActivityPub identities somewhere authoritative. &lt;a href="/2025/12/22/package-registries-are-governance-as-a-service.html"&gt;Registries already make governance decisions&lt;/a&gt;; this would add another. ForgeFed has the same issue, and hasn’t fully solved it.&lt;/p&gt;
+
+&lt;p&gt;ForgeFed moves slowly. It might be better to write a standalone spec that aligns with ForgeFed rather than waiting to extend it. The specs could be compatible without being the same document. A package actor and a repository actor don’t need to be defined in the same place to understand each other.&lt;/p&gt;
+
+&lt;h3 id="discovery-outside-github"&gt;Discovery outside GitHub&lt;/h3&gt;
+
+&lt;p&gt;This matters more as developers leave GitHub. Forgejo is the main adopter of ForgeFed, and it’s growing as people move to self-hosted instances or Codeberg for reasons ranging from Microsoft skepticism to sovereignty requirements to just wanting control over their infrastructure. The problem is discovery. GitHub’s network effects made it easy to find projects, follow developers, see what’s trending. A thousand Forgejo instances don’t have that. You can’t search across them. You can’t see what’s popular. The open source commons fragments into isolated gardens.&lt;/p&gt;
+
+&lt;p&gt;Package registries could be the connective tissue. A project on a Forgejo instance in Berlin and another on Gitea in Tokyo might both publish to RubyGems.org. The registry already knows about both. If the registry federates, it becomes a discovery layer that works regardless of where the source code lives. You’d find projects through the packages they publish, not the forges they happen to use. The registry’s follower graph would show which packages are gaining traction, which maintainers are active, which corners of the ecosystem are growing. GitHub provided this as a side effect of centralization. Federation would need to build it deliberately.&lt;/p&gt;
+
+&lt;p&gt;ForgeFed alone doesn’t solve discovery because you need to know an instance exists before you can follow anyone on it. A package registry alone doesn’t solve it because packages are artifacts, not communities. Together they might. A Forgejo instance could announce itself by publishing packages. A developer could discover a project through a package, then follow the forge to see commits and issues. The registry becomes the on-ramp to a federated development ecosystem.&lt;/p&gt;
+
+&lt;p&gt;The real question is whether anyone would use it. Developers already get too many notifications. Would they actually follow packages instead of letting Dependabot handle it? Maintainers are already overwhelmed. Would they engage with a follower list, or just ignore another channel? The answer depends on whether the network effects make it valuable enough to justify the noise.&lt;/p&gt;
+
+&lt;p&gt;Other projects are exploring adjacent territory. &lt;a href="https://github.com/bnonni/drpm.tools"&gt;DRPM&lt;/a&gt; tries to decentralize package hosting itself using DIDs and Decentralized Web Nodes. That’s a harder problem than notification, running into the &lt;a href="/2025/12/21/federated-package-management.html"&gt;naming issues I wrote about before&lt;/a&gt;. PkgFed would be lighter weight: keep the registries, federate the announcements.&lt;/p&gt;
+
+&lt;h3 id="codemeta-and-the-research-software-community"&gt;Codemeta and the research software community&lt;/h3&gt;
+
+&lt;p&gt;There’s already a community working on software metadata standards. &lt;a href="https://codemeta.github.io/"&gt;Codemeta&lt;/a&gt; is built directly on &lt;a href="https://schema.org"&gt;schema.org&lt;/a&gt;, an opinionated subset identifying which terms matter for software: &lt;code class="language-plaintext highlighter-rouge"&gt;author&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;codeRepository&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;programmingLanguage&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;maintainer&lt;/code&gt;. Archivists use it. Academics use it for citations. &lt;a href="https://www.softwareheritage.org/"&gt;Software Heritage&lt;/a&gt; indexes it.&lt;/p&gt;
+
+&lt;p&gt;Since ActivityPub is JSON-LD, you can mix vocabularies. A PkgFed release activity using the Codemeta context would be the live version of a static &lt;code class="language-plaintext highlighter-rouge"&gt;codemeta.json&lt;/code&gt; file:&lt;/p&gt;
+
+&lt;div class="language-json highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
+  &lt;/span&gt;&lt;span class="nl"&gt;"@context"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="s2"&gt;"https://www.w3.org/ns/activitystreams"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="s2"&gt;"https://doi.org/10.5063/schema/codemeta-2.0"&lt;/span&gt;&lt;span class="w"&gt;
+  &lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;&lt;span class="w"&gt;
+  &lt;/span&gt;&lt;span class="nl"&gt;"type"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"Create"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+  &lt;/span&gt;&lt;span class="nl"&gt;"actor"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"https://npmjs.com/package/express"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+  &lt;/span&gt;&lt;span class="nl"&gt;"object"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"type"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"SoftwareApplication"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"name"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"express"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"softwareVersion"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"5.0.0"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"description"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"Fast, unopinionated, minimalist web framework for node."&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"downloadUrl"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"https://registry.npmjs.org/express/-/express-5.0.0.tgz"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"checksum"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"sha512-abc123..."&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"identifier"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="w"&gt;
+      &lt;/span&gt;&lt;span class="s2"&gt;"pkg:npm/express@5.0.0"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+      &lt;/span&gt;&lt;span class="s2"&gt;"swh:1:rel:abc123..."&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"license"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"https://spdx.org/licenses/MIT"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"codeRepository"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"https://github.com/expressjs/express"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"programmingLanguage"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"JavaScript"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"maintainer"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;"https://github.com/dougwilson"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="nl"&gt;"softwareRequirements"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="w"&gt;
+      &lt;/span&gt;&lt;span class="s2"&gt;"https://npmjs.com/package/body-parser"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;
+      &lt;/span&gt;&lt;span class="s2"&gt;"https://npmjs.com/package/cookie"&lt;/span&gt;&lt;span class="w"&gt;
+    &lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt;
+  &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;If &lt;code class="language-plaintext highlighter-rouge"&gt;codeRepository&lt;/code&gt; points to a ForgeFed actor, you’ve linked the two graphs. If &lt;code class="language-plaintext highlighter-rouge"&gt;maintainer&lt;/code&gt; is an ActivityPub actor, the person becomes followable and attributable. The &lt;code class="language-plaintext highlighter-rouge"&gt;softwareRequirements&lt;/code&gt; are URLs to other package actors, making dependencies explicit in the social graph. The &lt;code class="language-plaintext highlighter-rouge"&gt;identifier&lt;/code&gt; array includes both a &lt;a href="https://github.com/package-url/purl-spec"&gt;PURL&lt;/a&gt; for cross-ecosystem identification and a SWHID for the archived version.&lt;/p&gt;
+
+&lt;p&gt;Software Heritage could subscribe to registries and archive releases as they happen. Academics would get automatic credit when their package publishes. Two communities, different goals, same vocabulary.&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;p&gt;&lt;a href="https://ecosyste.ms"&gt;Ecosyste.ms&lt;/a&gt; already does the polling and normalizing work, providing a unified API across dozens of registries. PkgFed would make that native to the infrastructure rather than bolted on top, with registries announcing their own releases in a format that archivists and academics and security researchers already understand. ActivityPub, Codemeta, ForgeFed, PURL, SWHID, schema.org - none of this is new. PkgFed would just wire them together for package releases.&lt;/p&gt;
+
+&lt;p&gt;The timing feels right. Supply chain security is a growing concern, developers are leaving GitHub for federated forges, digital sovereignty is pushing organizations away from centralized infrastructure, and the standards for software metadata have matured. Five years ago, ForgeFed was a draft and Codemeta was obscure. Now Forgejo ships with federation support and Software Heritage indexes millions of repositories.&lt;/p&gt;
+
+&lt;p&gt;A bridge service could translate existing registry feeds into ActivityPub without waiting for registries to adopt anything. If you’re interested in working on this, or know of related efforts I’ve missed, let me know.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/25/pkgfed-activitypub-for-package-releases</guid>
+      <pubDate>Sun, 25 Jan 2026 08:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Rewriting git-pkgs in Go</title>
+      <link>https://nesbitt.io/2026/01/24/rewriting-git-pkgs-in-go.html</link>
+      <description>&lt;p&gt;This past week I’ve rewritten &lt;a href="/2026/01/01/git-pkgs-explore-your-dependency-history"&gt;git-pkgs&lt;/a&gt; in Go. git-pkgs is a git subcommand that indexes your dependency history into a SQLite database. It parses manifests and lockfiles across 35+ package managers, tracks every add, update, and remove through your git history, and gives you commands like &lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs blame&lt;/code&gt; to see who added each dependency, &lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs history &amp;lt;package&amp;gt;&lt;/code&gt; to trace a package’s version changes over time, and &lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs diff&lt;/code&gt; to compare dependencies between branches or commits.&lt;/p&gt;
+
+&lt;p&gt;The Ruby version worked fine, but installing a Ruby gem as a git subcommand has friction: you need Ruby installed, the right version, maybe a version manager, and &lt;code class="language-plaintext highlighter-rouge"&gt;gem install&lt;/code&gt; puts binaries somewhere that might not be in your PATH.&lt;/p&gt;
+
+&lt;p&gt;Go compiles to a single binary with no runtime dependencies. It’s pure Go, so there are no C extensions or platform-specific compilation issues to deal with. You download it and it works.&lt;/p&gt;
+
+&lt;div class="language-bash highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;brew tap git-pkgs/git-pkgs &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; brew &lt;span class="nb"&gt;install &lt;/span&gt;git-pkgs
+&lt;span class="c"&gt;# or&lt;/span&gt;
+go &lt;span class="nb"&gt;install &lt;/span&gt;github.com/git-pkgs/git-pkgs@latest
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;There are also prebuilt binaries on the &lt;a href="https://github.com/git-pkgs/git-pkgs/releases"&gt;releases page&lt;/a&gt; for Linux, macOS, and Windows.&lt;/p&gt;
+
+&lt;p&gt;I’m giving a lightning talk about git-pkgs at FOSDEM in the &lt;a href="https://fosdem.org/2026/schedule/track/dev-random/"&gt;/dev/random&lt;/a&gt; track if you want to hear more in person.&lt;/p&gt;
+
+&lt;p&gt;The Ruby version leaned on libraries that didn’t have good Go equivalents, so I had to build them. These ended up being as much work as git-pkgs itself, and they’re designed to be useful on their own:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href="https://github.com/git-pkgs/manifests"&gt;manifests&lt;/a&gt; parses lockfiles and manifests for 35+ package managers. If you’re building any kind of dependency analysis tool in Go, this saves you from writing parsers for package.json, Gemfile.lock, Cargo.toml, go.sum, and dozens more.&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/git-pkgs/registries"&gt;registries&lt;/a&gt; fetches package metadata from registry APIs. It handles the differences between npm, RubyGems, PyPI, crates.io, and others behind a single interface.&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/git-pkgs/managers"&gt;managers&lt;/a&gt; wraps package manager CLIs behind a common interface. Install, update, remove, and query packages without knowing whether you’re dealing with npm, bundler, cargo, or pip.&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/git-pkgs/purl"&gt;purl&lt;/a&gt; handles Package URLs, the standard format for identifying packages across ecosystems.&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/git-pkgs/spdx"&gt;spdx&lt;/a&gt; parses and validates SPDX license expressions.&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/git-pkgs/vers"&gt;vers&lt;/a&gt; compares version ranges according to the VERS spec.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;All of these live in the &lt;a href="https://github.com/git-pkgs"&gt;git-pkgs org&lt;/a&gt;. If you’re building dependency tooling in Go, they might save you some time.&lt;/p&gt;
+
+&lt;p&gt;The SQLite schema stayed the same, so migration from the Ruby version is just replacing the binary. New commands since the Ruby version:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs install&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs add&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs remove&lt;/code&gt;, and &lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs update&lt;/code&gt; manage dependencies across 35 package managers through a unified interface. The managers library handles the CLI differences so you don’t have to remember whether it’s &lt;code class="language-plaintext highlighter-rouge"&gt;npm install&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;bundle add&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;cargo add&lt;/code&gt;.&lt;/li&gt;
+  &lt;li&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs browse rails&lt;/code&gt; opens the installed package in your editor. Add &lt;code class="language-plaintext highlighter-rouge"&gt;--path&lt;/code&gt; to just print the filesystem path.&lt;/li&gt;
+  &lt;li&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs bisect&lt;/code&gt; does binary search through dependency-changing commits. Like git bisect, but it only stops on commits that touched a manifest or lockfile, and you can filter by ecosystem or package.&lt;/li&gt;
+  &lt;li&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;git pkgs diff-file Gemfile.lock.old Gemfile.lock.new&lt;/code&gt; runs the diff algorithm on two files directly, no git repo needed. Useful for comparing tarballs or dependencies across different projects.&lt;/li&gt;
+  &lt;li&gt;Man pages are included in releases, so &lt;code class="language-plaintext highlighter-rouge"&gt;man git-pkgs-blame&lt;/code&gt; works as expected.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;The blame query on rubygems.org (11k commits, 472 deps) dropped from 7.5 seconds to 0.05 seconds after fixing SQLite’s join order. The outdated command with a warm cache went from 22 seconds to 0.2 seconds by fixing PURL mismatches and batching database operations.&lt;/p&gt;
+
+&lt;p&gt;To shake out more performance issues I built a &lt;a href="https://github.com/git-pkgs/testing"&gt;test harness&lt;/a&gt; that runs git-pkgs against 22 real-world repos across different ecosystems. The &lt;a href="https://github.com/git-pkgs/testing/blob/main/results/results.csv"&gt;results&lt;/a&gt; cover everything from small libraries to massive projects like Rails (97k commits, 2.4k deps), vscode (144k commits, 7k deps), and React (21k commits, 28k deps). After the initial index, most query commands complete in under a second even on the largest repos.&lt;/p&gt;
+
+&lt;p&gt;Beyond easier installation, Go opens up integration possibilities that weren’t practical with Ruby. &lt;a href="https://forgejo.org"&gt;Forgejo&lt;/a&gt; is written in Go, and embedding git-pkgs would let forges surface dependency information directly in the UI: who added each package, what changed in a pull request, which commits introduced vulnerabilities. This would be a fully open source, self-hostable dependency graph. I’ve been &lt;a href="https://mastodon.social/@andrewnez/115927160933901700"&gt;prototyping it&lt;/a&gt; in a fork.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://gittuf.dev"&gt;gittuf&lt;/a&gt; enforces policies at the git level independent of any forge. With git-pkgs awareness, gittuf could enforce policies it can’t currently express: requiring extra approval for adding new dependencies versus updating existing ones, blocking copyleft licenses or dependencies with critical CVEs, flagging packages with single maintainers.&lt;/p&gt;
+
+&lt;p&gt;Neither of these would be practical if integrating meant shelling out to a Ruby process.&lt;/p&gt;
+
+&lt;p&gt;The project also has a proper home now at &lt;a href="https://git-pkgs.dev"&gt;git-pkgs.dev&lt;/a&gt;, built with Hugo and the &lt;a href="https://github.com/imfing/hextra"&gt;hextra&lt;/a&gt; theme, with documentation for all the commands and the database schema. The Ruby version is archived at &lt;a href="https://github.com/git-pkgs/git-pkgs-ruby"&gt;github.com/git-pkgs/git-pkgs-ruby&lt;/a&gt;, and the Go version lives at &lt;a href="https://github.com/git-pkgs/git-pkgs"&gt;github.com/git-pkgs/git-pkgs&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Try it on a repo with some history and let me know what’s working and what’s missing. Contributions welcome at &lt;a href="https://github.com/git-pkgs/git-pkgs"&gt;github.com/git-pkgs/git-pkgs&lt;/a&gt;.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/24/rewriting-git-pkgs-in-go</guid>
+      <pubDate>Sat, 24 Jan 2026 08:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Package Management is a Wicked Problem</title>
+      <link>https://nesbitt.io/2026/01/23/package-management-is-a-wicked-problem.html</link>
+      <description>&lt;p&gt;In 1973, Horst Rittel and Melvin Webber published &lt;a href="https://urbanpolicy.net/wp-content/uploads/2015/06/Rittel-Webber_1973_DilemmasInAGeneralTheoryOfPlanning.pdf"&gt;“Dilemmas in a General Theory of Planning”&lt;/a&gt;, introducing the concept of “wicked problems” in urban planning. Wicked problems are problems where the act of trying to solve them changes what the problem is. Problems where you can’t test solutions in advance. Problems where every stakeholder has a different definition of success.&lt;/p&gt;
+
+&lt;p&gt;Package management fits the definition. I’ve spent years working on &lt;a href="/2025/12/09/why-im-fascinated-by-package-management.html"&gt;package manager data and tooling&lt;/a&gt;, and the more I learn, the more the wicked problem framework explains why progress feels so difficult. Tens of millions of packages, hundreds of millions of versions, trillions of downloads. Small improvements at this layer affect every project built on top.&lt;/p&gt;
+
+&lt;p&gt;Rittel and Webber &lt;a href="https://www.leanessays.com/2002/01/wicked-problems.html"&gt;identified ten characteristics&lt;/a&gt; that distinguish wicked problems from tame ones.&lt;/p&gt;
+
+&lt;h3 id="1-no-definitive-formulation"&gt;1. No definitive formulation&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“Formulating the problem and the solution are essentially the same thing.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;The term itself is ambiguous. Say “package management” and some people think npm or Cargo, others think apt or Homebrew. One is about managing dependencies while building software, the other about installing finished tools and libraries onto a system. Same words, different problems. Even within a single ecosystem, the naming is contested: is the unit a package, a module, a crate, a distribution? These aren’t synonyms. They encode different assumptions about what gets versioned, what gets published, and what gets installed. Package management is naming all the way down, and naming is famously one of the two hard problems in computer science.&lt;/p&gt;
+
+&lt;p&gt;Ask ten people what package management should accomplish and you’ll get ten different answers. Should it prioritize reproducibility or freshness? Security or convenience? Should it be centralized for coordination or federated for resilience? The answers shape the problem definition.&lt;/p&gt;
+
+&lt;p&gt;When npm added lockfiles, it wasn’t solving a pre-existing problem everyone agreed on. It was redefining what “installing dependencies” meant. Same with Cargo adding a central registry when Go was experimenting with URL-based imports. Each design decision &lt;a href="/2025/12/05/package-manager-tradeoffs.html"&gt;changes what problem you’re trying to solve&lt;/a&gt;.&lt;/p&gt;
+
+&lt;h3 id="2-no-stopping-rule"&gt;2. No stopping rule&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“Since there is no definitive ‘the problem,’ there is also no definitive ‘the solution.’”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;When is a package manager done? Bundler has been around since 2010 and is still adding features. npm is on its tenth major version. UV just rewrote Python packaging from scratch, and people are already filing issues for the next iteration.&lt;/p&gt;
+
+&lt;p&gt;Work stops when you run out of time or money, when maintainers burn out, or when something newer arrives, but rarely because the problem got solved. Even apparent stability might just mean the energy moved elsewhere.&lt;/p&gt;
+
+&lt;h3 id="3-good-or-bad-rather-than-true-or-false"&gt;3. Good-or-bad rather than true-or-false&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“Solutions to wicked problems are not true-or-false, but good-or-bad.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Solutions can’t be objectively correct, only better or worse from someone’s perspective.&lt;/p&gt;
+
+&lt;p&gt;Homebrew’s choice to use git as a database was neither right nor wrong. It worked brilliantly for years, then &lt;a href="/2025/12/24/package-managers-keep-using-git-as-a-database.html"&gt;became a bottleneck&lt;/a&gt;. Whether that was a good decision depends on whether you weight early simplicity or long-term scaling. Different stakeholders will evaluate it differently.&lt;/p&gt;
+
+&lt;p&gt;Semver was an attempt to make versioning true-or-false: either a release breaks compatibility or it doesn’t. In practice it became good-or-bad anyway. &lt;a href="/2024/06/24/from-zerover-to-semver-a-comprehensive-list-of-versioning-schemes-in-open-source.html"&gt;Different ecosystems interpret it differently&lt;/a&gt;. Some communities treat it as sacred law, others as rough guidance. The spec’s existence didn’t settle the question. Hyrum’s Law makes it worse: a bug fix for one user is a breaking change for someone who depended on that bug. There’s no objectively correct version bump, only outcomes that help or hurt specific people.&lt;/p&gt;
+
+&lt;h3 id="4-no-immediate-or-ultimate-test"&gt;4. No immediate or ultimate test&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“Solutions to wicked problems generate waves of consequences.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;When Go chose URL-based imports, the immediate effect seemed elegant: no central registry, no naming conflicts. Years later, &lt;a href="/2025/12/21/federated-package-management.html"&gt;the consequences emerged&lt;/a&gt;: leftpad-style breakages when repos disappeared, security implications from trusting random hostnames, and the eventual need for a central proxy anyway.&lt;/p&gt;
+
+&lt;p&gt;You can’t A/B test a package manager design. By the time you know whether a decision worked, you’ve built an ecosystem on top of it. Even in retrospect, we can’t know if the alternative would have been better. Maybe a central Go registry from day one would have created different, worse problems.&lt;/p&gt;
+
+&lt;h3 id="5-irreversible-consequences"&gt;5. Irreversible consequences&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“Every implemented solution leaves traces that cannot be undone.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Once PyPI accepted namespace-less package names, &lt;a href="/2025/12/17/typosquatting-in-package-managers.html"&gt;typosquatting&lt;/a&gt; became inevitable. You can’t fix it without breaking every existing requirements.txt file. Once npm let packages depend on version ranges, you couldn’t switch to pinned-only without breaking the ecosystem’s culture.&lt;/p&gt;
+
+&lt;p&gt;Every registry accumulates cruft that can never be removed. RubyGems still hosts gems that haven’t been updated since 2007. Yanking packages breaks dependent builds. The only direction is forward, with all the baggage included. Even attempts to fix cruft create new cruft: if PyPI added namespaces tomorrow, it would just be another layer on top of the existing flat namespace.&lt;/p&gt;
+
+&lt;h3 id="6-no-well-described-set-of-solutions"&gt;6. No well-described set of solutions&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“There is no enumerable set of potential solutions.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Different stakeholders envision different acceptable outcomes.&lt;/p&gt;
+
+&lt;p&gt;Registry operators want stability. Security researchers want auditability. Library authors want flexibility. Maintainers want sustainability. Application developers want reproducibility. Corporate users want compliance. &lt;a href="/2025/12/22/package-registries-are-governance-as-a-service.html"&gt;These goals actively conflict&lt;/a&gt;. A registry that allows easy package updates is also one that’s easier to attack. A lockfile that captures every transitive dependency is also one that’s harder to update.&lt;/p&gt;
+
+&lt;p&gt;The npm/Yarn/pnpm competition is partly a story of different stakeholder priorities winning out. Yarn emerged because Facebook needed reproducibility npm didn’t provide. pnpm emerged because disk space and install speed mattered more to some users than compatibility. Each tool embodies a different answer to “what should a package manager optimize for?” and all three coexist because there’s no consensus.&lt;/p&gt;
+
+&lt;h3 id="7-essential-uniqueness"&gt;7. Essential uniqueness&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“There are no ‘classes’ of solutions that can be applied to a specific case.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;You might think: npm solved this problem, let’s copy their approach. But npm’s solutions emerged from JavaScript’s specific history, its browser origins, its lack of a standard library, its culture of tiny packages. Cargo’s solutions emerged from Rust’s different history and constraints.&lt;/p&gt;
+
+&lt;p&gt;When Python tried to adopt npm-style lockfiles, it didn’t quite work. The Python ecosystem had different expectations about virtualenvs, system packages, and global installs. pip-tools, pipenv, poetry, and uv all took different approaches to the same problem, and &lt;a href="https://xkcd.com/927/"&gt;the fragmentation itself became a new problem&lt;/a&gt;. Python also carries a constraint Node and Rust don’t have: it’s both a dev tool and a critical OS component. Break system Python and you break your operating system.&lt;/p&gt;
+
+&lt;h3 id="8-symptoms-of-other-problems"&gt;8. Symptoms of other problems&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“Every wicked problem can be considered a symptom of another problem.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Problems are embedded in other problems.&lt;/p&gt;
+
+&lt;p&gt;Supply chain security isn’t just a package management problem. It’s entangled with &lt;a href="/2017/11/10/what-does-a-sustainable-open-source-project-look-like.html"&gt;how open source gets funded&lt;/a&gt;, how maintainers get support, how companies evaluate risk, how developers learn security practices. You can’t fix typosquatting without addressing why &lt;a href="/2025/12/27/how-to-ruin-all-of-package-management.html"&gt;attackers have economic incentives to do it&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/01/05/the-nine-levels-of-javascript-dependency-hell.html"&gt;The dependency explosion&lt;/a&gt; in modern software is a symptom of developer productivity pressure, which is a symptom of market competition, which is a symptom of capitalism’s relationship with software. Package managers just happen to be the layer where the symptom manifests. Ecosystems evolve toward what they reward, not what they intend.&lt;/p&gt;
+
+&lt;h3 id="9-multiple-causal-explanations"&gt;9. Multiple causal explanations&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“The choice of explanation determines the nature of the problem’s resolution.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Different stakeholders propose competing theories about causes and remedies.&lt;/p&gt;
+
+&lt;p&gt;Why are there so many npm security incidents? Some blame JavaScript culture (too many small packages). Some blame npm’s design (too easy to publish). Some blame corporate underinvestment in security. Some blame the fundamental architecture of dynamic imports. Some blame attackers getting smarter.&lt;/p&gt;
+
+&lt;p&gt;Each explanation suggests different remedies. If it’s cultural, we need education. If it’s design, we need breaking changes. If it’s investment, we need money. The theories point in different directions, and the same people often hold several of them simultaneously.&lt;/p&gt;
+
+&lt;h3 id="10-no-right-to-be-wrong"&gt;10. No right to be wrong&lt;/h3&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;“The planner has no right to be wrong.”&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Unlike scientists proposing testable hypotheses, package manager designers must live with their choices.&lt;/p&gt;
+
+&lt;p&gt;When left-pad got unpublished, npm couldn’t just say “oops, that was an interesting experiment, let’s try again.” Thousands of builds broke. When npm later changed the unpublishing rules, that wasn’t a hypothesis either. It was a permanent policy that would shape behavior forever.&lt;/p&gt;
+
+&lt;p&gt;Package managers operate production infrastructure. You don’t get do-overs. The cost of being wrong is measured in broken builds, security breaches, and lost trust. Not acting is also a choice with consequences. npm’s initial permissiveness around unpublishing shaped everything that came after.&lt;/p&gt;
+
+&lt;hr /&gt;
+
+&lt;p&gt;None of this means we shouldn’t try to improve package management. The leverage is enormous: better security defaults would protect millions of projects, better funding mechanisms could support the maintainers everything depends on, better coordination could prevent the next left-pad. But the wicked problem framework explains why progress is slow, why solutions create new problems, and why experts disagree about basics. Package managers will never be “solved.”&lt;/p&gt;
+
+&lt;p&gt;Rittel and Webber’s answer to wicked problems was participatory planning: bring stakeholders together early, iterate continuously, accept that you’re managing tradeoffs rather than finding solutions. If we accept that these problems are wicked, we stop looking for a perfect tool and start looking for better ways to communicate across tools. That shift from tools to interfaces is what led me to think about &lt;a href="/2026/01/22/a-protocol-for-package-management.html"&gt;what a shared protocol for package management&lt;/a&gt; might look like.&lt;/p&gt;
+
+&lt;h3 id="related-reading"&gt;Related reading&lt;/h3&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;strong&gt;&lt;a href="https://urbanpolicy.net/wp-content/uploads/2015/06/Rittel-Webber_1973_DilemmasInAGeneralTheoryOfPlanning.pdf"&gt;Dilemmas in a General Theory of Planning&lt;/a&gt;&lt;/strong&gt; – Rittel &amp;amp; Webber (1973). The original paper that defined wicked problems.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;&lt;a href="https://aosabook.org/en/v1/packaging.html"&gt;The Architecture of Open Source Applications: Python Packaging&lt;/a&gt;&lt;/strong&gt; – Tarek Ziadé. Discusses the challenges of standardizing packaging tools while maintaining backward compatibility.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;&lt;a href="https://www.hyrumslaw.com/"&gt;Hyrum’s Law&lt;/a&gt;&lt;/strong&gt; – An observation on software interfaces that explains why true-or-false versioning often fails in practice.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;&lt;a href="https://dl.acm.org/doi/10.1145/3329781.3344149"&gt;Surviving Software Dependencies&lt;/a&gt;&lt;/strong&gt; – Russ Cox (2019). On managing dependencies at scale and the tradeoffs between different approaches.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;&lt;a href="https://link.springer.com/article/10.1007/s10664-017-9589-y"&gt;An Empirical Comparison of Dependency Network Evolution in Seven Software Packaging Ecosystems&lt;/a&gt;&lt;/strong&gt; – Decan, Mens, Grosjean (2019). Demonstrates structural differences that complicate cross-ecosystem generalization.&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;&lt;a href="https://dl.acm.org/doi/10.1145/2950290.2950325"&gt;How to Break an API: Cost Negotiation and Community Values in Three Software Ecosystems&lt;/a&gt;&lt;/strong&gt; – (2016). How different ecosystems handle breaking changes differently.&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/23/package-management-is-a-wicked-problem</guid>
+      <pubDate>Fri, 23 Jan 2026 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>A Protocol for Package Management</title>
+      <link>https://nesbitt.io/2026/01/22/a-protocol-for-package-management.html</link>
+      <description>&lt;p&gt;Writing about &lt;a href="/2026/01/19/a-jepsen-test-for-package-managers.html"&gt;testing package managers like Jepsen tests databases&lt;/a&gt; got me thinking about what sits underneath all the ecosystem-specific details. We can describe HTTP without talking about Apache or nginx. We can discuss database consistency models without reference to PostgreSQL or MySQL. But when we talk about package management, the conversation immediately becomes about npm’s node_modules hoisting or Cargo’s semver-compatible version deduplication or Go’s minimal version selection, rather than the underlying operations those are all implementations of.&lt;/p&gt;
+
+&lt;p&gt;Individual package managers have specifications. Cargo documents its resolver. npm documents its registry API. RubyGems has the &lt;a href="/2025/12/28/the-compact-index.html"&gt;compact index spec&lt;/a&gt;. But there’s no shared language for talking about what package managers do in the abstract, independent of any particular implementation.&lt;/p&gt;
+
+&lt;p&gt;I’ve written about package manager &lt;a href="/2025/12/02/what-is-a-package-manager.html"&gt;components&lt;/a&gt;, &lt;a href="/2025/12/05/package-manager-tradeoffs.html"&gt;tradeoffs&lt;/a&gt;, &lt;a href="/2026/01/13/package-manager-glossary.html"&gt;terminology&lt;/a&gt;, and &lt;a href="/2025/12/29/categorizing-package-manager-clients.html"&gt;categorization&lt;/a&gt;. This post tries to go one level higher: what would a reference model for package management look like? Something that names the layers, actors, operations, and properties that all package managers share, even when their implementations differ.&lt;/p&gt;
+
+&lt;p&gt;If this existed, it might look like: a document that defines “resolution determinism” precisely enough that you could compare npm and Cargo on the same terms. A taxonomy of failure modes that tool builders could implement against. A vocabulary for governance operations that lets researchers compare how different registries handle disputes. A shared frame that makes the similarities and differences legible, without forcing convergence.&lt;/p&gt;
+
+&lt;p&gt;I should say upfront that I have no experience writing or defining protocols or reference models. I don’t know what’s actually involved in that work, or what the right process would be. What follows is more a sketch of what such a model might need to cover, not a proposal for how to build one. I’m throwing out ideas to see if they resonate with people who do know this stuff, more conversation starter than spec draft.&lt;/p&gt;
+
+&lt;p&gt;Most of what follows focuses on language package managers (npm, pip, Cargo, Bundler) rather than system package managers (apt, dnf, pacman, Homebrew). The two categories overlap but have different concerns. System package managers deal with file conflicts, coordinated releases, maintainer curation, and post-install scripts running as root. Language package managers deal with per-project isolation, transitive dependency graphs, and lockfile reproducibility. A complete reference model would need to cover both, but I know the language side better.&lt;/p&gt;
+
+&lt;h3 id="the-layers"&gt;The layers&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;User commands.&lt;/strong&gt; What developers type at the terminal. &lt;code class="language-plaintext highlighter-rouge"&gt;install&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;add&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;remove&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;update&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;audit&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;publish&lt;/code&gt;. These are the interface layer, and despite different names across ecosystems (&lt;code class="language-plaintext highlighter-rouge"&gt;npm install&lt;/code&gt; vs &lt;code class="language-plaintext highlighter-rouge"&gt;pip install&lt;/code&gt; vs &lt;code class="language-plaintext highlighter-rouge"&gt;cargo add&lt;/code&gt;), they map to a small set of underlying operations. A protocol could define what each command is expected to do without specifying the CLI syntax.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Manifest format.&lt;/strong&gt; How projects declare their dependencies. package.json, Gemfile, Cargo.toml, pyproject.toml. Each uses different syntax (JSON, Ruby DSL, TOML, TOML again) but expresses similar concepts: package name, version constraints, dependency types, metadata. The &lt;a href="/2026/01/13/package-manager-glossary.html"&gt;glossary&lt;/a&gt; covers the terminology; a protocol would specify the semantic model underneath.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Lockfile format.&lt;/strong&gt; How resolved dependencies get recorded. &lt;a href="/2026/01/17/lockfile-format-design-and-tradeoffs.html"&gt;Lockfiles vary wildly&lt;/a&gt; in what they include (just versions? checksums? full URLs? resolver metadata?) and how they structure it. But they all serve the same purpose: making resolution reproducible. A protocol could specify what a lockfile must capture without dictating the serialization format.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Registry protocol.&lt;/strong&gt; How clients talk to registries. REST APIs, sparse indexes, full replication, proprietary protocols. This is where the &lt;a href="/2025/12/28/the-compact-index.html"&gt;compact index&lt;/a&gt; lives, and where decisions about caching, consistency, and availability get made. Different &lt;a href="#data-flow-patterns"&gt;data flow patterns&lt;/a&gt; have different tradeoffs.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Archive format.&lt;/strong&gt; How packages get bundled for distribution. Tarballs, wheels, jars, crates. Some include metadata inside the archive; others serve metadata separately. Some are source distributions; others are prebuilt binaries. The format determines what’s possible at install time.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Dependency resolution.&lt;/strong&gt; The algorithmic core of package management. Given a manifest with version constraints, produce a concrete dependency graph that satisfies all of them. This is &lt;a href="/2025/12/29/categorizing-package-manager-clients.html"&gt;NP-complete in the general case&lt;/a&gt;, so every resolver makes tradeoffs. &lt;a href="/2025/12/29/categorizing-package-manager-clients.html#resolution-algorithms"&gt;SAT solvers&lt;/a&gt; can prove unsatisfiability but are expensive. Backtracking is simpler but can be slow. &lt;a href="https://research.swtch.com/vgo-mvs"&gt;Minimal version selection&lt;/a&gt; sidesteps complexity by always picking the oldest version. &lt;a href="https://nex3.medium.com/pubgrub-2fb6470504f"&gt;PubGrub&lt;/a&gt; gives better error messages by tracking why versions were excluded. A protocol would need to specify what resolution means without mandating a particular algorithm.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Publishing workflow.&lt;/strong&gt; How packages go from a developer’s machine to a registry. Authentication, validation, signing, propagation. &lt;a href="https://docs.pypi.org/trusted-publishers/"&gt;Trusted publishing&lt;/a&gt; from CI systems is changing this layer. The protocol would need to cover both the mechanics and the security properties.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Security model.&lt;/strong&gt; What guarantees the system provides and what threats it addresses. Client-side concerns (verifying checksums, validating signatures, detecting tampering) differ from registry-side concerns (authenticating publishers, scanning for malware, enforcing policies). The &lt;a href="/2026/01/03/the-package-management-landscape.html"&gt;landscape&lt;/a&gt; shows how many tools exist around these concerns.&lt;/p&gt;
+
+&lt;h3 id="the-actors"&gt;The actors&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;Publishers&lt;/strong&gt; create packages and make them available. They have identities (accounts, keys, or domain ownership) and permissions to write to certain namespaces.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Consumers&lt;/strong&gt; install packages into projects. They specify what they need (through manifests with version constraints) and receive resolved dependency graphs. Automated consumers (CI systems, dependency update tools, AI coding assistants) now account for a significant share of registry traffic, with different access patterns than human developers.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Registries&lt;/strong&gt; store packages and serve metadata. They map names to artifacts, enforce namespace rules, and maintain the index that makes resolution possible.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Proxies and mirrors&lt;/strong&gt; sit between consumers and registries. They cache, filter, and sometimes transform what passes through. Organizations run them for reliability, speed, or policy enforcement.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Resolvers&lt;/strong&gt; turn abstract constraints into concrete versions. They might run on the client, on a server, or both. They need access to package metadata and produce deterministic (or at least reproducible) results.&lt;/p&gt;
+
+&lt;p&gt;These roles can be combined. A consumer might also be a publisher. A registry might include a resolver. But the functions are distinct even when the implementations merge them.&lt;/p&gt;
+
+&lt;p&gt;The interesting cases are the interactions between actors. A proxy caches package metadata, but what happens when the upstream registry yanks a version? The proxy might keep serving the yanked version to clients that haven’t refreshed their cache. Is that a bug or a feature? It depends on whether you prioritize reproducibility (the cached version still works) or security (the version was yanked for a reason).&lt;/p&gt;
+
+&lt;p&gt;Resolvers can run on the client or on the registry. Client-side resolution means you control the algorithm but need to fetch metadata for every candidate version. Server-side resolution means fewer round trips but you’re trusting the registry to resolve correctly. Some registries offer both. When they disagree, which one is authoritative?&lt;/p&gt;
+
+&lt;p&gt;Mirrors introduce another layer. An organizational mirror might lag behind upstream by hours or days. A developer resolves against the mirror, gets version 1.2.3, commits a lockfile. A CI server resolves against upstream, sees that 1.2.3 was yanked, fails the build. Whose view of the world is correct? The protocol would need to define how staleness propagates through the system.&lt;/p&gt;
+
+&lt;h3 id="the-data-types"&gt;The data types&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;Package identifier&lt;/strong&gt;: a name in a namespace. &lt;code class="language-plaintext highlighter-rouge"&gt;express&lt;/code&gt; in npm, &lt;code class="language-plaintext highlighter-rouge"&gt;rails&lt;/code&gt; in RubyGems, &lt;code class="language-plaintext highlighter-rouge"&gt;github.com/gin-gonic/gin&lt;/code&gt; in Go. &lt;a href="https://github.com/package-url/purl-spec"&gt;PURL&lt;/a&gt; already standardizes how to reference packages across ecosystems. The identifier space is the registry’s most valuable asset and its hardest governance problem.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Version&lt;/strong&gt;: an identifier for a specific release. Usually follows some structure (semver, calver, or &lt;a href="/2024/06/24/from-zerover-to-semver-a-comprehensive-list-of-versioning-schemes-in-open-source.html"&gt;various other schemes&lt;/a&gt;). Versions are partially ordered, and that ordering is load-bearing for resolution.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Version constraint&lt;/strong&gt;: a predicate over versions. &lt;code class="language-plaintext highlighter-rouge"&gt;&amp;gt;=1.0.0&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;^2.3.4&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;~&amp;gt; 1.5&lt;/code&gt;. The syntax varies wildly but the semantics are similar: given a set of available versions, which ones satisfy this constraint? &lt;a href="https://github.com/package-url/purl-spec/blob/master/VERSION-RANGE-SPEC.rst"&gt;VERS&lt;/a&gt; attempts to standardize this.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Manifest&lt;/strong&gt;: a declaration of what a project needs. Direct dependencies with constraints, plus metadata about the project itself.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Lockfile&lt;/strong&gt;: a record of what was actually resolved. Concrete versions for every dependency (direct and transitive), often with integrity hashes.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Package artifact&lt;/strong&gt;: the distributable unit. A tarball, wheel, jar, or crate. Contains code plus metadata in some structured format.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Dependency graph&lt;/strong&gt;: the result of resolution. A directed acyclic graph where nodes are package-versions and edges are “depends on” relationships.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Platform target&lt;/strong&gt;: the combination of operating system, CPU architecture, and runtime version that a binary artifact is built for. Python wheels encode this in filenames (&lt;code class="language-plaintext highlighter-rouge"&gt;cp311-manylinux_x86_64&lt;/code&gt;). Rust has target triples (&lt;code class="language-plaintext highlighter-rouge"&gt;x86_64-unknown-linux-gnu&lt;/code&gt;). System packages are built per-distro and architecture. Resolution needs to filter artifacts by what the consumer’s environment can actually run, and the ways ecosystems represent this vary widely.&lt;/p&gt;
+
+&lt;h3 id="the-operations"&gt;The operations&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;Publish&lt;/strong&gt;: a publisher submits an artifact and metadata to a registry. The registry validates the submission (name ownership, version uniqueness, format compliance) and makes it available for resolution.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Resolve&lt;/strong&gt;: given a manifest, produce a dependency graph that satisfies all constraints. This is the hard part, &lt;a href="/2025/12/29/categorizing-package-manager-clients.html"&gt;NP-complete in the general case&lt;/a&gt;, and where most of the interesting design decisions live. Different &lt;a href="/2025/12/29/categorizing-package-manager-clients.html#resolution-algorithms"&gt;resolution algorithms&lt;/a&gt; (SAT solving, backtracking, minimal version selection) make different tradeoffs.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Install&lt;/strong&gt;: given a resolved graph (from a lockfile or fresh resolution), fetch artifacts and place them where the runtime can find them.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Update&lt;/strong&gt;: given an existing lockfile, resolve again with newer constraints or newer available versions, producing a new lockfile.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Yank/deprecate&lt;/strong&gt;: a publisher marks a version as unavailable for new resolution while keeping it accessible for existing lockfiles.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Query&lt;/strong&gt;: ask the registry for metadata about a package, its versions, its dependencies, or its dependents.&lt;/p&gt;
+
+&lt;h3 id="governance-operations"&gt;Governance operations&lt;/h3&gt;
+
+&lt;p&gt;Registries don’t just host files. They &lt;a href="/2025/12/22/package-registries-are-governance-as-a-service.html"&gt;make political decisions&lt;/a&gt; about who owns names, how disputes resolve, and what gets removed. These governance operations are as much a part of what package managers do as resolution or installation, but they’re rarely described in compatible terms.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Namespace allocation.&lt;/strong&gt; Who can claim a name? First-come-first-served? Domain verification? Organizational scopes? Different registries make different choices, but the underlying question is the same: how does an identifier get bound to an owner?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Ownership transfer.&lt;/strong&gt; What happens when a maintainer abandons a package, or dies, or has their account compromised? npm has a process. RubyGems has a different process. The concept of “transferring ownership” is universal; the policies vary.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Dispute resolution.&lt;/strong&gt; Two parties claim the same name. A trademark holder wants a package removed. A maintainer claims their account was hijacked. How do these get resolved? By whom? With what appeals process?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Content removal.&lt;/strong&gt; Malware gets found, or a package violates terms of service, or a court orders a takedown. What gets removed? Who decides? Is it reversible? How fast does it propagate to mirrors?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Account recovery.&lt;/strong&gt; A maintainer loses access. How do they prove identity? What happens to their packages during the recovery process? Who has authority to restore access?&lt;/p&gt;
+
+&lt;p&gt;A protocol could define shared vocabulary for these governance operations without mandating specific policies. “Ownership transfer” could have a common definition even if npm and PyPI have different rules about when it’s allowed. This would let researchers compare governance models across registries, and might help smaller registries learn from decisions larger ones have already worked through.&lt;/p&gt;
+
+&lt;h3 id="the-consistency-properties"&gt;The consistency properties&lt;/h3&gt;
+
+&lt;p&gt;What guarantees should these operations provide? Naming these properties explicitly is part of what a reference model would do.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Resolution determinism&lt;/strong&gt;: given the same manifest and the same registry state, resolution should produce the same graph. “Same registry state” is doing a lot of work here, since registries are distributed systems with CDN caching and eventual consistency.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Lockfile integrity&lt;/strong&gt;: installing from a lockfile should produce identical results regardless of when or where you run it, as long as the referenced artifacts still exist.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Publish atomicity&lt;/strong&gt;: when a version is published, it should become visible atomically. Consumers shouldn’t see partial states where the metadata exists but the artifact doesn’t, or vice versa.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Monotonic versions&lt;/strong&gt;: once a version number is used, its meaning shouldn’t change. Republishing the same version with different contents violates this, which is why most registries forbid it.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Yank semantics&lt;/strong&gt;: yanked versions should be excluded from new resolution but included when resolving existing lockfiles that reference them.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Version ordering&lt;/strong&gt;: given two versions, which one is newer? This sounds obvious until you hit pre-releases. Does &lt;code class="language-plaintext highlighter-rouge"&gt;^1.0.0&lt;/code&gt; match &lt;code class="language-plaintext highlighter-rouge"&gt;2.0.0-alpha&lt;/code&gt;? npm says no by default. What’s the “latest” version of a package? Most registries exclude pre-releases from &lt;code class="language-plaintext highlighter-rouge"&gt;latest&lt;/code&gt; unless there’s no stable release, but the rules vary. Sorting versions correctly matters for resolution and for tools that display changelogs or upgrade paths.&lt;/p&gt;
+
+&lt;p&gt;Each of these has subtleties that different package managers handle differently. Go’s &lt;a href="https://research.swtch.com/vgo-mvs"&gt;minimal version selection&lt;/a&gt; achieves determinism without lockfiles by always picking the oldest satisfying version. npm’s resolution used to produce different trees depending on installation order. &lt;a href="/2025/12/28/the-compact-index.html"&gt;The compact index&lt;/a&gt; that Bundler and Cargo use is append-only specifically to provide consistency guarantees that the old full-index approach couldn’t.&lt;/p&gt;
+
+&lt;p&gt;The edge cases are where things get interesting. “Same registry state” sounds simple until you consider that npm’s registry sits behind Fastly’s CDN with eventually consistent replicas. Publish atomicity involves writing to multiple stores that can partially fail. Yank semantics interact with caching in subtle ways when a lockfile references a version that’s been yanked since last resolution. Different clients handle these cases differently.&lt;/p&gt;
+
+&lt;h3 id="missing-concepts"&gt;Missing concepts&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;Time.&lt;/strong&gt; I’ve talked about staleness and caching, but there’s no explicit notion of time in the model. Distributed systems specs usually need concepts like epochs, snapshots, or logical clocks. When did a publish become visible? What’s the maximum propagation delay? Can a lockfile reference a point-in-time view of the registry? Package managers don’t typically expose these concepts, but they’re operating under temporal assumptions that users don’t see.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Authority.&lt;/strong&gt; Who is authoritative for what? The registry is authoritative for package metadata, but what about a proxy that’s been caching for six months? The lockfile is authoritative for what versions to install, but what if the registry says one of those versions is now malware? Clients trust registries, registries trust publishers, publishers trust CI systems. A reference model would need to map these trust boundaries and say what happens when authorities disagree.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Observability.&lt;/strong&gt; What can you see when things go wrong? Logs, error messages, introspection APIs. If resolution fails, what information is available to debug it? If a publish doesn’t propagate, how do you know? Tool builders and researchers need to observe what package managers are doing, but observability isn’t typically part of the specification. It’s an implementation detail that varies widely and matters a lot.&lt;/p&gt;
+
+&lt;h3 id="data-flow-patterns"&gt;Data flow patterns&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;Full replication&lt;/strong&gt;: the client downloads the complete index and resolves locally. apt does this. Resolution is fast once synced, works offline, but initial sync is expensive and data goes stale.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;On-demand queries&lt;/strong&gt;: the client fetches metadata per-package during resolution. npm and PyPI work this way. Always current, but requires network access and many round trips.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Sparse indexing&lt;/strong&gt;: the client fetches only metadata for packages it actually needs, but in a cacheable format. &lt;a href="https://blog.rust-lang.org/2023/03/09/Cargo-1.68.0.html#sparse-registry-support"&gt;Cargo’s sparse index&lt;/a&gt; and RubyGems’ &lt;a href="/2025/12/28/the-compact-index.html"&gt;compact index&lt;/a&gt; use this approach.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Proxy caching&lt;/strong&gt;: an organizational proxy intercepts requests and caches responses. Reduces load on upstream registries and provides availability if upstream goes down.&lt;/p&gt;
+
+&lt;p&gt;Each pattern makes different tradeoffs between freshness, bandwidth, latency, and offline capability. A protocol spec would need to accommodate all of them.&lt;/p&gt;
+
+&lt;h3 id="failure-modes"&gt;Failure modes&lt;/h3&gt;
+
+&lt;p&gt;A protocol needs to specify not just what happens when things work, but what happens when they don’t. This is where ecosystems diverge most and where shared vocabulary would help most.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Checksum mismatch.&lt;/strong&gt; Clients vary: fail hard, warn, or skip verification entirely.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Unavailable dependency.&lt;/strong&gt; Do you fail immediately? Try mirrors? Fall back to cache? npm, pip, and Cargo all handle this differently.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Unsatisfiable resolution.&lt;/strong&gt; PubGrub tracks the chain of conflicts. Other resolvers provide less detail.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Partial install.&lt;/strong&gt; npm leaves partial installs in place. Some tools use atomic installs.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Cascading failures.&lt;/strong&gt; A transitive dependency four levels deep becomes unavailable. Some ecosystems fail fast; others degrade gracefully.&lt;/p&gt;
+
+&lt;p&gt;These failure modes matter because they’re where the user experience diverges most. Shared vocabulary for failure conditions would help both tool builders and users.&lt;/p&gt;
+
+&lt;h3 id="what-this-enables"&gt;What this enables&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;Portable security research.&lt;/strong&gt; &lt;a href="/2025/12/10/slopsquatting-meets-dependency-confusion.html"&gt;Dependency confusion&lt;/a&gt; was discovered in npm, then checked in PyPI and RubyGems. &lt;a href="/2025/12/17/typosquatting-in-package-managers.html"&gt;Typosquatting&lt;/a&gt; techniques transfer between ecosystems, but defenses don’t always follow. A protocol would let researchers describe attacks and defenses in terms that apply everywhere.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Systematic comparison.&lt;/strong&gt; Comparing npm and Yarn on consistency guarantees is hard because they don’t describe those guarantees in compatible terms. A shared vocabulary would let us ask: which package managers provide publish atomicity? Which guarantee resolution determinism? Where does each fall on the &lt;a href="/2025/12/05/package-manager-tradeoffs.html"&gt;tradeoff space&lt;/a&gt;?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Learning from each other.&lt;/strong&gt; When Cargo adopted &lt;a href="https://blog.rust-lang.org/2023/03/09/Cargo-1.68.0.html#sparse-registry-support"&gt;sparse indexes&lt;/a&gt;, they were borrowing an idea RubyGems had &lt;a href="/2025/12/28/the-compact-index.html"&gt;proven out years earlier&lt;/a&gt;. When pip rewrote its resolver, they &lt;a href="https://pradyunsg.me/blog/2020/03/27/pip-resolver-testing/"&gt;borrowed test cases from Ruby and Swift&lt;/a&gt;. A shared model would make these patterns more visible.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Support for smaller ecosystems.&lt;/strong&gt; Dependabot prioritizes npm, PyPI, Maven, Go because each integration is significant work. Smaller package managers (Nimble, Shards, jpm) get pushed to the back of the queue. If tools could implement against a protocol and write thin adapters, the long tail might actually get tooling support.&lt;/p&gt;
+
+&lt;h3 id="what-this-isnt"&gt;What this isn’t&lt;/h3&gt;
+
+&lt;p&gt;Yes, I’ve seen &lt;a href="https://xkcd.com/927/"&gt;the xkcd&lt;/a&gt;. This isn’t a proposal to standardize package managers. Existing ecosystems have differences that matter. Some take advantage of runtime features that can’t be replicated everywhere: Bundler’s Gemfile is a Ruby DSL, Mix is deeply integrated with OTP. A protocol has to sit above these language-specific capabilities, which means it can’t capture everything.&lt;/p&gt;
+
+&lt;p&gt;It’s also not something existing package managers would easily adopt. npm’s registry isn’t going to change its API to match a theoretical spec. The value is shared vocabulary for reasoning about these systems.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://github.com/package-url/purl-spec"&gt;PURL&lt;/a&gt; already does this for identifiers. It has problems with edge cases and ecosystems that don’t fit its model, but it’s proven useful enough that tools adopted it anyway. A protocol for the rest of package management would have similar imperfections and similar utility.&lt;/p&gt;
+
+&lt;h3 id="why-this-is-hard"&gt;Why this is hard&lt;/h3&gt;
+
+&lt;p&gt;Abstracting over ecosystem differences is hard. A “version constraint” in npm might match pre-releases differently than in Cargo. The &lt;a href="/2026/01/13/package-manager-glossary.html"&gt;glossary&lt;/a&gt; can define these terms, but a protocol would need to handle edge cases where ecosystems diverge.&lt;/p&gt;
+
+&lt;p&gt;Some registries are closed source, which means understanding their behavior requires black-box observation rather than reading the code. Others like crates.io, RubyGems.org, and PyPI are open source.&lt;/p&gt;
+
+&lt;p&gt;There’s a coordination problem: who maintains the spec? And an adoption problem: the vocabulary only has value if people use it. PURL succeeded because SBOMs needed a standard way to identify packages. A protocol would need a similar forcing function.&lt;/p&gt;
+
+&lt;p&gt;The &lt;a href="/2026/01/03/the-package-management-landscape.html"&gt;package management landscape&lt;/a&gt; suggests demand exists. &lt;a href="https://github.com/anchore/syft"&gt;Syft&lt;/a&gt;, &lt;a href="https://github.com/dependabot/dependabot-core"&gt;Dependabot&lt;/a&gt;, &lt;a href="https://deps.dev"&gt;deps.dev&lt;/a&gt;, &lt;a href="https://github.com/librariesio/bibliothecary"&gt;bibliothecary&lt;/a&gt;, &lt;a href="https://github.com/google/osv-scalibr"&gt;osv-scalibr&lt;/a&gt; each build their own abstraction layer over multiple ecosystems. The fact that they all independently arrived at similar abstractions suggests those abstractions want to exist.&lt;/p&gt;
+
+&lt;h3 id="related-work"&gt;Related work&lt;/h3&gt;
+
+&lt;p&gt;Some cross-ecosystem infrastructure exists: &lt;a href="https://github.com/package-url/purl-spec"&gt;PURL&lt;/a&gt; for identifiers, &lt;a href="https://github.com/package-url/purl-spec/blob/master/VERSION-RANGE-SPEC.rst"&gt;VERS&lt;/a&gt; for version constraints, &lt;a href="https://spdx.dev/"&gt;SPDX&lt;/a&gt;/&lt;a href="https://cyclonedx.org/"&gt;CycloneDX&lt;/a&gt; for SBOMs, &lt;a href="https://www.sigstore.dev/"&gt;Sigstore&lt;/a&gt;/&lt;a href="https://slsa.dev"&gt;SLSA&lt;/a&gt;/&lt;a href="https://theupdateframework.io/"&gt;TUF&lt;/a&gt; for signing. None reach the protocol level: they specify interchange formats, not resolution semantics or publish consistency. There’s also &lt;a href="/2025/11/13/package-management-papers.html"&gt;academic work&lt;/a&gt; (Di Cosmo’s &lt;a href="https://www.researchgate.net/publication/278629134_EDOS_deliverable_WP2-D21_Report_on_Formal_Management_of_Software_Dependencies"&gt;formal models&lt;/a&gt;, Russ Cox’s &lt;a href="https://dl.acm.org/doi/10.1145/3329781.3344149"&gt;Surviving Software Dependencies&lt;/a&gt;) that hasn’t coalesced into something practitioners use.&lt;/p&gt;
+
+&lt;p&gt;Building a protocol would mean documenting what existing package managers actually do in practice, including the edge cases. The spec would emerge from implementations.&lt;/p&gt;
+
+&lt;p&gt;If you work on cross-ecosystem tooling, registry infrastructure, or dependency research, I’d like to know whether this gap feels real to you too.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/22/a-protocol-for-package-management</guid>
+      <pubDate>Thu, 22 Jan 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>An AI Skill for Skeptical Dependency Management</title>
+      <link>https://nesbitt.io/2026/01/21/an-ai-skill-for-skeptical-dependency-management.html</link>
+      <description>&lt;p&gt;AI coding assistants will suggest packages that don’t exist, pin to versions from two years ago, and never mention that the standard library already does what you need. I’ve written a &lt;a href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"&gt;skill&lt;/a&gt; that makes Claude Code and similar agents more careful.&lt;/p&gt;
+
+&lt;p&gt;The skill is called &lt;a href="https://github.com/andrew/managing-dependencies"&gt;managing-dependencies&lt;/a&gt;. It’s a markdown file that the agent lazy-loads when it decides it’s working on a relevant task, rather than always taking up space in the context window. The format follows the &lt;a href="https://agentskills.io"&gt;Agent Skills&lt;/a&gt; specification, so it works with Claude Code, Codex CLI, and other agents that support it.&lt;/p&gt;
+
+&lt;p&gt;I looked for an existing skill that covered this. There are ecosystem-specific ones for &lt;a href="https://github.com/wshobson/agents/blob/main/plugins/python-development/skills/uv-package-manager/SKILL.md"&gt;uv&lt;/a&gt;, &lt;a href="https://github.com/github/awesome-copilot/blob/main/skills/nuget-manager/SKILL.md"&gt;NuGet&lt;/a&gt;, and others, but nothing that handled the cross-ecosystem judgment calls around whether to add a dependency at all, so I built it.&lt;/p&gt;
+
+&lt;p&gt;The goal is making the agent back up its suggestions with evidence. Ask an LLM to add a package and it will suggest one, often pinned to an old version from its training data, without mentioning that it has two downloads, hasn’t been updated in three years, has known CVEs, or that the standard library already handles your use case. It won’t check that the name it’s suggesting isn’t a hallucination.&lt;/p&gt;
+
+&lt;p&gt;The skill tells the agent to verify packages exist before suggesting them, check if stdlib already handles the use case, and refuse when verification fails.&lt;/p&gt;
+
+&lt;p&gt;There’s guidance on:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Typosquatting patterns&lt;/li&gt;
+  &lt;li&gt;Dependency confusion attacks&lt;/li&gt;
+  &lt;li&gt;&lt;a href="/2025/12/10/slopsquatting-meets-dependency-confusion"&gt;Slopsquatting&lt;/a&gt;, where attackers register package names that LLMs tend to hallucinate&lt;/li&gt;
+  &lt;li&gt;Version constraint syntax across ecosystems&lt;/li&gt;
+  &lt;li&gt;Lockfile hygiene&lt;/li&gt;
+  &lt;li&gt;When to vendor&lt;/li&gt;
+  &lt;li&gt;Handling vulnerabilities without patches&lt;/li&gt;
+  &lt;li&gt;Safe criteria for auto-merging dependency updates&lt;/li&gt;
+  &lt;li&gt;Provenance and attestation verification&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;The skill also includes commands for querying the &lt;a href="https://ecosyste.ms"&gt;ecosyste.ms&lt;/a&gt; API. Package registries expose basic metadata like version numbers and descriptions, but ecosyste.ms aggregates data across registries and source repositories that’s harder to find: how many other packages depend on this one, when the last release was, whether the upstream repo is archived, known security advisories, and how commit activity is distributed across maintainers. It also normalizes this data across package managers, so the same API call works whether you’re evaluating a gem, a crate, or a pip package. The skill teaches the agent to query this API and interpret the results, so when you ask “is this package well-maintained?” it can give you an answer based on actual data rather than guessing.&lt;/p&gt;
+
+&lt;p&gt;Installing it in Claude Code is one command:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;/plugin marketplace add andrew/managing-dependencies
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Or copy SKILL.md into your skills directory manually. Once installed, it activates automatically when you ask Claude Code about dependencies, packages, or supply chain security. You can also invoke it directly with &lt;code class="language-plaintext highlighter-rouge"&gt;/managing-dependencies&lt;/code&gt;.&lt;/p&gt;
+
+&lt;p&gt;I’ve been using and tweaking this myself for a few days, and without the skill I’ve seen Claude confidently suggest gems that don’t exist, or pin to versions that were current two years ago when the training data was cut. With it, the agent checks RubyGems before recommending anything and tells me when it can’t verify a package. That alone has saved me from a few “gem not found” errors and, more importantly, from potentially installing something malicious that an attacker registered under a hallucinated name.&lt;/p&gt;
+
+&lt;p&gt;The &lt;a href="https://github.com/andrew/managing-dependencies"&gt;repository&lt;/a&gt; is public domain under CC0 if you want to fork it or adapt it for your own use.&lt;/p&gt;
+
+&lt;p&gt;None of this makes the agent trustworthy. I’ve taught the parrot some new phrases about supply chain security, but it’s still a parrot. It will hallucinate with total confidence, ignore instructions when it feels like it, and apologize only when caught. Review what it suggests, run it in a sandbox, and don’t give it access to production. The parrot does not know what a dependency is.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://nesbitt.io/2026/01/21/an-ai-skill-for-skeptical-dependency-management</guid>
+      <pubDate>Wed, 21 Jan 2026 00:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>
