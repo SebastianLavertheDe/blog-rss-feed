@@ -17,7 +17,7 @@ class CursorRSSGenerator:
             date_text = date_text.strip()
 
             # Try to parse the date
-            parsed_date = date_parser.parse(date_text)
+            parsed_date = date_parser.parse(date_text, tzinfos={"UT": timezone.utc, "UTC": timezone.utc})
 
             # If no timezone info, assume UTC
             if parsed_date.tzinfo is None:

@@ -113,7 +113,7 @@ class ExternalRSSImporter:
         """Parse various date formats"""
         from dateutil import parser as date_parser
         try:
-            parsed_date = date_parser.parse(date_str)
+            parsed_date = date_parser.parse(date_str, tzinfos={"UT": timezone.utc, "UTC": timezone.utc})
             if parsed_date.tzinfo is None:
                 parsed_date = parsed_date.replace(tzinfo=timezone.utc)
             return parsed_date

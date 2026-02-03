@@ -16,7 +16,7 @@ class ClaudeBlogRSSGenerator:
         """Parse date text and return a datetime object with timezone"""
         try:
             date_text = date_text.strip()
-            parsed_date = date_parser.parse(date_text)
+            parsed_date = date_parser.parse(date_text, tzinfos={"UT": timezone.utc, "UTC": timezone.utc})
             if parsed_date.tzinfo is None:
                 parsed_date = parsed_date.replace(tzinfo=timezone.utc)
             return parsed_date
