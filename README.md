@@ -107,13 +107,40 @@ All RSS sources are configured in `config.yaml`. To add a new source:
 2. Add an entry to `config.yaml` under the `scripts` section
 3. Run `python run_all.py` to generate the feed
 
-Example configuration:
+### Using the RSS Feed Converter Skill
+
+This project includes a built-in skill (`.claude/skills/rss-feed-converter/SKILL.md`) that helps convert any URL to an RSS feed automatically:
+
+- **For existing RSS feeds**: Automatically uses `external_rss_importer.py` to import the feed
+- **For web pages without RSS**: Creates a custom scraping script based on templates like `cursor_rss.py`
+
+When using Claude Code to work on this project, simply provide a URL and the skill will:
+1. Detect if it's an RSS feed or a web page
+2. Generate the appropriate script or configuration
+3. Add it to `config.yaml` automatically
+
+### Manual Configuration
+
+Example configuration for existing RSS feeds:
+```yaml
+scripts:
+  - name: Your Source Name
+    file: external_rss_importer.py
+    output: your_source_rss.xml
+    title: Your Source Title
+    category: blog
+    enabled: true
+    rssUrl: https://example.com/feed.xml
+```
+
+Example configuration for custom scrapers:
 ```yaml
 scripts:
   - name: Your Source Name
     file: your_source_rss.py
     output: your_source_rss.xml
     title: Your Source Title
+    category: blog
     enabled: true
 ```
 
