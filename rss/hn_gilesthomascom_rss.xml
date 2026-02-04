@@ -5,7 +5,275 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Tue, 03 Feb 2026 23:33:35 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 04 Feb 2026 02:29:25 +0000</lastBuildDate>
+    <item>
+      <title>Writing an LLM from scratch, part 32a -- Interventions: training a baseline model</title>
+      <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32a-interventions-baseline-model</link>
+      <description>&lt;p&gt;I'm rounding out my series of posts on
+&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;"
+by seeing how I could train the &lt;em&gt;best&lt;/em&gt; base model I can from scratch on my own hardware.
+I started by &lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;training one in two days on my RTX 3090&lt;/a&gt;,
+and found that while it was a decent little model, it wasn't as good as the original
+GPT-2 small, either in terms of the loss it got on my test dataset, or
+in terms of how good it was at following instruction prompts after fine-tuning on them.  I decided
+that I wanted to see what levers I could pull -- dropout, attention weight biases, and so
+on -- to make it better.&lt;/p&gt;
+
+&lt;p&gt;For that, I didn't want to have my PC tied up for days at a time with multiple long training runs,
+so I &lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud"&gt;learned how to train faster in the cloud&lt;/a&gt;.
+That led to some &lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;refinements in the prompt-following test I was using&lt;/a&gt;,
+and I also spent a bit of time on a side quest getting the various models I'd trained &lt;a href="/2026/01/llm-from-scratch-31-models-on-hugging-face"&gt;onto Hugging Face Hub&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Now it's time to try the various "interventions", as I'll call them -- the levers to
+pull to see if I can make the model better.  This post is
+to recap what they are, and to describe what I did to establish a baseline model to
+compare to.&lt;/p&gt;
+&lt;h3 id="the-interventions"&gt;The interventions&lt;/h3&gt;
+
+&lt;p&gt;I listed a number of possible interventions at the end of the RTX 3090 post; I'm not going
+to do them all, but for completeness, here's the full list:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;The amount of training data.  I'm not going to dig into this one; it looks like it
+does help, but the returns diminish rapidly, so I think that in order to get any serious
+improvement we'd need to train for much more than two days locally.  In the one
+"extended training" test I did, I managed to get the loss down from 4.167 to 4.135, which
+was... less-than-inspiring.&lt;/li&gt;
+&lt;li&gt;The number of epochs.  I'm going to stick to single-epoch training -- that is, I'll
+train on a single pass through an amount of non-repeating data chosen to take 48 hours to handle
+on my local machine.&lt;/li&gt;
+&lt;li&gt;The bias on the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;q&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; matrices.  This one definitely sounds worth looking
+into -- easy, as it's just a change to a config flag, and makes the model more like the
+original GPT-2.  I'll give that a go.&lt;/li&gt;
+&lt;li&gt;Dropout.  I've read that for single-epoch training, dropout doesn't help (which
+doesn't quite work with &lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;my mental model&lt;/a&gt; of what it's for, but
+does sound plausible).  Worth a look!&lt;/li&gt;
+&lt;li&gt;The learning rate, and weight decay.  The values I've used for these are basically copypasta
+from the book.  I think I should learn to understand these and try to optimise them a bit.&lt;/li&gt;
+&lt;li&gt;The precision.  I'm using &lt;a href="https://docs.pytorch.org/docs/stable/amp.html"&gt;AMP&lt;/a&gt;, which means that
+some calculations are done in 16-bit rather than 32-bit, and calling
+&lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html"&gt;&lt;code&gt;set_float32_matmul_precision&lt;/code&gt;&lt;/a&gt;
+with &lt;code&gt;"high"&lt;/code&gt; to let PyTorch choose to use the GPU's tensor cores, which use TF32, a kind of "32-bit float lite" (see the
+&lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;post on the local train&lt;/a&gt; for details).
+Those both (at least potentially) reduce the precision of
+the train below what you'd get if you trained with full-fat &lt;code&gt;float32&lt;/code&gt;.  Would reverting
+that be worth the longer train time?  I should probably at least poke at that.&lt;/li&gt;
+&lt;li&gt;The batch size.  I've already, in effect, tried playing with that.  The different
+cloud machines I played with had different amounts of per-GPU VRAM, so supported
+different per-GPU micro-batch sizes.  So I wound up trying batch sizes from
+512 (the same as the original GPT-2 was trained with) down to 104 in the cloud,
+plus my local trains with a batch size of 6.  I did a rough-and-ready calculation
+&lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud#the-results"&gt;at the end of the cloud training post&lt;/a&gt;
+where I estimated that the ideal batch size might be something like 97.  So, probably
+not worth much more investigation.&lt;/li&gt;
+&lt;li&gt;Exploding gradients.  In one of my local trains, and in three out of the four cloud
+trains, I had sudden spikes in both training and validation loss.  It generally took
+quite a bit of training -- maybe 10-15% of training time -- to get back on track after
+some of these, so we had what could be seen as wasted time in the training runs.
+Exploding gradients can be fixed by gradient clipping, which is relatively easy to
+do.  Definitely worth investigating!&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;I'm going to work through each of those apart from the first two and the batch size (and will retrospectively add links to
+the posts when I do), trying a train with just that intervention and nothing else, on
+a cloud machine.  Once that's done, I'll bake all of the things that helped into
+the training loop, and do another local train -- with
+&lt;a href="https://www.hopsworks.ai/dictionary/gradient-accumulation"&gt;gradient accumulation&lt;/a&gt; to make
+the batch size match the cloud instances'.&lt;/p&gt;
+
+&lt;p&gt;The cloud machine size that I decided to use for this was the one that came out the
+most cost-effective (and due to its VRAM size, had the best loss) in my earlier
+cloud training test: an 8x A100 machine with 40 GiB VRAM per GPU.&lt;/p&gt;
+
+&lt;p&gt;But first, we need a baseline model.&lt;/p&gt;
+
+&lt;h3 id="why-a-new-baseline"&gt;Why a new baseline?&lt;/h3&gt;
+
+&lt;p&gt;I've already done a train on an 8x A100 40 GiB machine -- why do we need a new one?&lt;/p&gt;
+
+&lt;p&gt;In my cloud training post, I came to the conclusion that the cost in terms of training
+time of running a periodic validation loop as we trained was not really worth it, at
+least in this case.  Two of the biggest reasons to have validation during training
+are to work out when you're overfitting on a multi-epoch train, and to see how your model
+can handle datasets that it has not been trained on.&lt;/p&gt;
+
+&lt;p&gt;In a single-epoch train like this,
+you're not going to overfit -- every sample it sees will be new to it -- and the training
+loss itself is over samples it's not been trained on at the time it was calculated, for the
+same reason (though of course it will be trained on them as soon as we do the backward
+pass starting with that loss).&lt;/p&gt;
+
+&lt;p&gt;Of course, it's not perfect --
+a big benefit of the validation loss is that it's over the &lt;em&gt;same&lt;/em&gt; held-back dataset
+on every run -- and there are arguments for keeping it (albeit, perhaps doing full
+runs less frequently than I was).  But for these experiments, I decided that I'd
+simply drop it.&lt;/p&gt;
+
+&lt;p&gt;I also wanted to introduce a consistent random seed at the start of the training
+loop.  I didn't have that in my cloud trains, and of course if we want to have solid
+results on whether each intervention really does improve matters, then we need one
+so that we can be sure they're all starting from the same point.&lt;/p&gt;
+
+&lt;p&gt;Both of those meant that I couldn't use the earlier train on the 8x A100 40 GiB machine
+as a baseline; I'd need a new one, introducing those two changes: no validation during the
+training run (using training loss as a proxy), and setting a random seed at the start
+for reproducibility.&lt;/p&gt;
+
+&lt;p&gt;So: what was the baseline train going to look like?&lt;/p&gt;
+
+&lt;h3 id="creating-the-baseline"&gt;Creating the baseline&lt;/h3&gt;
+
+&lt;p&gt;The first step was to &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/5175b84262a95b0c0353d784ed9bb6161e9ee882"&gt;strip out the validation code&lt;/a&gt;
+and to replace it with code that just took periodic checkpoints, keeping track of
+which one had the best average training loss over the period since the previous one.  Next, I
+decided to &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/9ed8cfd5ff40cde47c8c49a730f0571285469cf8"&gt;plot on the training chart&lt;/a&gt; that is generated during the run not just
+the training loss, but also an indicator of the maximum and minimum training loss
+over all of the steps in that period.  Then I &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/6a7e5867f86882050fee058cdf9c5880a0f3fcb1"&gt;added the random seed&lt;/a&gt;,
+which I set to 42.&lt;/p&gt;
+
+&lt;p&gt;A couple of bugfixes, and we were left with &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/dc341a246c13190409d0158765e340d8292a29ae"&gt;this version of the code&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;One thing to highlight: in the &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/dc341a246c13190409d0158765e340d8292a29ae/runs/8xa100m40-baseline/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;
+file that specifies the various training parameters, I set the per-GPU micro-batch
+size to 12 rather than the 13 I'd used on this size of machine earlier.
+Two reasons for that:&lt;/p&gt;
+
+&lt;p&gt;Firstly, I'm going to want to do a local run with gradient
+accumulation later, using all of the helpful interventions.
+With gradient accumulation, you do a number of steps with batches that you can fit
+into your memory, but you don't update the gradients each time.  After a number of those,
+you do one big update based on the accumulated gradients -- hence the name.  The full
+batch is all of those smaller batches taken together.&lt;/p&gt;
+
+&lt;p&gt;If I want that to closely match the cloud train, I'll want the accumulated batches to
+be the same size as each global batch in the cloud.&lt;/p&gt;
+
+&lt;p&gt;Now, on my local machine, I can fit a batch of 6 into VRAM.  So that means that the
+full batch needs to be divisible by 6 &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;.  On the cloud train, with a micro-batch of 13 and 8 GPUs, we had an overall batch
+size of 104 in the previous train.  104 is not divisible by 6: no joy.  But with a micro-batch size of
+12, we have an overall batch of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;12&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;8&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;96&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;, which means we'd be able to do gradient
+accumulation and do a parameter update every &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;96&lt;/mn&gt;&lt;mi&gt;&amp;#x000F7;&lt;/mi&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;16&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; steps.&lt;/p&gt;
+
+&lt;p&gt;Secondly, while my estimate of the ideal overall batch size was based on a rather arbitrary
+bit of curve-fitting, it did say that 97 was the ideal size.  So it could be interesting
+to see whether it did help!&lt;/p&gt;
+
+&lt;p&gt;So, having coded that up and set up the configuration, it was time to run it.&lt;/p&gt;
+
+&lt;p&gt;Here's the training chart it came up with:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32a-interventions-baseline-model/baseline-training-run-chart.png" alt="Baseline training run on an 8x A100 with 40 GiB/GPU" title="Baseline training run on an 8x A100 with 40 GiB/GPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;Note the loss spikes at around global steps 4,200, 13,000 and 23,000.  Those are important, I'll explain why later.&lt;/p&gt;
+
+&lt;p&gt;The training run reported this at the end:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 12,243.523 seconds&lt;/span&gt;
+&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
+&lt;span class="go"&gt;Throughput: 266,284 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;Final train loss: 3.743&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So it took about 3h24m to train, even less than we expected from the previous
+cloud experiments' estimates of how long it would take excluding validation.  About
+US$35 in cost.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-baseline"&gt;Here is the model on Hugging Face Hub&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Let's see how it looks.&lt;/p&gt;
+
+&lt;h3 id="evals"&gt;Evals&lt;/h3&gt;
+
+&lt;p&gt;For these intervention posts, I won't run the instruction-following tests, as they
+can only be run against a batch of models in one go to get results that
+&lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;are consistent with each other&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;But the smoke test -- how does it complete the sequence &lt;code&gt;Every effort moves you&lt;/code&gt; is worthwhile:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/checkpoints/best/model.safetensors
+&lt;span class="go"&gt;Every effort moves you in on a good cause.&lt;/span&gt;
+&lt;span class="go"&gt;If it doesn’t work you would like to join the&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Looks good!  Reasonably coherent.&lt;/p&gt;
+
+&lt;p&gt;Now we can find the loss on our held-back test set:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/checkpoints/best/model.safetensors
+&lt;span class="go"&gt;Fetching 4 files: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00&amp;lt;00:00, 990.57it/s]&lt;/span&gt;
+&lt;span class="go"&gt;100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3200/3200 [04:53&amp;lt;00:00, 10.91it/s]&lt;/span&gt;
+&lt;span class="go"&gt;Loss against our test dataset: 3.692&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That's a bit worse than the 3.674 we got for the original cloud train.  Either
+the calculations of the optimal batch size I did were not quite right (entirely likely,
+they were very ad-hoc) or the model weights we started with, given the random seed
+we're using, just happened to lead us in a slightly worse direction (also plausible).  Either way, it's
+in line with what we expected, and is still better than the test loss of 3.725 that we
+got with the second-best machine in the cloud comparison post (the 8x H100 80 GiB with a global batch size of 216).&lt;/p&gt;
+
+&lt;p&gt;So: we have a solid baseline model -- before we wrap up, let's consider those spikes in
+the loss that I called out in the training chart.&lt;/p&gt;
+
+&lt;h3 id="the-loss-spikes"&gt;The loss spikes&lt;/h3&gt;
+
+&lt;p&gt;Random spikes in the loss are a Bad Thing, right?  Certainly they're a bad thing for
+a train in general, especially if you don't know for sure what's causing them.  But my
+working assumption has been that they're caused by exploding gradients -- for some
+specific sample in the dataset, the gradients have gone up to some insanely high value,
+and we've had a bad update to our parameters as a result.  It hasn't completely knocked the model back to its starting
+point, but it does take some time to recover, so we lose the benefit of some of our
+training.&lt;/p&gt;
+
+&lt;p&gt;If that is the case -- and it's not just something like a batch happening to have stuff
+that's wildly different to the rest of the training data, or something weird in the optimiser
+-- then gradient clipping is the solution.  I wanted to see if it
+would help the model quality in general, but of course if we hadn't had any loss spikes
+in this baseline train it would have been hard to see if that was the case!&lt;/p&gt;
+
+&lt;p&gt;So I
+was very glad to see them here, as if there had been none I would either have had
+to do a gradient clipping experiment with no real expectation of it helping -- or do
+another baseline train with a different random seed in the hope that that caused some
+spikes, which would have cost another US$35.&lt;/p&gt;
+
+&lt;p&gt;All in all, it was good to see them there, as it sets us up well for that experiment.&lt;/p&gt;
+
+&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
+
+&lt;p&gt;So, we've trained a baseline model that we can make changes to -- the interventions
+I listed at the start -- and get a pretty reliable understanding of whether or not
+they help the quality of the final model.  With that in place, we're in a good position
+to start running those intervention tests!&lt;/p&gt;
+
+&lt;p&gt;Given the loss spike situation in that chart, I think that a solid first one to go
+for -- even though it was the last in that list at the top of this post -- is gradient
+clipping.  Where are those loss spikes coming from, and if it's exploding gradients, what happens if we limit the
+damage they do with gradient clipping?&lt;/p&gt;
+
+&lt;p&gt;Stay tuned!  I've already done the training run for that (while I wrote this one up),
+so I should be able to post about it tomorrow.&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;Well, you could potentially do something with batches of different sizes, but
+that would be fiddly.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/02/llm-from-scratch-32a-interventions-baseline-model</guid>
+      <pubDate>Wed, 04 Feb 2026 01:45:00 +0000</pubDate>
+    </item>
     <item>
       <title>Getting a custom PyTorch LLM onto the Hugging Face Hub (Transformers: AutoModel, pipeline, and Trainer)</title>
       <link>https://www.gilesthomas.com/2026/01/custom-automodelforcausallm-frompretrained-models-on-hugging-face</link>
@@ -1500,7 +1768,9 @@ this LLM from scratch series, as it's a bit of a tangent).
 But in the meantime, if you're using HF and want to take a look, have
 fun :-)  I've put all of the models in &lt;a href="https://huggingface.co/collections/gpjt/llm-from-scratch"&gt;a collection&lt;/a&gt;.&lt;/p&gt;
 
-&lt;p&gt;Update: here's the &lt;a href="/2026/01/custom-automodelforcausallm-frompretrained-models-on-hugging-face"&gt;follow-up on how to upload custom models to Hugging Face&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;And &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Update: here's the separate &lt;a href="/2026/01/custom-automodelforcausallm-frompretrained-models-on-hugging-face"&gt;follow-up on how to upload custom models to Hugging Face&lt;/a&gt;.&lt;/p&gt;
 
 &lt;div class="footnotes"&gt;
 &lt;hr /&gt;
@@ -8281,309 +8551,6 @@ quote was tagged important.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLi
 </description>
       <guid isPermaLink="true">/2025/10/llm-from-scratch-25-instruction-fine-tuning</guid>
       <pubDate>Wed, 29 Oct 2025 23:40:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 24 -- the transcript hack</title>
-      <link>https://www.gilesthomas.com/2025/10/llm-from-scratch-24-the-transcript-hack</link>
-      <description>&lt;p&gt;Chapter 7 of &lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;"
-explains how we fine-tune our LLM to follow instructions -- essentially turning
-a model that can do next-token completion for text generation into something we
-can use for a chatbot.&lt;/p&gt;
-
-&lt;p&gt;Back when I &lt;a href="/2023/03/ai-llm-bot-beginners-tutorial-01"&gt;first started looking into LLMs&lt;/a&gt;,
-I used a setup that didn't require that, and got surprisingly good results, at least
-with later OpenAI models.&lt;/p&gt;
-
-&lt;p&gt;The trick was to present the text as something that made sense
-in the context of next-token prediction.  Instead of just throwing something like
-this at the LLM:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;User: Provide a synonym for 'bright'
-
-Bot:
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;...you would instead prepare it with an introductory paragraph, like this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot:
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Earlier OpenAI models couldn't do this when I accessed them through the API, but
-later ones could.&lt;/p&gt;
-
-&lt;p&gt;How does our GPT-2 model stack up with this kind of thing -- and for comparison,
-how about a newer, more sophisticated base (as in, not instruction fine-tuned)
-model?&lt;/p&gt;
-&lt;h3 id="comparing-the-gpt-2-models"&gt;Comparing the GPT-2 models&lt;/h3&gt;
-
-&lt;p&gt;I wrote a &lt;a href="https://github.com/gpjt/llm-from-scratch/blob/main/transcript-hack.py"&gt;simple script&lt;/a&gt;
-that just allowed me to test the transcript above against
-different GPT-2 models, using the infrastructure that I'd already written for the
-code in the book.  It uses the &lt;code&gt;generate_text_simple&lt;/code&gt; function -- that is, the
-basic one using greedy decoding (always pick the most likely next token) and just
-gets the next 23 tokens.&lt;/p&gt;
-
-&lt;p&gt;Here's what I got with the different GPT-2 models:&lt;/p&gt;
-
-&lt;h4 id="gpt2-small-124m"&gt;gpt2-small (124M)&lt;/h4&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot:
-
-User:
-
-Bot:
-
-User:
-
-Bot:
-
-User
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;It looks like it has the concept of a transcript, at least -- but not very useful.&lt;/p&gt;
-
-&lt;h4 id="gpt2-medium-355m"&gt;gpt2-medium (355M)&lt;/h4&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot:  Bright is a synonym for bright.
-
-User:  Bright is a synonym for bright.
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Better in a way -- it's got some actual text in there.&lt;/p&gt;
-
-&lt;h4 id="gpt2-large-774m"&gt;gpt2-large (774M)&lt;/h4&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot: ಠ_ಠ
-
-User: Provide a synonym for 'bright'
-
-Bot:
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Hmm.  Still not looking good, and that dodgy Unicode isn't great (unless the bot
-was trying to say &lt;code&gt;^_^&lt;/code&gt; ;-)&lt;/p&gt;
-
-&lt;h4 id="gpt2-xl-1558m"&gt;gpt2-xl (1558M)&lt;/h4&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot: ????
-
-User: ????
-
-Bot: ????
-
-User: ????
-
-Bot:
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;OK, still not getting there.&lt;/p&gt;
-
-&lt;p&gt;So it looks like the GPT-2 model can't do this.  That actually makes a lot of sense
--- at the time I wrote my post using this transcript hack, I found that the &lt;code&gt;ada&lt;/code&gt;,
-&lt;code&gt;babbage&lt;/code&gt; and &lt;code&gt;curie&lt;/code&gt; versions could not either, and nor could earlier versions of
-&lt;code&gt;davinci&lt;/code&gt;.  These were all versions of GPT-3, so one generation later than the
-version we're working with here.  The first version that "got it" was
-&lt;code&gt;text-davinci-003&lt;/code&gt;, which was GPT-3.5.&lt;/p&gt;
-
-&lt;p&gt;But wait!&lt;/p&gt;
-
-&lt;p&gt;Looking back at my blog post way back when, I spotted something about the &lt;code&gt;text-davinci-003&lt;/code&gt;
-model.  At the time, the docs on the OpenAI site said that it can:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;do any language task with better quality, longer output, and consistent
-  instruction-following than the curie, babbage, or ada models&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Did it perhaps have instruction-following built in -- that is, had it been instruction
-fine-tuned already?&lt;/p&gt;
-
-&lt;p&gt;That doesn't quite make sense, though, because instruction fine-tuning is normally
-done using a particular format.  Imagine that a model was fine-tuned on chats that
-looked like this &lt;a href="https://huggingface.co/datasets/timdettmers/openassistant-guanaco"&gt;Guanaco&lt;/a&gt;-format
-dataset:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;### Human: Hello there
-### Assistant: Hello, how are you?
-### Human: I'm fine, how about you?
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;...and then it was fed something more like this (which is from a
-&lt;a href="https://www.reddit.com/r/LocalLLaMA/comments/155po2p/get_llama_2_prompt_format_right/"&gt;Reddit post about the Llama 2 prompt format&lt;/a&gt;):&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;&amp;lt;s&amp;gt;[INST] &amp;lt;&amp;lt;SYS&amp;gt;&amp;gt;
-You are a helpful, respectful and honest assistant. Always answer as helpfully as
-possible, while being safe.  Your answers should not include any harmful, unethical,
-racist, sexist, toxic, dangerous, or illegal content. Please ensure that your
-responses are socially unbiased and positive in nature.
-
-If a question does not make any sense, or is not factually coherent, explain why
-instead of answering something not correct. If you don't know the answer to a
-question, please don't share false information.
-&amp;lt;&amp;lt;/SYS&amp;gt;&amp;gt;
-
-Hello there [/INST]
-Hello, how are you?
-[INST] I'm fine, how about you? [/INST]
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;That is, at least intuitively, going to cause problems.&lt;/p&gt;
-
-&lt;p&gt;What happens if we take a look at a more modern model, but make sure it's a base one?&lt;/p&gt;
-
-&lt;h3 id="qwen3-06b-base"&gt;Qwen3-0.6B-Base&lt;/h3&gt;
-
-&lt;p&gt;I've been playing with &lt;a href="https://huggingface.co/Qwen/Qwen3-0.6B-Base"&gt;&lt;code&gt;Qwen/Qwen3-0.6B-Base&lt;/code&gt;&lt;/a&gt;,
-so I wrote &lt;a href="https://github.com/gpjt/llm-from-scratch/blob/main/qwen-transcript-hack.py"&gt;a script&lt;/a&gt; to use it.
-Here's what I got:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot:  Brightness is a synonym for illumination, which is the process of shining
-light into a space, such as a room or a room.
-
-User: What's a synonym for 'bright'?
-
-Bot: Brightness is a synonym for illumination, which is the process of shining
-light into a space, such as a room or a room.
-
-User: What's a synonym for 'bright'?
-
-Bot:
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;That's actually not half-bad!  The first response is OK apart from the "a room or a room".  Its prediction of what
-the user would say as their second question isn't great, though.   Let's see
-what happens if we prompt it with a more reasonable second round -- I modified
-the script to complete this sequence:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot:  Brightness is a synonym for illumination, which is the process of shining
-light into a space, such as a room or a room.
-
-User: What is an antonym of 'complicated'?
-
-Bot:
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;The full result (including the input sequence) was:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;This is a transcript of a conversation between a helpful bot, 'Bot', and a human,
-'User'.  The bot is very intelligent and always answers the human's questions
-with a useful reply.
-
-User: Provide a synonym for 'bright'
-
-Bot:  Brightness is a synonym for illumination, which is the process of shining
-light into a space, such as a room or a room.
-
-User: What is an antonym of 'complicated'?
-
-Bot:  Complicated is an antonym for simple, which is easy and straightforward,
-and easy to understand, which is easy and not difficult.
-
-User: What is the difference between'reality' and 'fiction'?
-
-Bot:  Reality is the real world or physical world, which is based on observable
-facts and can be observed, and fiction is the story or idea created by a person
-or a group
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;This is looking almost solid.
-And there's no mention of instruction training on the
-&lt;a href="https://huggingface.co/Qwen/Qwen3-0.6B-Base"&gt;model card for &lt;code&gt;Qwen/Qwen3-0.6B-Base&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h3 id="conclusion"&gt;Conclusion&lt;/h3&gt;
-
-&lt;p&gt;I think that my initial intuition was right -- a sufficiently advanced base
-model can operate as a chatbot without instruction fine-tuning.&lt;/p&gt;
-
-&lt;p&gt;However, I think I was actually wrong about it when I originally had the intuition!  The OpenAI
-GPT-3.5 model that I believed was a base one, &lt;code&gt;text-davinci-003&lt;/code&gt;, had already had some kind
-of instruction-following tuning after it was initially trained.  It was really impressive
-that it was able to generalise from that to the somewhat ad-hoc chat transcript format
-that I was using at the time, but it was not a base model.&lt;/p&gt;
-
-&lt;p&gt;By contrast, a modern 600M-parameter model -- smaller than GPT-2 large (at 774M) and less than
-half the size of GPT-2 XL (at 1.5B) -- can actually work with a transcript without
-difficulty.&lt;/p&gt;
-
-&lt;p&gt;My guess is that as well as the architectural improvements that have happened over the
-years since GPT-2, it's the size and quality of the dataset it was trained on.&lt;/p&gt;
-
-&lt;p&gt;GPT-2 was trained
-on "8 million documents for a total of 40GB of text" according to
-&lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the paper&lt;/a&gt;.
-It's not entirely clear how many tokens that is, but I've seen claims of 10B tokens
-(for example &lt;a href="https://www.reddit.com/r/mlscaling/comments/1d3a793/andrej_karpathy_gpt2_124m_in_llmc_in_90_minutes/"&gt;here&lt;/a&gt;),
-and that seems in line with 40GB, as that would be 40 billion bytes, and 4 bytes/token
-seems reasonable.&lt;/p&gt;
-
-&lt;p&gt;GPT-3, according to &lt;a href="https://en.wikipedia.org/wiki/GPT-3"&gt;Wikipedia&lt;/a&gt;, was trained on
-around 500B tokens.&lt;/p&gt;
-
-&lt;p&gt;The Qwen3 series, by contrast, according to the &lt;a href="https://huggingface.co/Qwen/Qwen3-0.6B-Base"&gt;model card&lt;/a&gt;,
-was trained on 36 trillion tokens across 119 languages.&lt;/p&gt;
-
-&lt;p&gt;That's 72 times as much data -- and the data was probably much more curated, too.
-That's a big difference!  Perhaps it had seen lots of transcripts in there, and
-that was why it was able to mimic them?  Or just lots of different kinds of text
-in general?&lt;/p&gt;
-
-&lt;p&gt;I guess it's no surprise that training runs are getting ever-more expensive if that's the
-size of a frontier model run, though.&lt;/p&gt;
-
-&lt;p&gt;So, that's all for the transcript trick -- base models actually can work as
-chatbots without instruction fine-tuning, if they're sufficiently advanced
-and trained on enough data.   That's useful to know!&lt;/p&gt;
-
-&lt;p&gt;Time to go back to the book; coming next, my notes on the actual fine-tuning
-I was meant to be doing rather than messing around with this :-)&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2025/10/llm-from-scratch-25-instruction-fine-tuning"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">/2025/10/llm-from-scratch-24-the-transcript-hack</guid>
-      <pubDate>Tue, 28 Oct 2025 20:15:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
