@@ -5,7 +5,676 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Wed, 04 Feb 2026 23:34:32 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 05 Feb 2026 02:31:12 +0000</lastBuildDate>
+    <item>
+      <title>Writing an LLM from scratch, part 32b -- Interventions: gradient clipping</title>
+      <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32b-interventions-gradient-clipping</link>
+      <description>&lt;p&gt;I'm still working on training the best GPT-2 small sized base model that I can
+with a number of FLOPs roughly equal to two days on my own machine -- my "extra credit"
+exercise after having worked through
+&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".&lt;/p&gt;
+
+&lt;p&gt;In the &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;last post&lt;/a&gt; I trained
+a baseline model -- one with the same architecture and almost the same training code as in
+the minimal training run in the book, just modified to run using DDP on an 8x A100 40 GiB/GPU
+machine in the cloud.
+There are a bunch of "interventions" I want to try to see if they'll make it better,
+as measured by the loss they get on a test set.  I'll do a post for each intervention,
+and this is the first: gradient clipping.&lt;/p&gt;
+&lt;h3 id="why"&gt;Why?&lt;/h3&gt;
+
+&lt;p&gt;In the training chart for the baseline model, you can see that there are three
+places where the loss suddenly spiked up, at around global steps 4,200, 13,000,
+and 23,000:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32a-interventions-baseline-model/baseline-training-run-chart.png" alt="Baseline training run on an 8x A100 with 40 GiB/GPU" title="Baseline training run on an 8x A100 with 40 GiB/GPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;There are a number of things that could cause loss spikes like that:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;A "bad batch" -- that is, one batch, or even one sequence in a batch, was
+massively different in structure to the others that the model had seen, so it just
+had much worse loss.  That doesn't seem likely in this case, though: the numbers
+on the chart are averages over 617 global steps each, and it would take a truly pathological
+sequence to move the needle that much.&lt;/li&gt;
+&lt;li&gt;Something weird in the optimiser.  That's not something I understand well, but
+according to the various LLMs I'm working with, it's a possibility.&lt;/li&gt;
+&lt;li&gt;Exploding gradients.  This is my working hypothesis, and so in this post I'll
+try out gradient clipping, the normal solution to that problem.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h3 id="what"&gt;What?&lt;/h3&gt;
+
+&lt;p&gt;Exploding gradients are common in RNNs, and also happen in LLMs like this one.  I spent a bit
+of time reading around to find out how they happen, and the ah-ha moment came when
+I came across &lt;a href="https://medium.com/data-science/what-is-gradient-clipping-b8e815cdfb48"&gt;this post from Wanshun Wong&lt;/a&gt;.
+Not only is the post itself a good intro in terms of how it affects RNNs, but in the
+"further reading" at the end, there's some gold:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Chapter 10.11 of [1] has a good overview of how gradient clipping works.&lt;/p&gt;
+  
+  &lt;p&gt;...&lt;/p&gt;
+  
+  &lt;p&gt;References&lt;/p&gt;
+  
+  &lt;ol&gt;
+  &lt;li&gt;I. Goodfellow, Y. Bengio, and A. Courville. Deep Learning (2016), MIT Press.&lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Now, I bought a copy of "&lt;a href="https://www.deeplearningbook.org/"&gt;Deep Learning&lt;/a&gt;" at the
+same time as I bought Raschka's book, but I'd only glanced through it.  Now was the
+time to get it down from the shelf -- and, indeed, section 10.11.1 is all about clipping
+to handle exploding gradients.  I'll put the explanation of how they happen into my
+own words, to see if I can clarify things (at least in my mind).&lt;/p&gt;
+
+&lt;p&gt;Normally, when we learn about gradient descent, it's illustrated with nice smooth
+loss charts like this imaginary one for a single-parameter model:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32b-interventions-gradient-clipping/simple-loss-chart.png" alt="A simple loss chart" title="A simple loss chart" /&gt;&lt;/p&gt;
+
+&lt;p&gt;We're told that we might start at point A.  The gradient is quite high and negative,
+so we multiply it by our learning rate and subtract it from our parameter.  That
+gets us to point B.  This time around, the gradient is smaller as the curve is flatter
+there, so when we do the same -- multiply by LR and subtract -- we take a smaller step, and
+wind up at C.  Rinse and repeat and we'll wind up near the minimum.&lt;/p&gt;
+
+&lt;p&gt;The problem is, what if the loss curve actually looks like this:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32b-interventions-gradient-clipping/more-complex-loss-chart.png" alt="A more complex loss chart" title="A more complex loss chart" /&gt;&lt;/p&gt;
+
+&lt;p&gt;...?&lt;/p&gt;
+
+&lt;p&gt;We start at A, with a small gradient, move a little to the right, and now we're at
+B halfway down a cliff!  The gradient is massive, and when we subtract it, even scaled
+by the learning rate, we can zoom off somewhere to the right -- maybe not even on the
+chart.  Indeed, you can imagine a cliff that is so steep that
+it would have vertical portions -- negative infinite gradients in this case -- and no matter what your learning
+rate is, you'll wind up with an infinite parameter update and everything will break.
+It's hard to see how a model can continue training in a case like that.&lt;/p&gt;
+
+&lt;p&gt;Now, what can cause steep cliffs like that?  The book says "strongly nonlinear functions,
+such as those computed by a recurrent neural net over many time steps".&lt;/p&gt;
+
+&lt;p&gt;If you know about RNNs (I &lt;a href="/2025/10/revisiting-karpathy-unreasonable-effectiveness-rnns"&gt;wrote about them&lt;/a&gt;
+if you'd like a summary), you'll remember that a single RNN might be quite
+shallow -- maybe three or four layers -- but when you're doing backpropagation,
+you run a number of inputs through, one after the other, work out the overall loss, and then "unroll" it to
+something similar to a "vanilla" neural net to do the backward pass.  To put that in
+concrete terms, a 3-layer neural network trained with a 100-element sequence would
+unroll to a 300-layer deep network.  Every one of those layers has several operations, including
+(in the implementation I was looking at in my post above), a &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;t&lt;/mi&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mi&gt;h&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.  It's not surprising that there are cliffs in the loss landscape -- it's
+more surprising that there are any smooth bits!&lt;/p&gt;
+
+&lt;p&gt;Now in LLMs, we don't have that unrolling through time -- but our network is deep enough
+as it is.  For the GPT-2 small model, disregarding the embeddings and the final output head, we have 12 Transformer layers,
+each of which is multiple matrix multiplications for attention, then a softmax, then another layer, and
+then a feed-forward... mapping precisely to the equivalent vanilla NN is hard, but I think
+you can treat each one as at least four layers, so we've got 48. And there are GELUs and logs and
+exps &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt; dotted around, so again -- we should expect cliffs.&lt;/p&gt;
+
+&lt;p&gt;So if sometimes we'll get crazy gradients, what can we do about them?  We clip them.&lt;/p&gt;
+
+&lt;h3 id="how"&gt;How?&lt;/h3&gt;
+
+&lt;p&gt;Clipping gradients simply means that if they get larger than a particular number -- &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;,
+which we define -- we reduce them to that number.  In other words, we have a cap on how
+big they can get.&lt;/p&gt;
+
+&lt;p&gt;"Deep Learning" ("DL" from now on) suggests two ways to do it.  Remember that while in the
+example above, we only had one parameter -- on the X axis -- for the GPT-2 small
+LLM we're training, we have 163 million of them.  So the gradients, instead of
+being one number, will be a 163M-long vector, one per parameter.  The two ways to clip are:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;We clip element-wise.  If any one of the gradients in the vector is larger than &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;,
+we reduce it to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/li&gt;
+&lt;li&gt;We clip based on the norm: the length of the gradient vector in -- in our
+case -- 163M-dimensional space.  That sounds harder than it is -- it's really
+just an extension of the Pythagorean equation that &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;c&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; to multiple
+dimensions.  If you want to work out the length of a vector &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt; then you
+can use Pythagoras to work out &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;c&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt;, and that generalises
+to any number of dimensions.  So for our model we'd just square all 163M
+elements of the vector, sum those, and take the square root of the result, and that's the norm. &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;
+If the norm is greater than &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, we just divide every element of the gradient vector by the norm
+and multiply the result by &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, to produce
+a new gradient vector whose norm is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;The second feels more elegant -- we're scaling all of the elements of the gradient
+vector by the same amount, so it still points in the same direction.  Interestingly, though,
+DL says that the two methods "work similarly", which I'll read as "are pretty much
+the same in practice".&lt;/p&gt;
+
+&lt;p&gt;DL then goes on to say how infinite or not-a-number gradients should be handled.
+With the first way, clearly doing it naively would set every element in the gradient
+vector to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, which would make the total size (norm) of the update very large.  With the
+second, it be even worse -- we'd still wind up with completely junk gradients, because
+the norm would be infinite, and in Python &lt;code&gt;math.inf / math.inf&lt;/code&gt; is &lt;code&gt;math.nan&lt;/code&gt;, so
+we'd be applying gradients with NaNs in them at best.  That would be likely to
+knock our model into unrecoverable territory, as any parameter that had that applied
+to it would be NaN forever.&lt;/p&gt;
+
+&lt;p&gt;Their suggested solution is that if you get garbage gradients like that, you can take
+a random step -- that is, create a new gradient to apply that has the norm &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;
+but just points in a random direction. The idea is that this will move you away from
+the cliff-ridden part of the loss landscape where you've found yourself (more about that later), and things will
+continue nicely.&lt;/p&gt;
+
+&lt;p&gt;So, anyway, how to do this in practice?&lt;/p&gt;
+
+&lt;p&gt;PyTorch has a function, &lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.utils.clip_grad_norm_.html#torch.nn.utils.clip_grad_norm_"&gt;&lt;code&gt;clip_grad_norm_&lt;/code&gt;&lt;/a&gt;,
+and that's what's referenced in almost every bit of writing I've found about how
+to clip gradients.  So I decided to use that, assuming it would do what was described
+in DL's second option and that it would do the random updates they suggest for non-finite
+gradients.  (I was half-correct -- see later.)&lt;/p&gt;
+
+&lt;p&gt;As to how to use it -- if we had a normal training loop, where we were just using a normal optimiser, we would go from:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;y_logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;target_y_ids&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;train_loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...to something like&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;y_logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;target_y_ids&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;train_loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+    &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;utils&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;clip_grad_norm_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;clipping_max_norm&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...where &lt;code&gt;clipping_max_norm&lt;/code&gt; is the max value &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; from above.&lt;/p&gt;
+
+&lt;p&gt;However, for our training code using Automatic Mixed Precision (AMP),
+it's a little more complicated -- but luckily, the AMP explainer we've been using
+&lt;a href="https://docs.pytorch.org/docs/stable/notes/amp_examples.html#gradient-clipping"&gt;has a section explaining what to do&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Right now we have this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;amp&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;autocast&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;device_type&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;type&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;float16&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+        &lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Per that explainer, we need to move to this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;amp&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;autocast&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;device_type&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;type&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;float16&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+        &lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unscale_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;utils&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;clip_grad_norm_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;clipping_max_norm&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That looks a bit weird; we're "unscaling" the gradients,
+then clipping them, then using the scaler to step the
+optimiser.  You'd think that you'd need to "re-scale" the scaler after clipping the gradients --
+to get back to where you started from before the optimiser step.
+From the help page I gather it keeps track of whether or not the gradients it has right now are
+currently scaled and handles them appropriately based on that state in &lt;code&gt;scaler.step&lt;/code&gt;.&lt;/p&gt;
+
+&lt;p&gt;Anyway, given that we know what the code looks like now, we need to implement it
+in a way that can be easily switched on for this experiment (and potentially in
+the future), but which also allows us to not use it if we don't want to.&lt;/p&gt;
+
+&lt;p&gt;The best way with our setup is to make it a training option, so we can do it this way:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;amp&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;autocast&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;device_type&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;type&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;float16&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+        &lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;clipping_max_norm&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unscale_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;utils&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;clip_grad_norm_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;clipping_max_norm&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...with &lt;code&gt;clipping_max_norm&lt;/code&gt; extracted from the &lt;code&gt;train.json&lt;/code&gt; file where we call it in
+&lt;code&gt;load_datasets_and_train&lt;/code&gt;:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;train&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+        &lt;span class="n"&gt;run_dir&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;ddp_model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;train_conf&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;clipping_max_norm&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+        &lt;span class="n"&gt;train_ds&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;global_step&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;best_loss&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;checkpoint_interval&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;train_conf&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;checkpoint_interval&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+        &lt;span class="n"&gt;do_checkpoints&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+    &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and we can just pass in &lt;code&gt;None&lt;/code&gt; for it in our &lt;code&gt;check_batch_size_works&lt;/code&gt; function that
+we use to find the maximum micro-batch size for our current hardware, as all we're
+testing for there is memory usage -- we don't care if we're doing good updates.&lt;/p&gt;
+
+&lt;p&gt;Here's &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/4abebdd2b81dbc7d0a3113fc1c5daf943361357e"&gt;the code delta for that&lt;/a&gt;,
+plus a &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/202a79a1d6ede40aab7a8adb19bc0b17bb5c9f5f"&gt;bugfix&lt;/a&gt; to allow
+for &lt;code&gt;train.json&lt;/code&gt; files without a &lt;code&gt;clipping_max_norm&lt;/code&gt; in them.&lt;/p&gt;
+
+&lt;p&gt;But it would also be useful to be able to track when it "fired" -- that is, when we
+had to clip our gradients.  Then we can see two things:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;Whether we actually did wind up clipping them and fixing those loss spikes&lt;/li&gt;
+&lt;li&gt;Whether we were clipping at other times -- we don't want to be doing it unnecessarily.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Now, the docs for &lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.utils.clip_grad_norm_.html"&gt;&lt;code&gt;clip_grad_norm_&lt;/code&gt;&lt;/a&gt;
+say that it returns the "[t]otal norm of the parameter gradients (viewed as a single vector)".
+It doesn't say whether that's before or after the clipping, but given that the return value would
+always be &lt;code&gt;clipping_max_norm&lt;/code&gt; if it was after, I'm going to guess that it returns
+the pre-clipping norm (ChatGPT agrees).&lt;/p&gt;
+
+&lt;p&gt;So we can chart that; changes in these diffs: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/6d5d0cd96b553b420cbf2c8d6c2d2af0f5a36582"&gt;1&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/ac0ef28ac8879f3a6351da166344d918d38cfc76"&gt;2&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/4d476239d9ed3aa1e0864536ea4c61632898b3bd"&gt;3&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/326ccd2ef490aea57371394a949969a687c904ad"&gt;4&lt;/a&gt;.&lt;/p&gt;
+
+&lt;h3 id="how-much"&gt;How much?&lt;/h3&gt;
+
+&lt;p&gt;So we now have code to clip gradients to a given norm size and to chart the gradient
+norms so that we know what they were before clipping.  The question is, what
+should that clipping norm be?  Some googling around suggested that there was no standard way
+of saying "for such-and-such a kind of model, gradients should be clipped at around
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;".  For example, on &lt;a href="https://www.reddit.com/r/MachineLearning/comments/kqgne3/choosing_gradient_norm_clip_value_d/"&gt;this Reddit thread&lt;/a&gt;,
+&lt;code&gt;GLVic&lt;/code&gt; says "Common values are 1, 3, 5, 8, 10", and likewise sample code in
+&lt;a href="https://neptune.ai/blog/understanding-gradient-clipping-and-how-it-can-fix-exploding-gradients-problem"&gt;this tutorial&lt;/a&gt;.
+has 1, as does &lt;a href="https://www.geeksforgeeks.org/deep-learning/understanding-gradient-clipping/"&gt;this one&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;So my initial thought was, let's just use 1.  But then I wondered, what actually are
+the gradient norms that we're getting in normal training?  I decided to run a local short
+train on 3m tokens (a thousandth of the full training set, taking just less than four minutes) with very frequent checkpointing, and
+gradient clipping set to 1, and
+see what happened.&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32b-interventions-gradient-clipping/gradient-clipping-1-locally.png" alt="Small local train, gradient clipping at 1" title="Small local train, gradient clipping at 1" /&gt;&lt;/p&gt;
+
+&lt;p&gt;You can see that the "grad max" line is almost always above the "grad clip" -- we're
+almost always clipping.   This doesn't sound right.  It looked like the range of the grad max
+was generally beween 1.1 and a little above 3, so I set the &lt;code&gt;clipping_max_norm&lt;/code&gt; to 3.5 and
+did another train:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32b-interventions-gradient-clipping/gradient-clipping-3.5-locally.png" alt="Small local train, gradient clipping at 3.5" title="Small local train, gradient clipping at 3.5" /&gt;&lt;/p&gt;
+
+&lt;p&gt;Our loss is about the same, but we're no longer clipping -- and that's what we want;
+there was no evidence of exploding gradients for that short run -- just big updates
+near the start, as you'd expect.&lt;/p&gt;
+
+&lt;p&gt;I then ran the same with no gradient clipping at all, and got exactly the same shape
+for the loss chart as I did with gradient clipping at 3.5, and the same final loss -- that's a good signal that clipping is
+not affecting the train when we stay inside the limit, which is exactly what we want.&lt;/p&gt;
+
+&lt;p&gt;So, it was time to train our model!&lt;/p&gt;
+
+&lt;h3 id="running-the-train"&gt;Running the train&lt;/h3&gt;
+
+&lt;p&gt;I kicked off the train, and after a little while, I looked at the training chart,
+which is updated dynamically as the model trains:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32b-interventions-gradient-clipping/cloud-run-missing-gradient-maxes.png" alt="First run of cloud train, with missing max gradients" title="First run of cloud train, with missing max gradients" /&gt;&lt;/p&gt;
+
+&lt;p&gt;You can see the dotted green lines, both the light one and the dark one -- that is,
+the "grad max" and the "grad avg" -- disappear starting just before global step
+4,000, only coming back at about 5,500 -- that is, these were not plotted for
+global steps 4,319 and 4,936, even though the loss was.  What was going on?&lt;/p&gt;
+
+&lt;p&gt;I took a look at the checkpoint meta file for the first of those to see what the actual numbers
+were, and saw this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;min_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mf"&gt;3.7176883220672607&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;max_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mf"&gt;5.877607822418213&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;avg_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mf"&gt;4.3170230991450085&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;max_grad_norms&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;I&lt;/span&gt;&lt;span class="kc"&gt;nf&lt;/span&gt;&lt;span class="err"&gt;i&lt;/span&gt;&lt;span class="kc"&gt;n&lt;/span&gt;&lt;span class="err"&gt;i&lt;/span&gt;&lt;span class="kc"&gt;t&lt;/span&gt;&lt;span class="err"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;avg_grad_norms&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;I&lt;/span&gt;&lt;span class="kc"&gt;nf&lt;/span&gt;&lt;span class="err"&gt;i&lt;/span&gt;&lt;span class="kc"&gt;n&lt;/span&gt;&lt;span class="err"&gt;i&lt;/span&gt;&lt;span class="kc"&gt;t&lt;/span&gt;&lt;span class="err"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;frac_clipped&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mf"&gt;0.0016207455429497568&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;global_step&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;4319&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;is_best&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Aha!  The PyPlot code I was using could not handle infinite values, which is entirely
+reasonable.  That was easy enough to &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/78a1e794a84c4e01cd7f812755c17ded07f35b93"&gt;fix&lt;/a&gt;,
+though -- I just replaced positive infinity by 1,000,000 and negative infinity by -1,000,000,
+and then (in the interest of getting a proper from-scratch run) kicked everything
+off from the beginning.&lt;/p&gt;
+
+&lt;p&gt;That training run completed with this chart:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32b-interventions-gradient-clipping/second-cloud-run-showing-clipping.png" alt="Second cloud run, showing clipping periods" title="Second cloud run, showing clipping periods" /&gt;&lt;/p&gt;
+
+&lt;p&gt;That's a little hard to read, but if you look closely at the green lines, you
+can see that there are seven periods where gradients were either very large or
+infinite.  Weirdly, though, out of the seven, two of them were two checkpoint periods long
+(that is, two periods of 617 global steps).  That felt weird, though of course
+we're looking at the maximum gradient norm and the average gradient norm -- so
+two single infinite/high-gradient steps in successive 617-step periods would lead to that effect.&lt;/p&gt;
+
+&lt;p&gt;What was even stranger, though,
+was that if you look at the training chart for the run with no gradient clipping,
+we have only three loss spikes rather than seven:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32a-interventions-baseline-model/baseline-training-run-chart.png" alt="Baseline training run on an 8x A100 with 40 GiB/GPU" title="Baseline training run on an 8x A100 with 40 GiB/GPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;...though it's also very noticeable that the gradient-clipped run had only two small loss
+spikes, unlike the three larger ones in the unclipped run.&lt;/p&gt;
+
+&lt;p&gt;The training loss the gradient-clipped run reported at the end was better, too:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 12,343.442 seconds&lt;/span&gt;
+&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
+&lt;span class="go"&gt;Throughput: 264,128 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;Final train loss: 3.728&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...versus 3.743 at the end of the baseline train.&lt;/p&gt;
+
+&lt;p&gt;So it was time to download it, and run the sequence-completion smoke test:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-gradient-clipping/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-gradient-clipping/checkpoints/best/model.safetensors
+Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;further&lt;span class="w"&gt; &lt;/span&gt;afield&lt;span class="w"&gt; &lt;/span&gt;the&lt;span class="w"&gt; &lt;/span&gt;most&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;get&lt;span class="w"&gt; &lt;/span&gt;more&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;time&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;space&lt;span class="w"&gt; &lt;/span&gt;out&lt;span class="w"&gt; &lt;/span&gt;of&lt;span class="w"&gt; &lt;/span&gt;your&lt;span class="w"&gt; &lt;/span&gt;pocket.&lt;span class="w"&gt; &lt;/span&gt;With&lt;span class="w"&gt; &lt;/span&gt;more&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;in&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;abundance
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Coherent enough!&lt;/p&gt;
+
+&lt;p&gt;Next, we evaluate it against our held-back test set:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-gradient-clipping/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-gradient-clipping/checkpoints/best/model.safetensors
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1471&lt;/span&gt;.81it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;04&lt;/span&gt;:58&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.72it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.678
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So, the loss had gone down -- but only from 3.743 to 3.678, a reduction of 0.065,
+or about 1.7%.&lt;/p&gt;
+
+&lt;p&gt;That's not actually all that bad!
+After all, in my initial experiments on my local machine, training for a Chinchilla-optimal
+number of tokens from FineWeb-Edu (rather than the regular FineWeb I'm using now)
+got a loss of 4.167 on the same dataset (weirdly worse with the more-curated training set),
+and training for a further Chinchilla-optimal number of tokens only brought that down to
+4.135, for a difference of 0.032, or 0.7%.&lt;/p&gt;
+
+&lt;p&gt;It's not strictly comparable due to the different training sets, but speaking &lt;em&gt;very&lt;/em&gt;
+loosely, we could say that gradient clipping for this train had more effect than doubling the training time for
+the other one.  That's pretty nifty.&lt;/p&gt;
+
+&lt;p&gt;But the question remained: why those long periods of high gradients, even with gradient
+clipping?  And why were there still loss spikes -- in particular the one just before
+global step 12,000, which lasted for two checkpoint periods?&lt;/p&gt;
+
+&lt;h3 id="chasing-infinity"&gt;Chasing infinity&lt;/h3&gt;
+
+&lt;p&gt;Remember that when I started the first run of this train, and got the chart with
+the missing bits, it was because the logged &lt;code&gt;max_grad_norms&lt;/code&gt; and &lt;code&gt;avg_grad_norms&lt;/code&gt;
+were infinite.&lt;/p&gt;
+
+&lt;p&gt;What happens when &lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.utils.clip_grad_norm_.html#torch.nn.utils.clip_grad_norm_"&gt;&lt;code&gt;clip_grad_norm_&lt;/code&gt;&lt;/a&gt; gets an infinite gradient -- either one that has
+an infinity as one of its components, or one that (due to numerical overflow) winds up
+with a norm of infinity anyway?  I'd been kind of assuming that it did what the authors
+described in "Deep Learning" -- a random update of norm &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; -- given that the book
+stated pretty confidently that you "can" do it but then appeared to consider the topic closed.&lt;/p&gt;
+
+&lt;p&gt;But it doesn't!  If you check that link to the docs, you'll see that it has a parameter
+&lt;code&gt;error_if_nonfinite&lt;/code&gt;, which is &lt;code&gt;False&lt;/code&gt; by default.  If it's set to &lt;code&gt;True&lt;/code&gt;, that will
+raise an exception if the norm is positive or negative infinity, or if it's not a number
+-- which catches both the infinite component and the norm overflow cases above.  But if
+it's not set -- and we weren't setting it -- and the norm or the gradients are non-finite, then &lt;code&gt;clip_grad_norm_&lt;/code&gt; will essentially
+return garbage gradients.  Depending on the exact cause, elements will either be infinities
+of one sign or another, or NaNs.  And if these are added to parameters, then those
+parameters will become garbage too.&lt;/p&gt;
+
+&lt;p&gt;Now that leads to the question, given that we know that somewhere in the period
+between the checkpoint at global step 4,319 and the previous one at 3,702 there was
+an infinite norm at some point, how on earth did the model manage to continue training
+after that?  Loss went up at around the same time, but it wasn't completely broken as
+it would have been with NaNs or infinities in its parameters.&lt;/p&gt;
+
+&lt;p&gt;Obscurely enough, the answer turned out to be in the &lt;a href="https://docs.pytorch.org/tutorials/recipes/recipes/amp_recipe.html#adding-gradscaler"&gt;AMP explainer&lt;/a&gt;,
+in a comment in one of the bits of example code.  Regarding the &lt;code&gt;GradScaler&lt;/code&gt; class we're using:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="c1"&gt;# ``scaler.step()`` first unscales the gradients of the optimizer&amp;#39;s assigned parameters.&lt;/span&gt;
+        &lt;span class="c1"&gt;# If these gradients do not contain ``inf``s or ``NaN``s, optimizer.step() is then called,&lt;/span&gt;
+        &lt;span class="c1"&gt;# otherwise, optimizer.step() is skipped.&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So what was happening was that the scaler -- something we introduced into our code
+to get a speedup by using 16-bit floats instead of 32-bit whenever PyTorch thought
+it would make sense -- was protecting us against infinite and NaN gradients as a
+side-effect.  It was skipping updates that would have polluted our weights with
+bad values from non-finite gradients.&lt;/p&gt;
+
+&lt;p&gt;Hmph.&lt;/p&gt;
+
+&lt;h3 id="grumble"&gt;Grumble&lt;/h3&gt;
+
+&lt;p&gt;If the above comes across as a little frustrated, then it's because I am a bit!
+From a software engineering viewpoint, this situation really does feel a bit like a
+rather messy part of the API.&lt;/p&gt;
+
+&lt;p&gt;There are three things that it's reasonable for a library to do with infinite/NaN
+gradients:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;Blindly apply them and expect the developer to sanitise their inputs.&lt;/li&gt;
+&lt;li&gt;Raise an error.&lt;/li&gt;
+&lt;li&gt;Take some kind of default sane action, like skipping the update.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Now, if we look at that &lt;code&gt;error_if_nonfinite&lt;/code&gt;, we can see that the first two of those
+cases are handled there; and the developer can choose which option to follow.
+It's not where I'd personally put it (the &lt;code&gt;step&lt;/code&gt; function on the optimiser seems more
+natural) and I think I'd probably set the default to &lt;code&gt;True&lt;/code&gt; too, but I can also imagine
+good reasons for it being the way it is -- backward compatibility for one.&lt;/p&gt;
+
+&lt;p&gt;But the "skip non-finite gradients" being a (not even optional!) behaviour that is
+on a class designed for handling mixed-precision training just seems outright bonkers.
+I would be surprised if there weren't people out there who've spent days trying
+to work out why their training runs failed catastrophically when they decided to
+switch from mixed-precision to "full fat" 32-bit floats, not realising that a
+hardly-even-documented feature of the scaler &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt; had been saving them from gradient issues
+previously.&lt;/p&gt;
+
+&lt;p&gt;Anyway, rant over.  What does this all mean?&lt;/p&gt;
+
+&lt;h3 id="so"&gt;So...?&lt;/h3&gt;
+
+&lt;p&gt;There are three ways a gradient can explode:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;It can get very large, still be finite, and have a finite norm.&lt;/li&gt;
+&lt;li&gt;It can get very large, still be finite, but have an infinite norm (eg. due to numerical overflow)&lt;/li&gt;
+&lt;li&gt;It can become infinite -- that is, at least one of the parameters' gradients is infinite (which
+of course means an infinite norm regardless of any numerical stuff).&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;With both the baseline code and our new code, the &lt;code&gt;GradScaler&lt;/code&gt; was saving us from
+the last two of those, by skipping the optimiser steps with non-finite gradients.&lt;/p&gt;
+
+&lt;p&gt;However, the baseline run was not protected against the first kind -- large but finite
+gradients with a finite norm -- while this run was protected.&lt;/p&gt;
+
+&lt;p&gt;What I'm almost certain is happening here is that in all of my training runs so
+far, there have been all three kinds of issues with exploding gradients.  The
+&lt;code&gt;GradScaler&lt;/code&gt;, which again, we introduced for faster training, happened to be saving
+us from the infinite gradients/norms.  But we were still being bitten by the finite
+but excessively large ones.&lt;/p&gt;
+
+&lt;p&gt;And that, I think, is why this training run had a positive -- not huge, but certainly worthwhile
+-- effect on the test set loss.&lt;/p&gt;
+
+&lt;p&gt;If I had more time, I think I'd do another run, logging all three of those categories
+of error to see how frequent they are, and charting the result.  That might go some way to
+explaining the final question I had here: why is it that the renowned "Deep Learning"
+suggests a random update to get away from the cliff where you've found yourself,
+while we seem to be getting away with just skipping the update, which is much simpler?
+Well, the book was written in 2016, and I guess rather a lot has changed in the last 10 years :-)&lt;/p&gt;
+
+&lt;p&gt;My guess is that their solution might have been
+a solid default in the age of RNNs, but might not make so much sense with the kind of models
+we're training these days.&lt;/p&gt;
+
+&lt;p&gt;I think I can see a way in which that makes sense.  Think of the illustration of a loss "cliff"
+in a one-parameter world that we had at the start of this post:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32b-interventions-gradient-clipping/more-complex-loss-chart.png" alt="A more complex loss chart" title="A more complex loss chart" /&gt;&lt;/p&gt;
+
+&lt;p&gt;If you happen to wind up on that cliff, you're in trouble.&lt;/p&gt;
+
+&lt;p&gt;But imagine a two-parameter model -- the line of the loss function becomes a surface.
+Just as in the real world you might be able to walk along the edge at the top of a cliff and
+find a nice easy slope down next to it, you can imagine that the cliff in the two-parameter
+case might be less of a problem because you don't need to be lucky enough to jump down it --
+you can walk around it.&lt;/p&gt;
+
+&lt;p&gt;Extrapolating examples like this to higher dimensions is
+risky, but I think it should hold that the more dimensions you're working with,
+the less likely it is that a cliff is an issue -- you're more likely to be able to find
+a way around it.  I've heard a very similar argument made for why local minima are
+less of an issue with lots of parameters.  It's certainly worth saying that this is
+far from a mathematical proof, but I think it's a decent grounding for intuition.&lt;/p&gt;
+
+&lt;p&gt;Now think about an RNN.  Although you're doing back-propagation through time over
+what amounts to a very deep network, there aren't actually all that many parameters,
+certainly compared to an LLM like this.  Each parameter is involved in the back-propagation
+multiple times.&lt;/p&gt;
+
+&lt;p&gt;So, thinking of it that way, the gradient vector for the RNNs they were dealing with
+was of much lower dimensionality than the ones we're dealing with, even for this
+tiny model.&lt;/p&gt;
+
+&lt;p&gt;They say that the random step "will typically move away from the numerically unstable
+configuration".  I'm probably playing fast and loose here, but I'll take that as something
+like: if you wound up on a cliff, you were likely in a very "cliffy"
+area of the loss landscape.  "Teleporting" randomly to somewhere some distance away
+was a sensible way to handle that.&lt;/p&gt;
+
+&lt;p&gt;In our situation, even if the area is "cliffy" in the direction that one particular
+batch might push us, we have so many extra dimensions that it may well be that it
+won't be so bad with the next one.  So just skipping the problematic update -- under
+all of those assumptions -- seems a perfectly reasonable way to handle it.&lt;/p&gt;
+
+&lt;h3 id="validation"&gt;Validation&lt;/h3&gt;
+
+&lt;p&gt;All of this, BTW, made me think back to validation loss.  In our previous training runs,
+where we were measuring it just before each checkpoint, its spikes were in general correlated
+with but not identical to spikes in training loss:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud/training-run-8xh100m80.png" alt="Loss in a run with validation" title="Loss in a run with validation" /&gt;&lt;/p&gt;
+
+&lt;p&gt;Now, of course, exploding gradients don't have to be related to high training loss --
+there's enough non-linearity in there that we can treat them as being completely uncorrelated,
+I think.  But you definitely would expect them to have an effect on validation
+loss if applied.  Disregarding the infinite ones (which were being filtered out anyway),
+the very high ones that we are now clipping would, in the unclipped baseline
+train, seem very likely to have caused validation loss spikes.&lt;/p&gt;
+
+&lt;p&gt;So: if I hadn't stripped that out, we would likely have been able to see a clear
+difference in the validation loss line between clipped and unclipped.  That would have
+been useful!&lt;/p&gt;
+
+&lt;p&gt;I'm not going to re-introduce it, though.  Best to keep the number of code changes
+to a minimum if I'm trying to compare like with like over the course of these intervention
+tests.&lt;/p&gt;
+
+&lt;h3 id="anyway"&gt;Anyway.&lt;/h3&gt;
+
+&lt;p&gt;I think that's enough for gradient clipping.  I may come back and do the experiment
+another time to see what the relative ratios of the different kinds of problematic
+gradients are.  Are there parts of the train where we get lots of them as a percentage (ie.
+we're somewhere "cliffy" in the loss landscape)?  How many infinite gradient vs infinite norm
+vs big-but-not-infinite instances do we have relative to each other, and to normal
+gradient updates?  What do we see if we have validation loss?  And so on.&lt;/p&gt;
+
+&lt;p&gt;But for now: gradient clipping definitely helps, and goes on the positive interventions list!&lt;/p&gt;
+
+&lt;p&gt;I'm thinking I'll see what happens with switching off dropout next.  That should at
+least be a bit easier...&lt;/p&gt;
+
+&lt;p&gt;Stay tuned!&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;&lt;a href="https://www.youtube.com/watch?v=DdRnMjfVQi0"&gt;Oh my&lt;/a&gt;.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;Technically the L2 norm -- if you used cubes/cube root it would be L3,
+and likewise for the power of four and L4 and so on.  But the L2 is the
+one used for gradient clipping.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;Shades of &lt;a href="https://www.goodreads.com/quotes/40705-but-the-plans-were-on-display-on-display-i-eventually"&gt;Douglas Adams&lt;/a&gt;, really:&lt;/p&gt;
+
+&lt;p&gt;"But the plans were on display..."&lt;/p&gt;
+
+&lt;p&gt;"On display? I eventually had to go down to the cellar to find them."&lt;/p&gt;
+
+&lt;p&gt;“That’s the display department."&lt;/p&gt;
+
+&lt;p&gt;“With a flashlight."&lt;/p&gt;
+
+&lt;p&gt;“Ah, well, the lights had probably gone."&lt;/p&gt;
+
+&lt;p&gt;“So had the stairs."&lt;/p&gt;
+
+&lt;p&gt;“But look, you found the notice, didn’t you?"&lt;/p&gt;
+
+&lt;p&gt;“Yes," said Arthur, “yes I did. It was on display in the bottom of a locked filing cabinet stuck in a disused lavatory with a sign on the door saying ‘Beware of the Leopard."&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/02/llm-from-scratch-32b-interventions-gradient-clipping</guid>
+      <pubDate>Thu, 05 Feb 2026 01:20:00 +0000</pubDate>
+    </item>
     <item>
       <title>Writing an LLM from scratch, part 32a -- Interventions: training a baseline model</title>
       <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32a-interventions-baseline-model</link>
@@ -72,7 +741,7 @@ trains, I had sudden spikes in both training and validation loss.  It generally 
 quite a bit of training -- maybe 10-15% of training time -- to get back on track after
 some of these, so we had what could be seen as wasted time in the training runs.
 Exploding gradients can be fixed by gradient clipping, which is relatively easy to
-do.  Definitely worth investigating!&lt;/li&gt;
+do.  Definitely worth investigating!  &lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;Here's the post on that&lt;/a&gt;.&lt;/li&gt;
 &lt;/ul&gt;
 
 &lt;p&gt;I'm going to work through each of those apart from the first two and the batch size (and will retrospectively add links to
@@ -260,6 +929,8 @@ damage they do with gradient clipping?&lt;/p&gt;
 
 &lt;p&gt;Stay tuned!  I've already done the training run for that (while I wrote this one up),
 so I should be able to post about it tomorrow.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
 
 &lt;div class="footnotes"&gt;
 &lt;hr /&gt;
@@ -8265,292 +8936,6 @@ JSON" was almost two years ago.&amp;#160;&lt;a href="#fnref-1" class="footnoteBa
 </description>
       <guid isPermaLink="true">/2025/11/llm-from-scratch-26-evaluating-the-fine-tuned-model</guid>
       <pubDate>Mon, 03 Nov 2025 19:40:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 25 -- instruction fine-tuning</title>
-      <link>https://www.gilesthomas.com/2025/10/llm-from-scratch-25-instruction-fine-tuning</link>
-      <description>&lt;p&gt;This post is on the first part of chapter 7 of
-&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
-which covers instruction fine-tuning.&lt;/p&gt;
-
-&lt;p&gt;In my &lt;a href="/2025/10/llm-from-scratch-24-the-transcript-hack"&gt;last post&lt;/a&gt;, I went
-through a technique which I'd found could sometimes make it possible to turn
-non-fine-tuned models into reasonable chatbots; perhaps unsurprisingly, the GPT-2
-model isn't powerful enough to work that way.&lt;/p&gt;
-
-&lt;p&gt;So, with that proven, it was time to do the work :-)  This post covers the first
-half of the chapter, where we actually do the fine-tuning; I'll post later about the
-second part, where we start evaluating the model that we get.&lt;/p&gt;
-
-&lt;p&gt;Just as with the &lt;a href="/2025/10/llm-from-scratch-23-fine-tuning-classification"&gt;last chapter&lt;/a&gt;,
-what we're doing here is essentially plugging together the various things we've built
-so far, and Raschka's explanation is very clear, so I don't have that much in the
-way of notes -- but here are the bits that made me pause.&lt;/p&gt;
-&lt;h3 id="the-model"&gt;The model&lt;/h3&gt;
-
-&lt;p&gt;For this part of the book, we use the "medium" variant of the GPT-2 open weights
-rather than the "small" ones that we've been using so far.  I have to assume that
-this is because the small really isn't very very good at this kind of thing.&lt;/p&gt;
-
-&lt;p&gt;[Update: it isn't!  See the metrics from my mammoth post on
-&lt;a href="/2025/11/llm-from-scratch-28-training-a-base-mode-from-scratch"&gt;training an LLM completely from scratch&lt;/a&gt;.]&lt;/p&gt;
-
-&lt;h3 id="the-input-format"&gt;The input format&lt;/h3&gt;
-
-&lt;p&gt;This was quite interesting.  In the past, all of the templates I've seen
-for instruction following have been designed for chatbots -- that's what we
-tend to use LLMs for, after all.  There's a system prompt and then a format for
-"message from user", and another for "message from bot".&lt;/p&gt;
-
-&lt;p&gt;In my series on &lt;a href="/fine-tuning"&gt;fine-tuning&lt;/a&gt;, where I learned how to fine-tune an 8B-parameter
-Llama 3 base model to work as a chatbot, I used the format for &lt;a href="https://www.reddit.com/r/LocalLLaMA/comments/155po2p/get_llama_2_prompt_format_right/"&gt;Llama 2&lt;/a&gt;,
-which is not dissimilar to the Phi3 one that's given as an example in the book.
-The &lt;a href="https://crfm.stanford.edu/2023/03/13/alpaca.html"&gt;Alpaca&lt;/a&gt;-style one is quite different; it is designed for more of a one-shot interaction
-than it is for chat:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Below is an instruction that describes a task.  Write a response that
-appropriately completes the request.
-
-### Instruction:
-
-&amp;lt;some instructions&amp;gt;
-
-
-### Input:
-
-&amp;lt;optional, some input&amp;gt;
-
-### Response:
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Now, Alpaca dates from early 2023, and it looks like they used that prompt following
-a paper "&lt;a href="https://arxiv.org/abs/2212.10560"&gt;Self-Instruct: Aligning Language Models with Self-Generated Instructions&lt;/a&gt;".&lt;/p&gt;
-
-&lt;p&gt;I had to think a bit about why one would use that, and I think the core is that this
-was early days (all of two years ago!) and LLMs had very short context lengths and
-weren't very smart.  Chat uses a &lt;em&gt;lot&lt;/em&gt; of tokens!  You need the system prompt,
-and then every conversational turn so far.  With our GPT-2 model we have just 1024
-tokens to play with -- and Alpaca wasn't much better, as it was built as a fine-tune
-of &lt;a href="https://ai.meta.com/blog/large-language-model-llama-meta-ai/"&gt;Meta's original Llama model&lt;/a&gt;,
-which (according to &lt;a href="https://github.com/meta-llama/llama/blob/main/MODEL_CARD.md"&gt;the model card&lt;/a&gt;)
-had a context length of 4096 tokens.&lt;/p&gt;
-
-&lt;p&gt;Chat is a good way to interact with a model, as the multiple conversational turns
-allow you to build up large amounts of context for the model to play with, meaning
-that (hopefully) it will be able to give good answers.  But if that context doesn't
-fit into the context length, then it's not so good.  Early chatbots, I believe,
-worked around this by replacing the "transcript" with a summary, but there's only
-so much you can fit into a 4k-token one. &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;  Maybe modern ones do this too, but
-with GPT-5 having a &lt;a href="https://platform.openai.com/docs/models/gpt-5"&gt;400,000-token context window&lt;/a&gt;
-it's not so important.&lt;/p&gt;
-
-&lt;p&gt;So, in Alpaca times, people were thinking in terms of one-shot interactions with LLMs,
-and the pattern they chose was targeted at that, so that you could get all of the interesting
-information and a reply into one sequence.&lt;/p&gt;
-
-&lt;p&gt;An interesting bit of history!
-(Again, two years ago is history.  Cripes.)&lt;/p&gt;
-
-&lt;h3 id="the-custom-collation"&gt;The custom collation&lt;/h3&gt;
-
-&lt;p&gt;This was explained well in the book, but it's an interesting enough point that I thought
-it was worth going over.&lt;/p&gt;
-
-&lt;p&gt;Last time around we had a bunch of text messages as our inputs to the model.  We found
-the longest one, and then padded them all out to the same length with end-of-sequence tokens,
-which meant that we could construct batches -- naturally, every input in a batch has
-to be the same size.&lt;/p&gt;
-
-&lt;p&gt;This time around we're being a bit smarter.  Although every item in a given batch
-needs to be the same length, batches themselves can be of different lengths -- that is,
-if our batch size was 8, and the longest sequence in our first batch was 73 tokens
-long, then we would make our first batch &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;8&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;73&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; -- but then, if the longest
-sequence in our second batch was only 60 tokens long, then the second batch could
-be &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;8&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;60&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.  We only need to pad out sequences to match the longest sequence
-in their batch, and that saves us time when running the model.&lt;/p&gt;
-
-&lt;p&gt;That got me thinking about inference at scale -- the kind of thing that LLM
-providers like OpenAI or Anthropic do.  They're going to be receiving very large
-numbers of sequences to complete, and of course they are going to be running them
-through in batches.  But padding tokens are kind of a waste of inference GPU cycles.&lt;/p&gt;
-
-&lt;p&gt;They'll have a bunch of different instances of their models running on different
-machines to handle all of these requests, and they almost certainly have some kind of code to try to route
-sequences of similar length to the same instances.  To take a toy
-example, if you had a batch size of two and received six sequences, with lengths
-of 2, 9, 100, 11, 3 and 120, then you'd want to route them so that one instance
-received the (2, 3) pair, another the (9, 11), and another
-(100, 120) -- that minimises the amount of padding required and saves wasted cycles.&lt;/p&gt;
-
-&lt;p&gt;Following on from that, it looks like we could actually improve the book's code by
-doing something similar here, grouping similarly-sized inputs together.  That would
-be quite complicated, though, so probably not worth it in an educational context
-like this.&lt;/p&gt;
-
-&lt;p&gt;Anyway, our collator needs to handle the variable-length batches, and through various drafts we converge on
-one that does it, with one tweak.&lt;/p&gt;
-
-&lt;h3 id="masking-out-padding-tokens-for-loss"&gt;Masking out padding tokens for loss&lt;/h3&gt;
-
-&lt;p&gt;This was a really important and interesting bit.  Let's say that we're feeding in
-a 20-token input, in a batch where the longest of the other sequences is 30 tokens
-long.  That means that we have ten padding tokens at the end.  Let's represent that
-input sequence like this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;01234567890123456789xxxxxxxxxx
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;The numbers are our token IDs, and I've used &lt;code&gt;x&lt;/code&gt; to represent the end-of-sequence
-token that we use for padding.&lt;/p&gt;
-
-&lt;p&gt;Now, we need our target sequence to predict for that.  The first version that we
-come up with in the book looks like this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;1234567890123456789xxxxxxxxxxx
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;So, we've just done the normal trick of shifting left by one character, and we've
-added an extra end-of-sequence token at the end to make the lengths match.&lt;/p&gt;
-
-&lt;p&gt;But as the next step, we replace all of the padding tokens, apart from the one right
-at the end of the "real" part of the sequence, with an invalid token ID,  &lt;code&gt;-100&lt;/code&gt;.
-Using &lt;code&gt;I&lt;/code&gt; to represent that, we have:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;1234567890123456789xIIIIIIIIII
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;The core thing to remember here is that we honestly don't care what the model generates
-after it's done the real, unpadded sequence, plus an end-of-sequence token.  It
-could generate random junk and it wouldn't matter, because it's already done the important
-part of predicting next tokens for all of the input sequence.&lt;/p&gt;
-
-&lt;p&gt;The &lt;code&gt;-100&lt;/code&gt; is a magic number that PyTorch's &lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.cross_entropy.html"&gt;cross_entropy&lt;/a&gt;
-function uses in target sequences to say "ignore this position".  I must admit that
-as a software engineer, it gives me a bit of an "ick" -- magic numbers are never nice --
-but it does make sense.  Negative numbers are invalid targets when you're comparing
-predictions across tokens -- which have indexes from zero up.  In general, if you're
-predicting categories -- which essentially we are with tokens -- then the "minus one'th"
-token doesn't make sense.  You could use any other negative number, but -1 might
-cause confusion (being used heavily in ML code to get the last element of a sequence)
-and if you're going to use any other negative number it might as well be &lt;code&gt;-100&lt;/code&gt;.&lt;/p&gt;
-
-&lt;p&gt;"Purer" solutions would be hard, anyway.  We're working with a PyTorch tensor here,
-so it has to be a number -- which rules out using something like &lt;code&gt;None&lt;/code&gt; or some kind
-of special object.  You could keep an "ignore after this index" number, but you'd
-need as many of them as you have items in the batch and it would be just another thing
-to keep track of.  You could even keep a tensor of boolean "ignore these tokens"
-of the same size as your batch -- a mask -- but that would have the same problem of
-being something to pass around in your code.&lt;/p&gt;
-
-&lt;p&gt;As I understand it, those last two solutions are actually used in some systems --
-imagine that your outputs were not logits to create a probability distribution across
-categories or tokens, but were meaningful numbers in and of themselves.  Pretty much
-any number you picked might be a valid output from the model.  You wouldn't be using cross entropy loss in
-those cases anyway, of course, but you'd need to keep some record of where the
-padding starts so that you can ignore it.&lt;/p&gt;
-
-&lt;p&gt;One final thing that is worth noting that we only add the &lt;code&gt;-100&lt;/code&gt;s on to the targets.  This makes sense,
-as all of the inputs will be fed into the LLM, so things that aren't valid tokens are
-going to make the embedding layer very unhappy.  That also explains why we firstly add
-them on to the sequence as regular padding and then convert them to -100 for the targets:
-it allows us to add on the padding, then get the input sequence as all but the last token, then get
-the targets as tokens 1 up to the end.  After that's done we run the code to replace all
-but the first end-of-sequence padding tokens with -100 on the targets.&lt;/p&gt;
-
-&lt;h3 id="randomness-revisited"&gt;Randomness revisited&lt;/h3&gt;
-
-&lt;p&gt;As with the last chapter, I got different results to the ones in the book; something
-different about the order of execution in my version of the code when compared to
-Raschka's meant that despite all of the careful use of &lt;code&gt;torch.random_seed&lt;/code&gt;, the numbers
-didn't quite match up.  But, again as before, they were close and the trends in --
-for example -- loss were the same, so the right things were happening.&lt;/p&gt;
-
-&lt;h3 id="training"&gt;Training&lt;/h3&gt;
-
-&lt;p&gt;When I finally ran the train on my RTX 3090, it took 48 seconds; I watched it in &lt;code&gt;nvtop&lt;/code&gt;
-and saw that it was using 9GiB VRAM.  Due to the usual differences in randomness,
-I got slightly different results to the book -- but similar enough to not be any
-cause for concern:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-25-instruction-fine-tuning/instruction-fine-tune-2-epochs-losses-plot.png" alt="Loss over time training for two epochs" title="Loss over time training for two epochs" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Also, due to a typo, I accidentally ran it with five epochs -- that took two minutes.
-I noticed that validation loss started rising fairly steadily
-after epoch 2, with train loss dropping -- clearly overfitting.&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-25-instruction-fine-tuning/instruction-fine-tune-5-epochs-losses-plot.png" alt="Loss over time training for five epochs" title="Loss over time training for five epochs" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Presumably Raschka chose two epochs for exactly that reason :-)&lt;/p&gt;
-
-&lt;h3 id="nits"&gt;Nits&lt;/h3&gt;
-
-&lt;p&gt;A couple of things that I noticed while working through the code; when I first
-ran the download script, I got &lt;code&gt;module 'urllib' has no attribute 'request'&lt;/code&gt;.
-That's because of a typo in the import at the start -- instead of&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;urllib&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...it should be:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;urllib.request&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;The other thing that tripped me up was the original &lt;code&gt;custom_collate_draft_1&lt;/code&gt;.
-We add on a padding token, then pad out
-the sequence with more padding tokens, then remove the last one.  I found that confusing --
-why not just add on the required number in the first place rather than adding on an extra
-one and then deleting it?&lt;/p&gt;
-
-&lt;p&gt;It became clear later on; it's to make it mirror the next function, which adds on an extra end-of-sequence token for
-our targets, but having this anticipatory code in there with no explanation in the first draft made
-me start doubting my sanity for a little while...&lt;/p&gt;
-
-&lt;p&gt;Minor points, though.&lt;/p&gt;
-
-&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
-
-&lt;p&gt;So, that was it for the first half of chapter 7 in the book.  The next bit looks
-like fun -- we're going to use a smart model to evaluate our relatively dumb one on
-how well it follows instructions.  Definitely looking forward to that :-)&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2025/11/llm-from-scratch-26-evaluating-the-fine-tuned-model"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;I &lt;a href="https://x.com/gpjt/status/1632097030188277763"&gt;experimented with ChatGPT 3.5&lt;/a&gt; at
-around the time Alpaca came out and came to the conclusion that it had a similar
-context length, of about 4k tokens.   It looked like it worked around it by, when the transcript started reaching
-the context length, spinning off a separate instance to summarise it into a "story
-so far" kind of thing, which was then injected in to the start of the chat instead
-of the full context.&lt;/p&gt;
-
-&lt;p&gt;My experiment was to say "my favourite colour is green, please
-remember that", then to send a quote of about 4,000 words from "Moby Dick", prefacing
-that with either "this is unimportant, please ignore" or "this is important,
-please remember".  Next, I'd ask what my favourite colour was again.&lt;/p&gt;
-
-&lt;p&gt;If I told it that the quote
-was unimportant, then it would remember, but if I told it that it was important,
-it would think my favourite colour was blue.&lt;/p&gt;
-
-&lt;p&gt;Asking it for transcripts of the
-conversation so far would give a reasonable one, skipping the quote, if the quote
-was tagged as unimportant, but would give a completely hallucinated one if the
-quote was tagged important.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2025/10/llm-from-scratch-25-instruction-fine-tuning</guid>
-      <pubDate>Wed, 29 Oct 2025 23:40:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
