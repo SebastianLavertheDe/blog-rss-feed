@@ -7,330 +7,7 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Thu, 05 Feb 2026 02:31:31 +0000</lastBuildDate>
-    <item>
-      <title>Notes on the WASM Basic C ABI</title>
-      <link>https://eli.thegreenplace.net/2025/notes-on-the-wasm-basic-c-abi/</link>
-      <description>&lt;p&gt;The &lt;a class="reference external" href="https://github.com/WebAssembly/tool-conventions/tree/main"&gt;WebAssembly/tool-conventions&lt;/a&gt;
-repository contains &amp;quot;Conventions supporting interoperability between tools
-working with WebAssembly&amp;quot;.&lt;/p&gt;
-&lt;p&gt;Of special interest, in contains the &lt;a class="reference external" href="https://github.com/WebAssembly/tool-conventions/blob/main/BasicCABI.md"&gt;Basic C ABI&lt;/a&gt; - an ABI
-for representing C programs in WASM. This ABI is followed by compilers like Clang
-with the &lt;tt class="docutils literal"&gt;wasm32&lt;/tt&gt; target. Rust is &lt;a class="reference external" href="https://blog.rust-lang.org/2025/04/04/c-abi-changes-for-wasm32-unknown-unknown/"&gt;also switching to this ABI&lt;/a&gt;
-for &lt;tt class="docutils literal"&gt;extern &amp;quot;C&amp;quot;&lt;/tt&gt; code.&lt;/p&gt;
-&lt;p&gt;This post contains some notes on this ABI, with annotated code samples and
-diagrams to help visualize what the emitted WASM code is doing. Hereafter, &amp;quot;the
-ABI&amp;quot; refers to this Basic C ABI.&lt;/p&gt;
-&lt;div class="section" id="preface-the-wasm-value-stack-and-linear-memory"&gt;
-&lt;h2&gt;Preface: the WASM value stack and linear memory&lt;/h2&gt;
-&lt;p&gt;In these notes, annotated WASM snippets often contain descriptions of the state
-of the WASM value stack at a given point in time. Unless otherwise specified,
-&amp;quot;TOS&amp;quot; refers to &amp;quot;Top Of value Stack&amp;quot;, and the notation &lt;tt class="docutils literal"&gt;[ x&amp;nbsp; y ]&lt;/tt&gt; means the
-stack has &lt;tt class="docutils literal"&gt;y&lt;/tt&gt; on top, with &lt;tt class="docutils literal"&gt;x&lt;/tt&gt; right under it (and possibly some other
-stuff that's not relevant to the discussion under &lt;tt class="docutils literal"&gt;x&lt;/tt&gt;); in this notation,
-the stack grows &amp;quot;to the right&amp;quot;.&lt;/p&gt;
-&lt;p&gt;The WASM value stack has no linear memory representation and cannot be
-addressed, so it's meaningless to discuss whether the stack grows towards lower
-or higher addresses. The value stack is simply an abstract stack, where values
-can be pushed onto or popped off its &amp;quot;top&amp;quot;.&lt;/p&gt;
-&lt;p&gt;Whenever addressing is required, the ABI specifies explicitly managing a
-separate stack in linear memory. This stack is very similar to how stacks are
-managed in hardware assembly languages (except that in the ABI this stack
-pointer is held in a global variable, and is not a special register), and it's
-called the &amp;quot;linear stack&amp;quot;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="scalar-parameters-and-returns"&gt;
-&lt;h2&gt;Scalar parameters and returns&lt;/h2&gt;
-&lt;p&gt;By &amp;quot;scalar&amp;quot; I mean basic C types like &lt;tt class="docutils literal"&gt;int&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;double&lt;/tt&gt; or &lt;tt class="docutils literal"&gt;char&lt;/tt&gt;. For
-these, using the WASM value stack is sufficient, since WASM functions can accept
-an arbitrary number of scalar parameters.&lt;/p&gt;
-&lt;p&gt;This C function:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;add_three&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Will be compiled into something like:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$add_three&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;     &lt;span class="c1"&gt;;; [ y ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;     &lt;span class="c1"&gt;;; [ y  x ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;         &lt;span class="c1"&gt;;; [ x+y ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;     &lt;span class="c1"&gt;;; [ x+y  z ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;         &lt;span class="c1"&gt;;; [ x+y+z ]&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;And can be called by pushing three values onto the stack and invoking
-&lt;tt class="docutils literal"&gt;call $add_three&lt;/tt&gt;.&lt;/p&gt;
-&lt;p&gt;The ABI specifies that all integral types 32-bit and smaller will be passed
-as &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt;, with the smaller types appropriately sign or zero extended. For
-example, consider this C function:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;add_three_chars&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;char&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;It's compiled to the almost same code as &lt;tt class="docutils literal"&gt;add_three&lt;/tt&gt;:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$add_three_chars&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;
-  &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="err"&gt;.ext&lt;/span&gt;&lt;span class="k"&gt;end&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="err"&gt;_s&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Except the last &lt;tt class="docutils literal"&gt;i32.extend8_s&lt;/tt&gt;, which takes the lowest 8 bits of the value
-on TOS and sign-extends them to the full &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; (effectively ignoring all
-the higher bits). Similarly, when &lt;tt class="docutils literal"&gt;$add_three_chars&lt;/tt&gt; is called, each of its
-parameters goes through &lt;tt class="docutils literal"&gt;i32.extend8_s&lt;/tt&gt;.&lt;/p&gt;
-&lt;p&gt;There are additional oddities that we won't get deep into, like passing
-&lt;tt class="docutils literal"&gt;__int128&lt;/tt&gt; values via two &lt;tt class="docutils literal"&gt;i64&lt;/tt&gt; parameters.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="pointers"&gt;
-&lt;h2&gt;Pointers&lt;/h2&gt;
-&lt;p&gt;C pointers are just scalars, but it's still educational to review how
-they are handled in the ABI. Pointers to any type are passed in &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; values;
-the compiler knows they are pointers, though, and emits the appropriate
-instructions. For example:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;add_indirect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;sum&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Is compiled to:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$add_indirect&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;         &lt;span class="c1"&gt;;; [ ptr_sum ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;         &lt;span class="c1"&gt;;; [ ptr_sum  y ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;         &lt;span class="c1"&gt;;; [ ptr_sum  y  x ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;             &lt;span class="c1"&gt;;; [ ptr_sum  x+y ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.tee&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;         &lt;span class="c1"&gt;;; x &amp;lt;- x+y, leaving stack intact&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.store&lt;/span&gt;           &lt;span class="c1"&gt;;; store x+y into *ptr_sum&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;         &lt;span class="c1"&gt;;; [ x+y ] for returning&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Recall that in WASM, there's no difference between an &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; representing an
-address in linear memory and an &lt;tt class="docutils literal"&gt;i32&lt;/tt&gt; representing just a number.
-&lt;tt class="docutils literal"&gt;i32.store&lt;/tt&gt; expects &lt;tt class="docutils literal"&gt;[ addr&amp;nbsp; value ]&lt;/tt&gt; on TOS, and does &lt;tt class="docutils literal"&gt;*addr = value&lt;/tt&gt;.&lt;/p&gt;
-&lt;p&gt;Note that the &lt;tt class="docutils literal"&gt;x&lt;/tt&gt; parameter isn't needed any longer after the sum is
-computed, so it's reused later on to hold the return value. WASM parameters are
-treated just like other locals (as in C).&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="passing-parameters-through-linear-memory"&gt;
-&lt;h2&gt;Passing parameters through linear memory&lt;/h2&gt;
-&lt;p&gt;According to the ABI, while scalars and single-element structs or unions are
-passed to a callee via WASM function parameters (as shown above), for larger
-aggregates the compiler utilizes linear memory.&lt;/p&gt;
-&lt;p&gt;Specifically, each function gets a &amp;quot;frame&amp;quot; in a region of linear memory
-allocated for the linear stack. This region grows downwards from high
-to low addresses &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;, and the global &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; points at the bottom
-of the frame:&lt;/p&gt;
-&lt;img alt="WASM C ABI linear stack" class="align-center" src="https://eli.thegreenplace.net/images/2025/wasm-c-abi-linear-stack.png" /&gt;
-&lt;p&gt;Consider this code:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-
-&lt;span class="n"&gt;__attribute__&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;noinline&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pair_calculate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pair&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pair&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pair&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-
-&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;do_work&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;){&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pair_calculate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;When &lt;tt class="docutils literal"&gt;do_work&lt;/tt&gt; is compiled to WASM, prior to calling &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; it
-copies &lt;tt class="docutils literal"&gt;pp&lt;/tt&gt; into a location in linear memory, and passes the address of this
-location to &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt;. This location is on the linear stack, which
-is maintained using the &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; global. Here's the compiled WASM
-for &lt;tt class="docutils literal"&gt;do_work&lt;/tt&gt; (I also gave its local variable a meaningful name, for
-readability):&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$do_work&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;local&lt;/span&gt; &lt;span class="nv"&gt;$sp&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.sub&lt;/span&gt;
-  &lt;span class="nb"&gt;local.tee&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; sp &amp;lt;- __stack_pointer - 16&lt;/span&gt;
-  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; update __stack_pointer as well&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.store&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;12&lt;/span&gt;           &lt;span class="c1"&gt;;; mem[sp+12] = y&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.store&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;            &lt;span class="c1"&gt;;; mem[sp+8] = x&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp  sp ]&lt;/span&gt;
-
-  &lt;span class="c1"&gt;;; Do a 64-bit load from mem[sp+8], this loads the entire pair into&lt;/span&gt;
-  &lt;span class="c1"&gt;;; a single i64.&lt;/span&gt;
-  &lt;span class="nb"&gt;i64.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt; &lt;span class="k"&gt;align&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;
-  &lt;span class="nb"&gt;i64.store&lt;/span&gt;                     &lt;span class="c1"&gt;;; mem[sp] = pair-as-i64&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp ]&lt;/span&gt;
-  &lt;span class="nb"&gt;call&lt;/span&gt; &lt;span class="nv"&gt;$pair_calculate&lt;/span&gt;          &lt;span class="c1"&gt;;; call pair_calculate, passing it sp&lt;/span&gt;
-  &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; x = result&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ sp+16 ]&lt;/span&gt;
-  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; __stack_pointer back to its original value&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ x ] for return&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Some notes about this code:&lt;/p&gt;
-&lt;ul class="simple"&gt;
-&lt;li&gt;There are two instance of the pair &lt;tt class="docutils literal"&gt;pp&lt;/tt&gt; in linear memory prior to the call
-to &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt;: the original one from the initialization statement
-(at offset 8), and a copy created for passing into &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; (at
-offset 0). Theoretically, as &lt;tt class="docutils literal"&gt;pp&lt;/tt&gt; is unused used after the call, the
-compiler could do better here and keep only a single copy.&lt;/li&gt;
-&lt;li&gt;The stack pointer is decremented by 16, and restored at the end of the
-function.&lt;/li&gt;
-&lt;li&gt;The first few instructions - where the stack pointer is adjusted - are
-usually called the &lt;em&gt;prologue&lt;/em&gt; of the function. In the same vein, the last
-few instructions where the stack pointer is reset back to where it was at
-the entry are called the &lt;em&gt;epilogue&lt;/em&gt;.&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;Before &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; is called, the linear stack looks like this:&lt;/p&gt;
-&lt;img alt="WASM C ABI linear stack view at entry to pair_calculate" class="align-center" src="https://eli.thegreenplace.net/images/2025/wasm-c-abi-passing-pair.png" /&gt;
-&lt;p&gt;Following the ABI, the code emitted for &lt;tt class="docutils literal"&gt;pair_calculate&lt;/tt&gt; takes &lt;tt class="docutils literal"&gt;Pair*&lt;/tt&gt;
-(by reference, instead of by value as the original C code):&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$pair_calculate&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;           &lt;span class="c1"&gt;;; [ addr ]&lt;/span&gt;
-
-  &lt;span class="c1"&gt;;; Recall that what&amp;#39;s stored at mem[addr] is a pair, with &amp;#39;x&amp;#39;, followed by &amp;#39;y&amp;#39;.&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;     &lt;span class="c1"&gt;;; [ pair.y ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;               &lt;span class="c1"&gt;;; [ 3*pair.y ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.load&lt;/span&gt;              &lt;span class="c1"&gt;;; [ 3*pair.y  pair.x ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;7&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;               &lt;span class="c1"&gt;;; [ 3*pair.y  7*pair.x ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;               &lt;span class="c1"&gt;;; [ 3*pair.y+7*pair.x ]&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Each function that needs linear stack space is responsible for adjusting the
-stack pointer and restoring it to its original place at the end. This naturally
-enables nested function calls; suppose we have some function &lt;tt class="docutils literal"&gt;a&lt;/tt&gt; calling
-function &lt;tt class="docutils literal"&gt;b&lt;/tt&gt; which, in turn, calls function &lt;tt class="docutils literal"&gt;c&lt;/tt&gt;, and let's assume all of
-these need to allocate space on the linear stack. This is how the linear
-stack looks after &lt;tt class="docutils literal"&gt;c&lt;/tt&gt;'s prologue:&lt;/p&gt;
-&lt;img alt="WASM C ABI linear stack showing nested frames" class="align-center" src="https://eli.thegreenplace.net/images/2025/wasm-c-abi-nested-frames.png" /&gt;
-&lt;p&gt;Since each function knows how much stack space it has allocated, it's able to
-properly restore &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; to the bottom of its caller's frame
-before returning.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="returning-values-through-linear-memory"&gt;
-&lt;h2&gt;Returning values through linear memory&lt;/h2&gt;
-&lt;p&gt;What about returning values of aggregate types? According to the ABI, these
-are also handled indirectly; a pointer parameter is &lt;em&gt;prepended&lt;/em&gt; to the
-parameter list of the function. The function writes its return value into
-this address.&lt;/p&gt;
-&lt;p&gt;The following function:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;make_pair&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Is compiled to:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="c1"&gt;;; Note that the WASM function has three parameters an no return values.&lt;/span&gt;
-&lt;span class="c1"&gt;;; The first parameter (local 0) is the address where it should store its&lt;/span&gt;
-&lt;span class="c1"&gt;;; return value.&lt;/span&gt;
-&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$make_pair&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.store&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;      &lt;span class="c1"&gt;;; ret_addr[4] = y&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.store&lt;/span&gt;               &lt;span class="c1"&gt;;; ret_addr[0] = x&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Here's a function that calls it:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;do_work&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;unsigned&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;Pair&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;make_pair&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pp&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;And the corresponding WASM:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="nv"&gt;$do_work&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;result&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="c1"&gt;;; local 2 to hold the address for make_pair&amp;#39;s return value.&lt;/span&gt;
-  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;local&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="nb"&gt;global.get&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; sp &amp;lt;- __stack_pointer - 16&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.sub&lt;/span&gt;
-  &lt;span class="nb"&gt;local.tee&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;                   &lt;span class="c1"&gt;;; save sp in local 2&lt;/span&gt;
-  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;8&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ sp+8 ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp+8  x ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; [ sp+8  x  y ]&lt;/span&gt;
-
-  &lt;span class="c1"&gt;;; make_pair is called with three parameters: the address for where to&lt;/span&gt;
-  &lt;span class="c1"&gt;;; store its return pair, x and y.&lt;/span&gt;
-  &lt;span class="nb"&gt;call&lt;/span&gt; &lt;span class="nv"&gt;$make_pair&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;
-  &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;                   &lt;span class="c1"&gt;;; local 1 = pp.x&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.load&lt;/span&gt; &lt;span class="k"&gt;offset&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;12&lt;/span&gt;
-  &lt;span class="nb"&gt;local.set&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;                   &lt;span class="c1"&gt;;; local 0 = pp.y&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;
-  &lt;span class="nb"&gt;global.set&lt;/span&gt; &lt;span class="nv"&gt;$__stack_pointer&lt;/span&gt;   &lt;span class="c1"&gt;;; __stack_pointer back to its original value&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ 3*pp.y ]&lt;/span&gt;
-  &lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.const&lt;/span&gt; &lt;span class="mi"&gt;7&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.mul&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ 3*pp.y  7*pp.x ]&lt;/span&gt;
-  &lt;span class="nb"&gt;i32.add&lt;/span&gt;                       &lt;span class="c1"&gt;;; [ 3*pp.y+7*pp.x ]&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Note that this function only uses 8 bytes of its stack frame, but allocates 16;
-this is because the ABI dictates 16-byte alignment for the stack pointer.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="advanced-topics"&gt;
-&lt;h2&gt;Advanced topics&lt;/h2&gt;
-&lt;p&gt;There are some advanced topics mentioned in the ABI that these notes don't cover
-(at least for now), but I'll mention them here for completeness:&lt;/p&gt;
-&lt;ul class="simple"&gt;
-&lt;li&gt;&amp;quot;Red zone&amp;quot; - leaf functions have access to 128 bytes of &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64"&gt;red zone&lt;/a&gt;
-below the
-stack pointer. I found this difficult to observe in practice &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;.
-Since we don't issue system calls directly
-in WASM, it's tricky to conjure a realistic leaf function that requires
-the linear stack (instead of just using WASM locals).&lt;/li&gt;
-&lt;li&gt;A separate frame pointer (global value) to be used for functions that require
-dynamic stack allocation (such as using &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Variable-length_array"&gt;C's VLAs&lt;/a&gt;).&lt;/li&gt;
-&lt;li&gt;A separate base pointer to be used for functions that require
-alignment &amp;gt; 16 bytes on the stack.&lt;/li&gt;
-&lt;/ul&gt;
-&lt;hr class="docutils" /&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;p class="first"&gt;This is similar &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/02/04/where-the-top-of-the-stack-is-on-x86/"&gt;to x86&lt;/a&gt;.
-For the WASM C ABI, a good reason is provided for the direction: WASM
-load and store instructions have an &lt;em&gt;unsigned&lt;/em&gt; constant called
-&lt;tt class="docutils literal"&gt;offset&lt;/tt&gt; that can be used to add a positive offset to the address
-parameter without extra instructions.&lt;/p&gt;
-&lt;p class="last"&gt;Since &lt;tt class="docutils literal"&gt;$__stack_pointer&lt;/tt&gt; points to the lowest address in the frame,
-these offsets can be used to efficiently access any value on the stack.&lt;/p&gt;
-&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;If you have a nice example showing it using Clang/LLVM, please drop me
-a note!&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:eli.thegreenplace.net,2025-11-24:/2025/notes-on-the-wasm-basic-c-abi/</guid>
-      <pubDate>Mon, 24 Nov 2025 19:47:00 -0800</pubDate>
-    </item>
+    <lastBuildDate>Thu, 05 Feb 2026 04:52:44 +0000</lastBuildDate>
     <item>
       <title>Revisiting "Let's Build a Compiler"</title>
       <link>https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/</link>
@@ -889,6 +566,325 @@ implementations and isn't counted here.&lt;/td&gt;&lt;/tr&gt;
 </description>
       <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-01-17:/2026/compiling-scheme-to-webassembly/</guid>
       <pubDate>Sat, 17 Jan 2026 14:37:00 -0800</pubDate>
+    </item>
+    <item>
+      <title>Rewriting pycparser with the help of an LLM</title>
+      <link>https://eli.thegreenplace.net/2026/rewriting-pycparser-with-the-help-of-an-llm/</link>
+      <description>&lt;p&gt;&lt;a class="reference external" href="https://github.com/eliben/pycparser"&gt;pycparser&lt;/a&gt; is my most widely used open
+source project (with ~20M daily downloads from PyPI &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;). It's a pure-Python
+parser for the C programming language, producing ASTs inspired by &lt;a class="reference external" href="https://docs.python.org/3/library/ast.html"&gt;Python's
+own&lt;/a&gt;. Until very recently, it's
+been using &lt;a class="reference external" href="https://www.dabeaz.com/ply/ply.html"&gt;PLY: Python Lex-Yacc&lt;/a&gt; for
+the core parsing.&lt;/p&gt;
+&lt;p&gt;In this post, I'll describe how I collaborated with an LLM coding agent (Codex)
+to help me rewrite pycparser to use a hand-written recursive-descent parser and
+remove the dependency on PLY. This has been an interesting experience and the
+post contains lots of information and is therefore quite long; if you're just
+interested in the final result, check out the latest code of pycparser - the
+&lt;tt class="docutils literal"&gt;main&lt;/tt&gt; branch already has the new implementation.&lt;/p&gt;
+&lt;img alt="meme picture saying &amp;quot;can't come to bed because my AI agent produced something slightly wrong&amp;quot;" class="align-center" src="https://eli.thegreenplace.net/images/2026/cantcometobed.png" /&gt;
+&lt;div class="section" id="the-issues-with-the-existing-parser-implementation"&gt;
+&lt;h2&gt;The issues with the existing parser implementation&lt;/h2&gt;
+&lt;p&gt;While pycparser has been working well overall, there were a number of nagging
+issues that persisted over years.&lt;/p&gt;
+&lt;div class="section" id="parsing-strategy-yacc-vs-hand-written-recursive-descent"&gt;
+&lt;h3&gt;Parsing strategy: YACC vs. hand-written recursive descent&lt;/h3&gt;
+&lt;p&gt;I began working on pycparser in 2008, and back then using a YACC-based approach
+for parsing a whole language like C seemed like a no-brainer to me. Isn't this
+what everyone does when writing a serious parser? Besides, the K&amp;amp;R2 book
+famously carries the entire grammar of the C99 language in an appendix - so it
+seemed like a simple matter of translating that to PLY-yacc syntax.&lt;/p&gt;
+&lt;p&gt;And indeed, it wasn't &lt;em&gt;too&lt;/em&gt; hard, though there definitely were some complications
+in building the ASTs for declarations (C's &lt;a class="reference external" href="https://eli.thegreenplace.net/2008/10/18/implementing-cdecl-with-pycparser"&gt;gnarliest part&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;Shortly after completing pycparser, I got more and more interested in compilation
+and started learning about the different kinds of parsers more seriously. Over
+time, I grew convinced that &lt;a class="reference external" href="https://eli.thegreenplace.net/tag/recursive-descent-parsing"&gt;recursive descent&lt;/a&gt; is the way to
+go - producing parsers that are easier to understand and maintain (and are often
+faster!).&lt;/p&gt;
+&lt;p&gt;It all ties in to the &lt;a class="reference external" href="https://eli.thegreenplace.net/2017/benefits-of-dependencies-in-software-projects-as-a-function-of-effort/"&gt;benefits of dependencies in software projects as a
+function of effort&lt;/a&gt;.
+Using parser generators is a heavy &lt;em&gt;conceptual&lt;/em&gt; dependency: it's really nice
+when you have to churn out many parsers for small languages. But when you have
+to maintain a single, very complex parser, as part of a large project - the
+benefits quickly dissipate and you're left with a substantial dependency that
+you constantly grapple with.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-other-issue-with-dependencies"&gt;
+&lt;h3&gt;The other issue with dependencies&lt;/h3&gt;
+&lt;p&gt;And then there are the usual problems with dependencies; dependencies get
+abandoned, and they may also develop security issues. Sometimes, both of these
+become true.&lt;/p&gt;
+&lt;p&gt;Many years ago, pycparser forked and started vendoring its own version of PLY.
+This was part of transitioning pycparser to a dual Python 2/3 code base when PLY
+was slower to adapt. I believe this was the right decision, since PLY &amp;quot;just
+worked&amp;quot; and I didn't have to deal with active (and very tedious in the Python
+ecosystem, where packaging tools are replaced faster than dirty socks)
+dependency management.&lt;/p&gt;
+&lt;p&gt;A couple of weeks ago &lt;a class="reference external" href="https://github.com/eliben/pycparser/issues/588"&gt;this issue&lt;/a&gt;
+was opened for pycparser. It turns out the some old PLY code triggers security
+checks used by some Linux distributions; while this code was fixed in a later
+commit of PLY, PLY itself was apparently abandoned and archived in late 2025.
+And guess what? That happened in the middle of a large rewrite of the package,
+so re-vendoring the pre-archiving commit seemed like a risky proposition.&lt;/p&gt;
+&lt;p&gt;On the issue it was suggested that &amp;quot;hopefully the dependent packages move on to
+a non-abandoned parser or implement their own&amp;quot;; I originally laughed this idea
+off, but then it got me thinking... which is what this post is all about.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="growing-complexity-of-parsing-a-messy-language"&gt;
+&lt;h3&gt;Growing complexity of parsing a messy language&lt;/h3&gt;
+&lt;p&gt;The original K&amp;amp;R2 grammar for C99 had - famously - a single shift-reduce
+conflict having to do with dangling &lt;tt class="docutils literal"&gt;else&lt;/tt&gt;s belonging to the most recent
+&lt;tt class="docutils literal"&gt;if&lt;/tt&gt; statement. And indeed, other than the famous &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Lexer_hack"&gt;lexer hack&lt;/a&gt;
+used to deal with &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/05/02/the-context-sensitivity-of-cs-grammar-revisited"&gt;C's type name / ID ambiguity&lt;/a&gt;,
+pycparser only had this single shift-reduce conflict.&lt;/p&gt;
+&lt;p&gt;But things got more complicated. Over the years, features were added that
+weren't strictly in the standard but were supported by all the industrial
+compilers. The more advanced C11 and C23 standards weren't beholden to the
+promises of conflict-free YACC parsing (since almost no industrial-strength
+compilers use YACC at this point), so all caution went out of the window.&lt;/p&gt;
+&lt;p&gt;The latest (PLY-based) release of pycparser has many reduce-reduce conflicts
+&lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;; these are a severe maintenance hazard because it means the parsing rules
+essentially have to be tie-broken by order of appearance in the code. This is
+very brittle; pycparser has only managed to maintain its stability and quality
+through its comprehensive test suite. Over time, it became harder and harder to
+extend, because YACC parsing rules have all kinds of spooky-action-at-a-distance
+effects. The straw that broke the camel's back was &lt;a class="reference external" href="https://github.com/eliben/pycparser/pull/590"&gt;this PR&lt;/a&gt; which again proposed to
+increase the number of reduce-reduce conflicts &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;This - again - prompted me to think &amp;quot;what if I just dump YACC and switch to
+a hand-written recursive descent parser&amp;quot;, and here we are.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-mental-roadblock"&gt;
+&lt;h2&gt;The mental roadblock&lt;/h2&gt;
+&lt;p&gt;None of the challenges described above are new; I've been pondering them for
+many years now, and yet biting the bullet and rewriting the parser didn't feel
+like something I'd like to get into. By my private estimates it'd take at least
+a week of deep heads-down work to port the gritty 2000 lines of YACC grammar
+rules to a recursive descent parser &lt;a class="footnote-reference" href="#footnote-4" id="footnote-reference-4"&gt;[4]&lt;/a&gt;. Moreover, it wouldn't be a
+particularly &lt;em&gt;fun&lt;/em&gt; project either - I didn't feel like I'd learn much new and
+my interests have shifted away from this project. In short, the &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Potential_well"&gt;Potential well&lt;/a&gt; was just too deep.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="why-would-this-even-work-tests"&gt;
+&lt;h2&gt;Why would this even work? Tests&lt;/h2&gt;
+&lt;p&gt;I've definitely noticed the improvement in capabilities of LLM coding
+agents in the past few months, and many reputable people online rave about using
+them for increasingly larger projects. That said, would an LLM agent really be
+able to accomplish such a complex project on its own? This isn't just a toy,
+it's thousands of lines of dense parsing code.&lt;/p&gt;
+&lt;p&gt;What gave me hope is the concept of &lt;a class="reference external" href="https://simonwillison.net/2025/Dec/31/the-year-in-llms/#the-year-of-conformance-suites"&gt;conformance suites mentioned by
+Simon Willison&lt;/a&gt;.
+Agents seem to do well when there's a very clear and rigid
+goal function - such as a large, high-coverage conformance test suite.&lt;/p&gt;
+&lt;p&gt;And pycparser has an &lt;a class="reference external" href="https://github.com/eliben/pycparser/blob/main/tests/test_c_parser.py"&gt;very extensive one&lt;/a&gt;.
+Over 2500 lines of test code parsing various C snippets to ASTs with expected
+results, grown over a decade and a half of real issues and bugs reported by
+users.&lt;/p&gt;
+&lt;p&gt;I figured the LLM can either succeed or fail and throw its hands up in despair,
+but it's quite unlikely to produce a &lt;em&gt;wrong&lt;/em&gt; port that would still pass all
+the tests. So I set it to run.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-initial-port"&gt;
+&lt;h2&gt;The initial port&lt;/h2&gt;
+&lt;p&gt;I fired up Codex in pycparser's repository, and wrote this prompt just to
+make sure it understands me and can run the tests:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;This repository implements a Python parser producing an AST. It has a very
+extensive test suite; can you first verify you successfully run all the tests?
+(with python3 -m unittest discover, from the root dir)
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Codex figured it out (I gave it the exact command, after all!); my next
+prompt was the real thing &lt;a class="footnote-reference" href="#footnote-5" id="footnote-reference-5"&gt;[5]&lt;/a&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;pycparser uses the PLY library for its lexer and parser, and its own AST
+package for the ASTs created by the parser. I want to explore replacing the
+Parser component (leaving the Lexer alone for now) with a hand written
+recursive descent parser that will pass all the same tests. Can you try that?
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Here Codex went to work and churned &lt;em&gt;for over an hour&lt;/em&gt;. Having never
+observed an agent work for nearly this long, I kind of assumed it went off
+the rails and will fail sooner or later. So I was rather surprised and skeptical
+when it eventually came back with:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;Replaced the PLY parse path with a handwritten recursive‑descent parser while
+keeping the existing lexer and AST helpers intact; CParser now points to the
+new RD implementation, with the old PLY version preserved as PLYCParser in
+pycparser/c_parser.py. The RD parser includes a token stream, declarator/type
+parsing, expression precedence handling, pragmas, and statement parsing to
+match the previous AST output and coordinate behavior.
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;It took me a while to poke around the code and run it until I was convinced - it
+had actually done it! It wrote a new recursive descent parser with only
+ancillary dependencies on PLY, and that parser passed the test suite. After a
+few more prompts, we've removed the ancillary dependencies and made the
+structure clearer. I hadn't looked too deeply into code quality at this point,
+but at least on the functional level - it succeeded. This was very impressive!&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="a-quick-note-on-reviews-and-branches"&gt;
+&lt;h2&gt;A quick note on reviews and branches&lt;/h2&gt;
+&lt;p&gt;A change like the one described above is impossible to code-review as one PR in
+any meaningful way; so I used a different strategy. Before embarking on this
+path, I created a new branch and once Codex finished the initial rewrite, I
+committed this change, knowing that I will review it in detail, piece-by-piece
+later on.&lt;/p&gt;
+&lt;p&gt;Even though coding agents have their own notion of history and can &amp;quot;revert&amp;quot;
+certain changes, I felt much safer relying on Git. In the worst case if all of
+this goes south, I can nuke the branch and it's as if nothing ever happened.
+I was determined to only merge this branch onto &lt;tt class="docutils literal"&gt;main&lt;/tt&gt; once I was fully
+satisfied with the code. In what follows, I had to &lt;tt class="docutils literal"&gt;git reset&lt;/tt&gt; several times
+when I didn't like the direction in which Codex was going. In hindsight, doing
+this work in a branch was absolutely the right choice.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-long-tail-of-goofs"&gt;
+&lt;h2&gt;The long tail of goofs&lt;/h2&gt;
+&lt;p&gt;Once I've sufficiently convinced myself that the new parser is actually working,
+I used Codex to similarly rewrite the lexer and get rid of the PLY dependency
+entirely, deleting it from the repository. Then, I started looking more deeply
+into code quality - reading the code created by Codex and trying to wrap my head
+around it.&lt;/p&gt;
+&lt;p&gt;And - oh my - this was quite the journey. Much has been written about the code
+produced by agents, and much of it seems to be true. Maybe it's a setting I'm
+missing (I'm not using my own custom &lt;tt class="docutils literal"&gt;AGENTS.md&lt;/tt&gt; yet, for instance), but
+Codex seems to be that eager programmer that wants to get from A to B whatever
+the cost. Readability, minimalism and code clarity are very much secondary
+goals.&lt;/p&gt;
+&lt;p&gt;Using &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;raise...except&lt;/span&gt;&lt;/tt&gt; for control flow? Yep. Abusing Python's weak typing
+(like having &lt;tt class="docutils literal"&gt;None&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;false&lt;/tt&gt; and other values all mean different things
+for a given variable)? For sure. Spreading the logic of a complex function
+all over the place instead of putting all the key parts in a single switch
+statement? You bet.&lt;/p&gt;
+&lt;p&gt;Moreover, the agent is hilariously &lt;em&gt;lazy&lt;/em&gt;. More than once I had to convince it
+to do something it initially said is impossible, and even insisted again in
+follow-up messages. The anthropomorphization here is mildly concerning, to be
+honest. I could never imagine I would be writing something like the following to
+a computer, and yet - here we are: &amp;quot;Remember how we moved X to Y before? You
+can do it again for Z, definitely. Just try&amp;quot;.&lt;/p&gt;
+&lt;p&gt;My process was to see how I can instruct Codex to fix things, and intervene
+myself (by rewriting code) as little as possible. I've &lt;em&gt;mostly&lt;/em&gt; succeeded in
+this, and did maybe 20% of the work myself.&lt;/p&gt;
+&lt;p&gt;My branch grew &lt;em&gt;dozens&lt;/em&gt; of commits, falling into roughly these categories:&lt;/p&gt;
+&lt;ol class="arabic simple"&gt;
+&lt;li&gt;The code in X is too complex; why can't we do Y instead?&lt;/li&gt;
+&lt;li&gt;The use of X is needlessly convoluted; change Y to Z, and T to V in all
+instances.&lt;/li&gt;
+&lt;li&gt;The code in X is unclear; please add a detailed comment - with examples - to
+explain what it does.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Interestingly, after doing (3), the agent was often more effective in giving
+the code a &amp;quot;fresh look&amp;quot; and succeeding in either (1) or (2).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-end-result"&gt;
+&lt;h2&gt;The end result&lt;/h2&gt;
+&lt;p&gt;Eventually, after many hours spent in this process, I was reasonably pleased
+with the code. It's far from perfect, of course, but taking the essential
+complexities into account, it's something I could see myself maintaining (with
+or without the help of an agent). I'm sure I'll find more ways to improve it
+in the future, but I have a reasonable degree of confidence that this will be
+doable.&lt;/p&gt;
+&lt;p&gt;It passes all the tests, so I've been able to release a new version (3.00)
+without major issues so far. The only issue I've discovered is that some of
+CFFI's tests are overly precise about the phrasing of errors reported by
+pycparser; this was &lt;a class="reference external" href="https://github.com/python-cffi/cffi/pull/224"&gt;an easy fix&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;The new parser is also faster, by about 30% based on my benchmarks! This is
+typical of recursive descent when compared with YACC-generated parsers, in my
+experience. After reviewing the initial rewrite of the lexer, I've spent a while
+instructing Codex on how to make it faster, and it worked reasonably well.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="followup-static-typing"&gt;
+&lt;h2&gt;Followup - static typing&lt;/h2&gt;
+&lt;p&gt;While working on this, it became quite obvious that static typing would make the
+process easier. LLM coding agents really benefit from closed loops with strict
+guardrails (e.g. a test suite to pass), and type-annotations act as such.
+For example, had pycparser already been type annotated, Codex would probably not
+have overloaded values to multiple types (like &lt;tt class="docutils literal"&gt;None&lt;/tt&gt; vs. &lt;tt class="docutils literal"&gt;False&lt;/tt&gt; vs.
+others).&lt;/p&gt;
+&lt;p&gt;In a followup, I asked Codex to type-annotate pycparser (running checks using
+&lt;tt class="docutils literal"&gt;ty&lt;/tt&gt;), and this was also a back-and-forth because the process exposed some
+issues that needed to be refactored. Time will tell, but hopefully it will make
+further changes in the project simpler for the agent.&lt;/p&gt;
+&lt;p&gt;Based on this experience, I'd bet that coding agents will be somewhat more
+effective in strongly typed languages like Go, TypeScript and especially Rust.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="conclusions"&gt;
+&lt;h2&gt;Conclusions&lt;/h2&gt;
+&lt;p&gt;Overall, this project has been a really good experience, and I'm impressed with
+what modern LLM coding agents can do! While there's no reason to expect that
+progress in this domain will stop, even if it does - these are already very
+useful tools that can significantly improve programmer productivity.&lt;/p&gt;
+&lt;p&gt;Could I have done this myself, without an agent's help? Sure. But it would have
+taken me &lt;em&gt;much&lt;/em&gt; longer, assuming that I could even muster the will and
+concentration to engage in this project. I estimate it would take me at least
+a week of full-time work (so 30-40 hours) spread over who knows how long to
+accomplish. With Codex, I put in an order of magnitude less work into this
+(around 4-5 hours, I'd estimate) and I'm happy with the result.&lt;/p&gt;
+&lt;p&gt;It was also &lt;em&gt;fun&lt;/em&gt;. At least in one sense, my professional life can be described
+as the pursuit of focus, deep work and &lt;em&gt;flow&lt;/em&gt;. It's not easy for me to get into
+this state, but when I do I'm highly productive and find it very enjoyable.
+Agents really help me here. When I know I need to write some code and it's
+hard to get started, asking an agent to write a prototype is a great catalyst
+for my motivation. Hence the meme at the beginning of the post.&lt;/p&gt;
+&lt;div class="section" id="does-code-quality-even-matter"&gt;
+&lt;h3&gt;Does code quality even matter?&lt;/h3&gt;
+&lt;p&gt;One can't avoid a nagging question - does the quality of the code produced
+by agents even matter? Clearly, the agents themselves can understand it (if not
+today's agent, then at least next year's). Why worry about future
+maintainability if the agent can maintain it? In other words, does it make sense
+to just go full vibe-coding?&lt;/p&gt;
+&lt;p&gt;This is a fair question, and one I don't have an answer to. Right now, for
+projects I maintain and &lt;em&gt;stand behind&lt;/em&gt;, it seems obvious to me that the code
+should be fully understandable and accepted by me, and the agent is just a tool
+helping me get to that state more efficiently. It's hard to say what the future
+holds here; it's going to interesting, for sure.&lt;/p&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;pycparser has a fair number of &lt;a class="reference external" href="https://deps.dev/pypi/pycparser/3.0.0/dependents"&gt;direct dependents&lt;/a&gt;,
+but the majority of downloads comes through &lt;a class="reference external" href="https://github.com/python-cffi/cffi"&gt;CFFI&lt;/a&gt;,
+which itself is a major building block for much of the Python ecosystem.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The table-building report says 177, but that's certainly an
+over-dramatization because it's common for a single conflict to
+manifest in several ways.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;It didn't help the PR's case that it was almost certainly vibe coded.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-4" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-4"&gt;[4]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;p class="first"&gt;There was also the lexer to consider, but this seemed like a much
+simpler job. My impression is that in the early days of computing,
+&lt;tt class="docutils literal"&gt;lex&lt;/tt&gt; gained prominence because of strong regexp support which wasn't
+very common yet. These days, with excellent regexp libraries
+existing for pretty much every language, the added value of &lt;tt class="docutils literal"&gt;lex&lt;/tt&gt; over
+a &lt;a class="reference external" href="https://eli.thegreenplace.net/2013/06/25/regex-based-lexical-analysis-in-python-and-javascript"&gt;custom regexp-based lexer&lt;/a&gt;
+isn't very high.&lt;/p&gt;
+&lt;p class="last"&gt;That said, it wouldn't make much sense to embark on a journey to rewrite
+&lt;em&gt;just&lt;/em&gt; the lexer; the dependency on PLY would still remain, and besides,
+PLY's lexer and parser are designed to work well together. So it wouldn't
+help me much without tackling the parser beast.&lt;/p&gt;
+&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-5" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-5"&gt;[5]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;I've decided to ask it to the port the parser first, leaving the lexer
+alone. This was to split the work into reasonable chunks. Besides, I
+figured that the parser is the hard job anyway - if it succeeds in that,
+the lexer should be easy. That assumption turned out to be correct.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-04:/2026/rewriting-pycparser-with-the-help-of-an-llm/</guid>
+      <pubDate>Wed, 04 Feb 2026 19:35:00 -0800</pubDate>
     </item>
   </channel>
 </rss>
