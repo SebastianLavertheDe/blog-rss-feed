@@ -5,7 +5,167 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Thu, 05 Feb 2026 23:29:10 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 06 Feb 2026 02:31:37 +0000</lastBuildDate>
+    <item>
+      <title>Writing an LLM from scratch, part 32c -- Interventions: removing dropout</title>
+      <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32c-interventions-removing-dropout</link>
+      <description>&lt;p&gt;This is the second in my series of attempts to improve the loss on my test dataset
+-- interventions, as I'm calling them --
+for a from-scratch GPT-2 small base model, trained on code based on
+&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".&lt;/p&gt;
+
+&lt;p&gt;Last time around I saw &lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;what gradient clipping can do&lt;/a&gt; --
+it improved loss over &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;the baseline&lt;/a&gt;
+by 0.014, bringing it down from 3.692 to 3.678.  Not much, but it's something!&lt;/p&gt;
+
+&lt;p&gt;This time, I wanted to see what happened if we trained without dropout.  Would removing it make
+the test loss worse, or better?&lt;/p&gt;
+&lt;h3 id="background"&gt;Background:&lt;/h3&gt;
+
+&lt;p&gt;In a blog post last summer about
+&lt;a href="https://magazine.sebastianraschka.com/i/170506328/21-removing-dropout"&gt;architectural advances in LLMs since GPT-2&lt;/a&gt;,
+Sebastian Raschka wrote:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Dropout (2012) is a traditional technique to prevent overfitting by randomly
+  "dropping out" (i.e., setting to zero) a fraction of the layer activations or
+  attention scores (Figure 3) during training. However, dropout is rarely used
+  in modern LLMs, and most models after GPT-2 have dropped it (no pun intended).&lt;/p&gt;
+  
+  &lt;p&gt;I assume that dropout was originally used in GPT-2 because it was inherited
+  from the original transformer architecture. Researchers likely noticed that
+  it does not really improve LLM performance (I observed the same in my
+  small-scale GPT-2 replication runs). This is likely because LLMs are typically
+  trained for only a single epoch over massive datasets, which is in contrast to
+  the multi-hundred-epoch training regimes for which dropout was first
+  introduced. So, since LLMs see each token only once during training, there is
+  little risk of overfitting.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;That makes quite a lot of sense.  My own understanding of dropout was that it was
+a bit broader than just preventing overfitting -- it seemed to me to be similar
+to the
+&lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;mandatory vacation policies that financial firms user to prevent over-dependence on individuals&lt;/a&gt;.
+My instinct was that having knowledge distributed across different weights in the
+model was good in and of itself, even beyond its benefit on multiple-epoch training.&lt;/p&gt;
+
+&lt;p&gt;But it is quite a high price to pay.
+With the training parameters we've been using we're literally discarding 10% of our calculations' results --
+attention weights, feed-forward neuron activations, and so on -- as we do the forward pass.
+It's easy to see why it would harm training.&lt;/p&gt;
+
+&lt;p&gt;Let's give it a go.&lt;/p&gt;
+
+&lt;h3 id="the-training-run"&gt;The training run&lt;/h3&gt;
+
+&lt;p&gt;The nice thing about this one is that, unlike the gradient clipping experiment,
+I didn't have to write any new code.  The dropout level was already controlled by
+a setting in the &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/main/runs/8xa100m40-remove-dropout/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt; file&lt;/a&gt;,
+so by setting that to zero for this run, I could just kick it off and let it
+do its thing while I worked on something else:&lt;/p&gt;
+
+&lt;p&gt;Here's what the training run chart looked like (please disregard the stuff about
+grad norms in the title and the axis -- I'll remove that for the next train):&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32c-interventions-removing-dropout/training-chart.png" alt="Training chart for zero-dropout run" title="Training chart for zero-dropout run" /&gt;&lt;/p&gt;
+
+&lt;p&gt;As you can see, we still have loss spikes, including one just after global step 20,000
+that lasts for several checkpoint periods of 617 steps.  I imagine gradient clipping
+might have helped with that, but I'm very deliberately testing each intervention in
+isolation.&lt;/p&gt;
+
+&lt;p&gt;At the end of the training run, we got this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 11,376.067 seconds&lt;/span&gt;
+&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
+&lt;span class="go"&gt;Throughput: 286,589 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;Final train loss: 3.621&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So, interestingly, it took 967 seconds -- about 16 minutes -- less time than the
+gradient clipping run, and about 15 minutes less than the baseline train.  So
+while gradient clipping added on a small amount of time (or maybe that was just noise),
+dropping dropout certainly seems to speed things up!  I guess there's quite a lot of
+work involved in generating and applying the random masks that drop things out as we're
+doing the forward pass.&lt;/p&gt;
+
+&lt;p&gt;Anyway, with the model trained, it was time to download it,
+&lt;a href="https://huggingface.co/gpjt/8xa100m40-remove-dropout"&gt;upload it to Hugging Face Hub&lt;/a&gt;, and run the evals.&lt;/p&gt;
+
+&lt;h3 id="evals"&gt;Evals&lt;/h3&gt;
+
+&lt;p&gt;Firstly, the smoke test, where it just needs to continue the sequence &lt;code&gt;Every effort moves you&lt;/code&gt;,
+it came up with something reasonably coherent:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/checkpoints/best/model.safetensors
+&lt;span class="go"&gt;Every effort moves you to make the world a better place.&lt;/span&gt;
+&lt;span class="go"&gt;As an international student of the arts in the UK,&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...but it was on the test of the loss on the training set that it was most impressive:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/checkpoints/best/model.safetensors
+&lt;span class="go"&gt;Fetching 4 files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00&amp;lt;00:00, 1086.75it/s]&lt;/span&gt;
+&lt;span class="go"&gt;100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3200/3200 [04:54&amp;lt;00:00, 10.87it/s]&lt;/span&gt;
+&lt;span class="go"&gt;Loss against our test dataset: 3.641&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That's a bigger improvement on the baseline train's 3.692 than gradient clipping:
+0.051, which is more than three times the improvement!&lt;/p&gt;
+
+&lt;p&gt;Let's start keeping a table of these:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test set loss&lt;/th&gt;
+  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;8xa100m40-baseline&lt;/td&gt;
+  &lt;td&gt;3.692&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;8xa100m40-gradient-clipping&lt;/td&gt;
+  &lt;td&gt;3.678&lt;/td&gt;
+  &lt;td&gt;0.014&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;8xa100m40-remove-dropout&lt;/td&gt;
+  &lt;td&gt;3.641&lt;/td&gt;
+  &lt;td&gt;0.051&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;Now, of course, we don't know how these different interventions combine together --
+it would be naive to think that if we did both gradient clipping and dropout
+removal, we'd get a total loss reduction of 0.014 + 0.051 -- but, especially with that
+long-lived loss spike in our training run -- it does feel like they might play well
+together.&lt;/p&gt;
+
+&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
+
+&lt;p&gt;So, that's dropout covered.  Which one next?  I think a nice easy one that I should
+be able to get done on a Friday will be adding bias to the attention weight calculations.
+Let's give that a go and see if it makes things worse or better!&lt;/p&gt;
+
+&lt;p&gt;Stay tuned...&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">/2026/02/llm-from-scratch-32c-interventions-removing-dropout</guid>
+      <pubDate>Thu, 05 Feb 2026 23:35:00 +0000</pubDate>
+    </item>
     <item>
       <title>Writing an LLM from scratch, part 32b -- Interventions: gradient clipping</title>
       <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32b-interventions-gradient-clipping</link>
@@ -405,9 +565,12 @@ spikes, unlike the three larger ones in the unclipped run.&lt;/p&gt;
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;...versus 3.743 at the end of the baseline train.&lt;/p&gt;
+&lt;p&gt;...versus 3.743 at the end of the baseline train.  Training took a very small amount
+longer compared to the baseline's 12,243.523 seconds -- 100 seconds, which may well
+be just noise.&lt;/p&gt;
 
-&lt;p&gt;So it was time to download it, and run the sequence-completion smoke test:&lt;/p&gt;
+&lt;p&gt;So it was time to download it, &lt;a href="https://huggingface.co/gpjt/8xa100m40-gradient-clipping"&gt;upload it to Hugging Face Hub&lt;/a&gt;,
+and run the sequence-completion smoke test:&lt;/p&gt;
 
 &lt;div class="codehilite"&gt;
 &lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-gradient-clipping/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-gradient-clipping/checkpoints/best/model.safetensors
@@ -427,19 +590,20 @@ Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;So, the loss had gone down -- but only from 3.743 to 3.678, a reduction of 0.065,
-or about 1.7%.&lt;/p&gt;
+&lt;p&gt;So, the loss had gone down -- but only from 3.692 to 3.678, a reduction of 0.014,
+or about 0.3%.&lt;/p&gt;
 
-&lt;p&gt;That's not actually all that bad!
+&lt;p&gt;That's not actually all that bad, though!
 After all, in my initial experiments on my local machine, training for a Chinchilla-optimal
 number of tokens from FineWeb-Edu (rather than the regular FineWeb I'm using now)
 got a loss of 4.167 on the same dataset (weirdly worse with the more-curated training set),
 and training for a further Chinchilla-optimal number of tokens only brought that down to
-4.135, for a difference of 0.032, or 0.7%.&lt;/p&gt;
+4.135, for a difference of 0.032, or 0.7%.  That was the total effect of &lt;em&gt;doubling&lt;/em&gt;
+the training time.&lt;/p&gt;
 
-&lt;p&gt;It's not strictly comparable due to the different training sets, but speaking &lt;em&gt;very&lt;/em&gt;
-loosely, we could say that gradient clipping for this train had more effect than doubling the training time for
-the other one.  That's pretty nifty.&lt;/p&gt;
+&lt;p&gt;It's not really comparable due to the different training sets, but speaking &lt;em&gt;very&lt;/em&gt;
+loosely, we could say that adding gradient clipping for this train had almost half as much effect as doubling the training time for
+the other one, with a negligible increase (about a minute or two) on training time.  That's pretty nifty.&lt;/p&gt;
 
 &lt;p&gt;But the question remained: why those long periods of high gradients, even with gradient
 clipping?  And why were there still loss spikes -- in particular the one just before
@@ -637,6 +801,14 @@ least be a bit easier...&lt;/p&gt;
 
 &lt;p&gt;Stay tuned!&lt;/p&gt;
 
+&lt;p&gt;&lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;[Update: an earlier version of this post used the wrong number for the baseline
+model's loss on the test set, which made it look like there was a 0.065 improvement
+in test loss from adding gradient clipping rather than 0.014.  The above has been updated
+to reflect the real numbers, and the conclusion, at least remains the same: gradient
+clipping is good but not amazing.]&lt;/p&gt;
+
 &lt;div class="footnotes"&gt;
 &lt;hr /&gt;
 &lt;ol&gt;
@@ -717,7 +889,7 @@ into -- easy, as it's just a change to a config flag, and makes the model more l
 original GPT-2.  I'll give that a go.&lt;/li&gt;
 &lt;li&gt;Dropout.  I've read that for single-epoch training, dropout doesn't help (which
 doesn't quite work with &lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;my mental model&lt;/a&gt; of what it's for, but
-does sound plausible).  Worth a look!&lt;/li&gt;
+does sound plausible).  Worth a look!  &lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;Here's the post&lt;/a&gt;.&lt;/li&gt;
 &lt;li&gt;The learning rate, and weight decay.  The values I've used for these are basically copypasta
 from the book.  I think I should learn to understand these and try to optimise them a bit.&lt;/li&gt;
 &lt;li&gt;The precision.  I'm using &lt;a href="https://docs.pytorch.org/docs/stable/amp.html"&gt;AMP&lt;/a&gt;, which means that
@@ -745,7 +917,7 @@ do.  Definitely worth investigating!  &lt;a href="/2026/02/llm-from-scratch-32b-
 &lt;/ul&gt;
 
 &lt;p&gt;I'm going to work through each of those apart from the first two and the batch size (and will retrospectively add links to
-the posts when I do), trying a train with just that intervention and nothing else, on
+the list above when I do), trying a train with just that intervention and nothing else, on
 a cloud machine.  Once that's done, I'll bake all of the things that helped into
 the training loop, and do another local train -- with
 &lt;a href="https://www.hopsworks.ai/dictionary/gradient-accumulation"&gt;gradient accumulation&lt;/a&gt; to make
@@ -8800,142 +8972,6 @@ base model.  Stay tuned!&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2025/11/llm-from-scratch-27-whats-left-and-whats-next</guid>
       <pubDate>Tue, 04 Nov 2025 00:40:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 26 -- evaluating the fine-tuned model</title>
-      <link>https://www.gilesthomas.com/2025/11/llm-from-scratch-26-evaluating-the-fine-tuned-model</link>
-      <description>&lt;p&gt;This post is on the second half of chapter 7 of
-&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
-In the &lt;a href="/2025/10/llm-from-scratch-25-instruction-fine-tuning"&gt;last post&lt;/a&gt; I covered
-the part of the chapter that covers instruction fine-tuning; this time round,
-we evaluate our model -- particularly interestingly, we try using another, smarter,
-model to judge how good its responses are.&lt;/p&gt;
-
-&lt;p&gt;Once again, Raschka's explanation in this section is very clear, and there's not
-that much that was conceptually new to me, so I don't have that many
-notes -- in fact, this post is probably the shortest one in my series so far!&lt;/p&gt;
-&lt;h3 id="generating-the-test-set-responses"&gt;Generating the test set responses&lt;/h3&gt;
-
-&lt;p&gt;Unusually, when at the start of section 7.7 we generate
-some sample responses for the instructions in our test set, I got exactly the same
-results as in the book.  For once, I guess, everything that uses randomness was
-happening in the same order as it did when Raschka ran it on his machine.&lt;/p&gt;
-
-&lt;p&gt;The next step was to generate a file with all of the responses to all of the
-test instructions, which took 18.9 seconds on my RTX 3090 (compared to
-a minute on an A100, per the book -- that's quite surprising!)&lt;/p&gt;
-
-&lt;p&gt;Once that was done, it was time to install Ollama so that I could use the Llama 3
-model to evaluate my own.&lt;/p&gt;
-
-&lt;h3 id="ollama"&gt;Ollama&lt;/h3&gt;
-
-&lt;p&gt;I've never used Ollama before -- when playing with other people's models, I've always
-used &lt;a href="https://huggingface.co/docs/transformers/en/index"&gt;Hugging Face's Transformers&lt;/a&gt;
-library.&lt;/p&gt;
-
-&lt;p&gt;It's a neat package, though.  It wraps &lt;code&gt;llama.cpp&lt;/code&gt;, which is a pure C/C++ inference
-framework (with CUDA support), and makes it easy to download and run models that
-have been packaged for it.  Being written in C, I would imagine that it's faster than
-PyTorch/Transformers -- though, being inference-only, it's less useful if you're planning to do things
-like training or fine-tuning the models.&lt;/p&gt;
-
-&lt;p&gt;My desktop is running a fairly customised install of Arch Linux, and I didn't want to
-use the default install procedure (which puts it into your system-wide &lt;code&gt;/bin&lt;/code&gt; and &lt;code&gt;/lib&lt;/code&gt;
-directories).  But it turns out that it's a very well-packaged app,
-and you don't need to do that.&lt;/p&gt;
-
-&lt;p&gt;Using the manual &lt;a href="https://docs.ollama.com/linux"&gt;install instructions for Linux&lt;/a&gt;,
-I just created a new directory &lt;code&gt;~/Dev/ollama&lt;/code&gt;, and then &lt;code&gt;cd&lt;/code&gt;ed there and downloaded it:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;wget&lt;span class="w"&gt; &lt;/span&gt;https://ollama.com/download/ollama-linux-amd64.tgz
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;It was about 1.75 GiB.  I then untarred it:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;tar&lt;span class="w"&gt; &lt;/span&gt;xf&lt;span class="w"&gt; &lt;/span&gt;ollama-linux-amd64.tgz
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...and then I could run commands with full paths, for example:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;~/Dev/ollama/bin/ollama&lt;span class="w"&gt; &lt;/span&gt;serve
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...to start up the server, or&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;~/Dev/ollama/bin/ollama&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;llama3
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...to start a session.&lt;/p&gt;
-
-&lt;p&gt;Neat!  It's always good to see pre-built binary packages that have no issues with their install location.&lt;/p&gt;
-
-&lt;h3 id="actually-running-the-evaluation"&gt;Actually running the evaluation&lt;/h3&gt;
-
-&lt;p&gt;The next step was to throw all of the generated test responses (and their associated
-targets) at Llama 3 and see what it thought about how close they were.&lt;/p&gt;
-
-&lt;p&gt;Again, this all worked without trouble.  I noted that the responses I was getting from Llama 3
-were not the same as the ones in the book -- Raschka notes that
-Ollama is non-deterministic, so there's no surprise there (though it does make me
-wonder why it accepts a &lt;code&gt;seed&lt;/code&gt; parameter in the API call).&lt;/p&gt;
-
-&lt;p&gt;When I got on to the final eval, where you run the test results through Llama 3
-and ask it to rate them compared to the target outputs, it took 11 seconds to run,
-and I got an average score of 48.95 / 100, which is close enough to the 50.32 that
-appears in the book. &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt; I'd run an eval on my model, using a smarter model to judge
-its responses!&lt;/p&gt;
-
-&lt;p&gt;Somewhat surprisingly, that number was stable over multiple runs.  So perhaps there
-is some level of determinism in Ollama now that wasn't present when the book was written,
-and the seed (eg. &lt;code&gt;123&lt;/code&gt;) is of value.  Or perhaps Raschka's comment about it being non-deterministic
-was more of a "between machines" thing rather than for multiple runs on the same machine
--- though then I'm not sure why he suggests re-running it for multiple results.&lt;/p&gt;
-
-&lt;p&gt;Anyway -- that was it!  Eval done.  And, to my amazement, that was the end of
-the chapter -- and almost the end of the  book.  We've built an LLM from scratch,
-fine-tuned it, and evaluated it by using a smarter model to judge how well it was
-following instructions.&lt;/p&gt;
-
-&lt;h3 id="this-is-the-end"&gt;This is the end...&lt;/h3&gt;
-
-&lt;p&gt;...or at least the end of the beginning.&lt;/p&gt;
-
-&lt;p&gt;Having run the evaluation, I've reached the end of the main part of
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
-But I don't think I've reached the end of this project, there's still more to do
-(not least working through the appendices).&lt;/p&gt;
-
-&lt;p&gt;So, coming up next: a post summarising what I've got through so far in this series,
-and what the next steps are to wrap it up.&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2025/11/llm-from-scratch-27-whats-left-and-whats-next"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;I also got 110 out of 110 scores -- that is, every response from Llama 3
-was parseable as an integer.  That actually kind of surprised me!  Models like
-to be chatty and helpful.  But looking into it,
-&lt;a href="https://x.com/goodside/status/1657396491676164096"&gt;the famous X post by Riley Goodside&lt;/a&gt;
-where he had to "threaten" Bard to stop it from saying "Sure, no problem!  Here's your
-JSON" was almost two years ago.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2025/11/llm-from-scratch-26-evaluating-the-fine-tuned-model</guid>
-      <pubDate>Mon, 03 Nov 2025 19:40:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
