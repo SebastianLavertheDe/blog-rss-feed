@@ -5,7 +5,287 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 06 Feb 2026 23:32:18 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 07 Feb 2026 02:27:14 +0000</lastBuildDate>
+    <item>
+      <title>Writing an LLM from scratch, part 32d -- Interventions: adding attention bias</title>
+      <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias</link>
+      <description>&lt;p&gt;I'm still seeing what I can do to improve the test loss for a from-scratch GPT-2 small base model, trained on code based on
+&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
+This is the third intervention I'm trying: adding bias to the attention weight matrices.&lt;/p&gt;
+
+&lt;p&gt;In the code from the book, we have this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;MultiHeadAttention&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Module&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;d_in&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;d_out&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;context_length&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;dropout&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;num_heads&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;qkv_bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+    &lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;W_query&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;d_in&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;d_out&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;qkv_bias&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;W_key&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;d_in&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;d_out&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;qkv_bias&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;W_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;d_in&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;d_out&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;qkv_bias&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+        &lt;span class="o"&gt;...&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;forward&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+
+        &lt;span class="n"&gt;keys&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;W_key&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;queries&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;W_query&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;values&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;W_value&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So: we initialise the weights &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;q&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; as linear layers rather than
+simple matrices of weights, and have a parameter &lt;code&gt;qkv_bias&lt;/code&gt; to say whether or not we should
+add bias to those.  In all of our trains so far we've set that to &lt;code&gt;False&lt;/code&gt;.&lt;/p&gt;
+
+&lt;p&gt;Why do we have this parameter, and where did it come from?&lt;/p&gt;
+&lt;h3 id="the-background"&gt;The background&lt;/h3&gt;
+
+&lt;p&gt;In Raschka's book, the use of the &lt;code&gt;nn.Linear&lt;/code&gt; for these weights is introduced in section 3.4.2
+with the wording:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;We can improve the &lt;code&gt;SelfAttention_v1&lt;/code&gt; implementation further by utilizing PyTorch's
+  &lt;code&gt;nn.Linear&lt;/code&gt; layers, which effectively perform matrix multiplication when the
+  bias units are disabled.  Additionally, a significant advantage of using &lt;code&gt;nn.Linear&lt;/code&gt;
+  instead of manually implementing &lt;code&gt;nn.Parameter(torch.rand(...))&lt;/code&gt; is that &lt;code&gt;nn.Linear&lt;/code&gt;
+  has an optimized weight initialization scheme, contributing to more stable and
+  effective model training.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;So, it's presented essentially as a way of getting better weights for our untrained
+model, which makes good sense in and of itself -- but, if that's the only reason,
+why don't we just hard-wire it to have &lt;code&gt;bias=False&lt;/code&gt;?  That would be the sensible thing
+to do if the initialisation were the only reason, but clearly there's more to it
+than that.&lt;/p&gt;
+
+&lt;p&gt;Section 4.1 has a bit more information:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;&lt;code&gt;qkv_bias&lt;/code&gt; determines whether to include a bias vector in the &lt;code&gt;Linear&lt;/code&gt; layers
+  of the multi-head attention ... We will initially disable this, following the norms
+  of modern LLMs, but we will revisit it in chapter 6 when we load pretrained
+  GPT-2 weights from OpenAI into our model.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;That looks like a typo, as the real explanation is in chapter 5, section 5
+(page 164 in my copy), where we do indeed load the OpenAI weights:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;OpenAI used bias vectors in the multi-head attention module's linear layers to
+  implement the query, key and value matrix computations.  Bias vectors are not
+  commonly used in LLMs anymore as they don't improve the modeling performance
+  and are thus unnecessary.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;So, that all makes sense so far.  QKV bias was part of the original GPT-2 models,
+perhaps just because it was standard at the time, inherited from something else,
+or perhaps for some other reason -- I can't find any reference to it in
+&lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the actual paper&lt;/a&gt;.
+But people have found it doesn't help, so no-one uses it these days.&lt;/p&gt;
+
+&lt;p&gt;But... is there some way in which an LLM of this
+specific size, or in some other way similar to the GPT-2 small model that we're
+training, might in some way benefit from having bias?&lt;/p&gt;
+
+&lt;p&gt;That's what this experiment is for :-)&lt;/p&gt;
+
+&lt;h3 id="parameters"&gt;Parameters&lt;/h3&gt;
+
+&lt;p&gt;One thing that occurred to me while setting this up is that we have been training
+on a Chinchilla-optimal number of tokens, 20x the number of parameters.  Without
+QKV bias, we have 163,009,536 parameters, so we've been training on 3,260,190,720 tokens,
+rounded up to the nearest batch size, which is 3,260,252,160 in our current setup for
+these experiments (per-GPU micro-batches of 12, with 8 GPUs, so a total batch size of 96).&lt;/p&gt;
+
+&lt;p&gt;These extra bias terms will be parameters, though!  We're essentially making our
+model larger by adding them, which changes the Chinchilla calculation.  How much?&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;params&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;50257&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="s2"&gt;&amp;quot;context_length&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;1024&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;768&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="s2"&gt;&amp;quot;n_heads&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;12&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="s2"&gt;&amp;quot;n_layers&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;12&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="s2"&gt;&amp;quot;drop_rate&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="mf"&gt;0.1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="s2"&gt;&amp;quot;qkv_bias&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="kc"&gt;True&lt;/span&gt;
+   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt;
+
+&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;gpt&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;GPTModel&lt;/span&gt;
+
+&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;GPTModel&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;params&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="nb"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;numel&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;p&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="mi"&gt;163037184&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;OK, that's essentially nothing -- 27,648 extra total paramaters on top of 163 million.
+I make it less than two hundredths of a percentage
+point larger!  The correct number of tokens goes up to 3,260,743,680, so if we wanted
+to be very pedantic, we're under-training.  But I feel like training on a larger dataset
+is worse in terms of comparability between the baseline and our "intervened-on" model
+with QKV bias.&lt;/p&gt;
+
+&lt;p&gt;So: we'll train a model with QKV bias on 3,260,252,160 tokens, accepting that it's a tiny bit less than
+Chinchilla-optimal.  Let's see how it goes!&lt;/p&gt;
+
+&lt;h3 id="the-run"&gt;The run&lt;/h3&gt;
+
+&lt;p&gt;Here's the &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/main/runs/8xa100m40-qkv-bias/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt; config file&lt;/a&gt; for this train.
+Running it gives this training chart:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32d-interventions-adding-attention-bias/training-run-chart.png" alt="Training run with QKV bias" title="Training run with QKV bias" /&gt;&lt;/p&gt;
+
+&lt;p&gt;Pretty standard, though the loss spikes look less prominent than they have been in
+the other trains.  Might QKV bias actually help with model stability in some way...?&lt;/p&gt;
+
+&lt;p&gt;The train finished with these stats:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 12,329.557 seconds&lt;/span&gt;
+&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
+&lt;span class="go"&gt;Throughput: 264,426 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;Final train loss: 3.719&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Timing-wise, pretty much indistinguishable from the baseline train's 12,243.523 seconds.  The final train
+loss looks a tad better, but we can't rely on that -- the test set loss is the important
+one.&lt;/p&gt;
+
+&lt;p&gt;So it was time to download it, &lt;a href="https://huggingface.co/gpjt/8xa100m40-qkv-bias"&gt;upload it to Hugging Face Hub&lt;/a&gt;, and then on
+to the evals.&lt;/p&gt;
+
+&lt;h3 id="evals"&gt;Evals&lt;/h3&gt;
+
+&lt;p&gt;Firstly, our normal "how should you continue &lt;code&gt;Every effort moves you&lt;/code&gt;":&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-qkv-bias/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-qkv-bias/checkpoints/best/model.safetensors
+&lt;span class="go"&gt;Every effort moves you toward success. The right questions are asked to become your business coach and help shape the future of their&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Not bad at all, borderline coherent!  Next, the loss on the test set:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-qkv-bias/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-qkv-bias/checkpoints/best/model.safetensors
+&lt;span class="go"&gt;Fetching 4 files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00&amp;lt;00:00, 1701.54it/s]&lt;/span&gt;
+&lt;span class="go"&gt;100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3200/3200 [04:52&amp;lt;00:00, 10.95it/s]&lt;/span&gt;
+&lt;span class="go"&gt;Loss against our test dataset: 3.669&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Well, crap!  Now that's a surprise.  Let's look at that in the context of the other interventions to see
+how surprising that is, given Raschka's comments (which were undoubtedly backed
+up by serious research):&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test set loss&lt;/th&gt;
+  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;8xa100m40-baseline&lt;/td&gt;
+  &lt;td&gt;3.692&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;8xa100m40-gradient-clipping&lt;/td&gt;
+  &lt;td&gt;3.678&lt;/td&gt;
+  &lt;td&gt;0.014&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;8xa100m40-qkv-bias&lt;/td&gt;
+  &lt;td&gt;3.669&lt;/td&gt;
+  &lt;td&gt;0.023&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;8xa100m40-remove-dropout&lt;/td&gt;
+  &lt;td&gt;3.641&lt;/td&gt;
+  &lt;td&gt;0.051&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;So, adding QKV bias actually improved our test set loss by more than gradient clipping
+did!&lt;/p&gt;
+
+&lt;p&gt;The loss spikes in the training chart look smaller than in the other trains &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;, so, speculating
+wildly, perhaps with a model of this size, the bias stabilises things somehow?  Or perhaps
+what we're seeing is the model become that tiny bit smarter because it has some extra parameters
+-- albeit less than 0.02 &lt;em&gt;percent&lt;/em&gt; more?&lt;/p&gt;
+
+&lt;p&gt;I'm not going to spend time investigating things now, but this is a really interesting result.
+One extra thing that does occur to me is that the direction research has taken since GPT-2 has
+definitely been in the direction of larger models.  The attention weight matrices are
+sized &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;, so excluding bias they have &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt; weights
+each.  Bias adds on another &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;.  So, as a model scales up, the attention-related
+non-bias weights will scale quadratically -- doubling &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; will square their number --
+while the bias weights will scale linearly.&lt;/p&gt;
+
+&lt;p&gt;So perhaps it's just that the effect -- whatever causes it -- gets rapidly swamped
+as you scale out of toy-model territory.  That, at least, seems pretty plausible.&lt;/p&gt;
+
+&lt;p&gt;One final note to self, though: these improvements are small enough that I do find
+myself wondering whether or not it might be some kind of noise, despite the setting of
+the random seeds I'm doing:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;seed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;42&lt;/span&gt;
+    &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;seed&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;seed&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;manual_seed&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;seed&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;cuda&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;manual_seed_all&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;seed&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I think that at the end of this, before I do a final train, it would be worth doing
+another baseline train and measuring the test set loss again, and doing another comparison.
+If it comes out exactly the same -- and I can bump up the number of significant figures
+in the output, it's just a formatting parameter -- then I don't need to worry.  But if
+they vary to some degree, perhaps I'll need to update my mental model of what level of
+finding is significant, and what isn't.&lt;/p&gt;
+
+&lt;h3 id="summing-up"&gt;Summing up&lt;/h3&gt;
+
+&lt;p&gt;I think it goes without saying that QKV bias definitely goes onto the list of interventions
+we want to add when training our best-possible GPT-2 small-scale model, assuming that the
+random seed test goes well.  That surprises
+me a bit, I was expecting it to have negligible impact!  That, of course, is why it's worth
+doing these tests.&lt;/p&gt;
+
+&lt;p&gt;Next up, I think, is trying to understand how we can tweak the learning rate, and its associated
+parameters like weight decay.  This will need a bit of a deep dive, so you can expect the next
+post late next week, or perhaps even later.  I'm sure you can't wait ;-)&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;Note to self: is there some way I could quantitatively measure those?&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias</guid>
+      <pubDate>Fri, 06 Feb 2026 23:55:00 +0000</pubDate>
+    </item>
     <item>
       <title>Writing an LLM from scratch, part 32c -- Interventions: removing dropout</title>
       <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32c-interventions-removing-dropout</link>
@@ -162,6 +442,8 @@ be able to get done on a Friday will be adding bias to the attention weight calc
 Let's give that a go and see if it makes things worse or better!&lt;/p&gt;
 
 &lt;p&gt;Stay tuned...&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2026/02/llm-from-scratch-32c-interventions-removing-dropout</guid>
       <pubDate>Thu, 05 Feb 2026 23:35:00 +0000</pubDate>
@@ -886,7 +1168,7 @@ train on a single pass through an amount of non-repeating data chosen to take 48
 on my local machine.&lt;/li&gt;
 &lt;li&gt;The bias on the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;q&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; matrices.  This one definitely sounds worth looking
 into -- easy, as it's just a change to a config flag, and makes the model more like the
-original GPT-2.  I'll give that a go.&lt;/li&gt;
+original GPT-2.  I'll give that a go.  &lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;Here's the post&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Dropout.  I've read that for single-epoch training, dropout doesn't help (which
 doesn't quite work with &lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;my mental model&lt;/a&gt; of what it's for, but
 does sound plausible).  Worth a look!  &lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;Here's the post&lt;/a&gt;.&lt;/li&gt;
@@ -8725,253 +9007,6 @@ to make the models say things that they should not.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2025/11/smart-instruction-following-and-prompt-injection</guid>
       <pubDate>Wed, 12 Nov 2025 19:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 27 -- what's left, and what's next?</title>
-      <link>https://www.gilesthomas.com/2025/11/llm-from-scratch-27-whats-left-and-whats-next</link>
-      <description>&lt;p&gt;On 22 December 2024, &lt;a href="/2024/12/llm-from-scratch-1"&gt;I wrote&lt;/a&gt;:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Over the Christmas break (and probably beyond) I'm planning to work through
-  &lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-  "&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
-  I'm expecting to get through a chapter or less a day, in order to give things
-  time to percolate properly.  Each day, or perhaps each chapter, I'll post here
-  about anything I find particularly interesting.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;More than ten months and 26 blog posts later, I've reached the end of the main
-body of the book -- there's just the appendices to go.
-Even allowing for the hedging, my optimism was adorable.&lt;/p&gt;
-
-&lt;p&gt;I don't want to put anyone else off the book by saying that, though!  I expect most people
-will get through it much faster.  I made a deliberate decision at the start to write up
-everything I learned as I worked through it, and that, I think, has helped me solidify
-things in my mind much better than I would have done if I'd only been reading it and doing
-the exercises.  But on the other hand, writing things up does take a &lt;em&gt;lot&lt;/em&gt; of time,
-much more than the actual learning does.  It's worth it for me, but probably isn't
-for everyone.&lt;/p&gt;
-
-&lt;p&gt;So, what next?  I've finished the main body of the book, and built up a decent backlog
-as I did so.  What do I need to do before I can treat my "LLM from scratch" journey as done?
-And what other ideas have come up while I worked through it that might be good bases for
-future, similar series?&lt;/p&gt;
-&lt;p&gt;There are a few sources of ideas for this -- from the book itself and its supplementary
-material, from notes I've made as I went along, and from other things that I've kept on
-a mental checklist.&lt;/p&gt;
-
-&lt;h3 id="the-appendices-and-supplementary-material"&gt;The appendices and supplementary material&lt;/h3&gt;
-
-&lt;p&gt;There are five appendices:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;A: An introduction to PyTorch&lt;/li&gt;
-&lt;li&gt;B: References and further reading&lt;/li&gt;
-&lt;li&gt;C: Exercise solutions&lt;/li&gt;
-&lt;li&gt;D: Adding bells and whistles to the training loop&lt;/li&gt;
-&lt;li&gt;E: Parameter-efficient fine-tuning with LoRA&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;Raschka also gives a link at the end of chapter 7 to a notebook showing how to do
-further fine tuning using &lt;a href="https://github.com/rasbt/LLMs-from-scratch/tree/main/ch07/04_preference-tuning-with-dpo"&gt;Direct Preference Optimization&lt;/a&gt;,
-which also looks fascinating, and he's working on a new project,
-"&lt;a href="https://github.com/rasbt/reasoning-from-scratch"&gt;Build a reasoning model (from scratch)&lt;/a&gt;".&lt;/p&gt;
-
-&lt;h3 id="things-ive-deferred-myself"&gt;Things I've deferred myself&lt;/h3&gt;
-
-&lt;p&gt;While working through the book, I've deliberately deferred various
-things.  I'd kind of lost track of all of them, so I gave ChatGPT the source
-markdown for all of the posts in this series, and asked it to find where I'd done that.
-It did an amazing job!  There were three categories: long context and attention efficiency,
-maths, and optimisers.&lt;/p&gt;
-
-&lt;h4 id="long-context-and-attention-efficiency"&gt;Long context and attention efficiency.&lt;/h4&gt;
-
-&lt;p&gt;The model we've built in the book has
-a context length of 1,024 tokens, and is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;O&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt; in both space and time
-with respect to the number of tokens you feed it.  There are lots of things that
-people do to work around that.  Things I need to learn:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;&lt;strong&gt;The KV cache&lt;/strong&gt;.  This is basic stuff and I feel I sorta-kinda understand it, but
-I haven't written about it so I can't be sure.  It's a pretty obvious enhancement
-to avoid repeating work when generating autoregressively -- that is, the normal
-setup where in order to generate &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; tokens, we give the model its input,
-sample our first token from its predictions, then feed the whole thing -- the input
-and that first token -- back in for the second token, and so on.  Obviously,
-because attention is causal, we're doing exactly the same work every time for
-all of the tokens in each round apart from the last one, so it makes sense
-to cache things.  The result is that generating the first token is still &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;O&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;, but
-subsequent ones will be something more like &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;O&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt; each.  That's why real-world modern models tend to take
-a while pondering before they generate the first token but then speed up -- they
-need to fill their cache.&lt;/li&gt;
-&lt;li&gt;&lt;strong&gt;FlashAttention&lt;/strong&gt; and related things: there are lots of ways people have found to reduce the cost of
-attention generally, but this seems to be the most popular one, or at least the best
-to get started with.&lt;/li&gt;
-&lt;li&gt;&lt;strong&gt;Better positional embeddings&lt;/strong&gt;: the context length of our GPT-2-style LLM is fixed
-in part because you need position embeddings for every possible input position.
-That means that we can never extend it.  More modern LLMs use better ways to
-represent positions -- Rotary Position Embeddings (RoPE) look like they're
-very popular.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;h4 id="maths"&gt;Maths&lt;/h4&gt;
-
-&lt;p&gt;I really want to understand softmax at a better level than "it's a magic thing
-that turns logits into probabilities".  I'd also like to learn more about higher-order
-tensor operations -- the ones that we use in the book are essentially treating
-the extra dimensions as the batch, but I believe that there's more to it than that.&lt;/p&gt;
-
-&lt;h4 id="optimisers"&gt;Optimisers&lt;/h4&gt;
-
-&lt;p&gt;I really want to understand in reasonable depth what optimisers do.  I know that
-they make gradient updates work better than they do with simple gradient descent.
-But how?&lt;/p&gt;
-
-&lt;hr /&gt;
-
-&lt;p&gt;That was the set of things I noted at the time I wrote the posts so far, but there are a few more that
-come to mind as I write this.&lt;/p&gt;
-
-&lt;h3 id="automatic-differentiation-and-the-backward-pass"&gt;Automatic differentiation and the backward pass&lt;/h3&gt;
-
-&lt;p&gt;In some comments that he made on posts in this series, &lt;code&gt;Simon&lt;/code&gt; said that it seems like this book
-isn't really "from scratch", given that we rely on PyTorch's magic to handle the
-backward pass.&lt;/p&gt;
-
-&lt;p&gt;He's 100% right!  I think I understand why it is that way, though.
-There would be two different ways that I can see for the book to do it:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Manually code a backward pass to go with the forward pass on each of our modules.
-Simon did this, and was kind enough to share his code with me -- it looks like one of those
-things (like attention) that is pretty hard to get your head around initially, but
-once it clicks it's super-clear.  Definitely kudos to him for getting it all to work!
-The problem with this is that I don't think any
-ML practitioners do this nowadays, because automatic differentiation
-is there in every popular framework.  So it might be a good learning experience,
-but also might nudge people into an unprofitable direction.&lt;/li&gt;
-&lt;li&gt;Create our own automatic differentiation system.  Andrej Karpathy pops up again
-when looking into this; he created &lt;a href="https://github.com/karpathy/micrograd"&gt;micrograd&lt;/a&gt;,
-which handles back-propagation for scalar functions.  That's really clever -- but
-it would be hard, and a bit of a side quest from the point of the book.  Also,
-the most interesting stuff (at least from what little I know) for automatic
-differentiation is how you do it with non-scalars -- the matrices and higher-order
-tensors that our LLM uses.  From what Simon says, this is where you need to use
-the mysterious Jacobian matrices I've heard about in the context of back-propagation.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I think I'd definitely like to revisit that at some point.&lt;/p&gt;
-
-&lt;h3 id="tokenisers"&gt;Tokenisers&lt;/h3&gt;
-
-&lt;p&gt;Another one from Simon; while the book does explain how tokenisers work, even down
-to a high-level overview of byte-pair encoding, we don't write our own.  Again, I can
-see why this is -- we load in the GPT-2 weights, so we need to use that model's tokeniser.
-And there's no point in writing our own if we're just going to throw it away.&lt;/p&gt;
-
-&lt;p&gt;But perhaps a bit of time playing with one would be useful?&lt;/p&gt;
-
-&lt;h4 id="trying-to-train-the-llm-as-a-base-model"&gt;Trying to train the LLM as a base model&lt;/h4&gt;
-
-&lt;p&gt;The book, quite reasonably, shows you how to train your LLM, does a basic train
-on a small dataset, and then we switch to downloading the "pre-cooked" weights
-from OpenAI.  That makes sense given that not every reader will have access to enough
-hardware to really train from scratch.&lt;/p&gt;
-
-&lt;p&gt;But given that I was getting a pretty good training speed on my own hardware, perhaps
-I could train a model really from scratch, perhaps using one of the smaller
-&lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb"&gt;FineWeb&lt;/a&gt; datasets?  Even if
-I can't do it locally, perhaps it might be doable on a rented cloud machine, like
-the Lambda Labs ones I used when &lt;a href="/fine-tuning"&gt;fine-tuning Llama 3&lt;/a&gt;?&lt;/p&gt;
-
-&lt;p&gt;After all, Andrej Karpathy is training &lt;a href="https://github.com/karpathy/nanochat/discussions/1"&gt;a full model that you can chat with for
-$100&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h3 id="building-an-llm-from-scratch-on-my-own"&gt;Building an LLM from scratch on my own.&lt;/h3&gt;
-
-&lt;p&gt;I don't think I ever mentioned this on the blog, but one important plan for me is to
-try to build an LLM from scratch, only using my own blog posts and what I remember --
-no looking at the book.  If I can do that, then I can be reasonably sure that I really
-have learned it all.&lt;/p&gt;
-
-&lt;p&gt;I'm also thinking that I'll do that using a different library -- that is, not PyTorch.
-That would stop me from regurgitating code that I've learned.  If you're reading this
-within a day or so of the post's publication, I'm
-&lt;a href="https://x.com/gpjt/status/1985434030880293004"&gt;running a poll on X/Twitter about which framework to use&lt;/a&gt;.
-If you have an opinion, please do stop by and vote :-)&lt;/p&gt;
-
-&lt;h3 id="mixture-of-experts"&gt;Mixture-of-experts&lt;/h3&gt;
-
-&lt;p&gt;It feels like almost every new model these days is an MoE.  I have read a lot around the
-subject and would love to build on it.  Essentially, instead of having just one feed-forward network
-after your attention heads, you have several.  In front of them you have a router -- a trainable
-network of some kind -- that tells you which of these "expert" FFNs the token should be
-forwarded to.  You then send it to the top (or top &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;) experts, while leaving the others
-inactive.  The result is that you have more space (in terms of parameters) for the LLM
-to know about things, but not all of those parameters are active during inference -- so
-your model is smarter but still fast.&lt;/p&gt;
-
-&lt;p&gt;There's a bunch of interesting stuff there, from how you build it in the first place,
-to how you handle the fact that you're processing lots of tokens at once -- multiple
-tokens in each sequence and multiple sequences in a batch.&lt;/p&gt;
-
-&lt;p&gt;It would be a pretty cool follow-on to the "my own LLM" series, thinking about it.&lt;/p&gt;
-
-&lt;h3 id="so-what-next"&gt;So, what next?&lt;/h3&gt;
-
-&lt;p&gt;I definitely don't think I need to do all of those things in order to wrap up
-this series.  Here's the subset I'm planning on doing:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Training the full GPT-2 base model myself.  I'm 100% going to try this.&lt;/li&gt;
-&lt;li&gt;From the appendices -- anything that surprises me from the one on PyTorch, and
-perhaps from the "bells and whistles" in the training loop.  The others I either
-won't do, or will pick up later.&lt;/li&gt;
-&lt;li&gt;Building my own LLM from scratch in a different framework, without using the book.
-That is, I think, essential, and perhaps would be the crowning post of this series.
-It would be a nice way to end it, wouldn't it?&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;For the other things, I think there are some potential future series to write.&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Improving context length -- RoPE and other tricks --
-sounds like an excellent series to start on when I'm done with this.  AIs tell
-me that other interesting things to look into would be ALiBi, NTK/YaRN scaling, and positional interpolation.&lt;/li&gt;
-&lt;li&gt;Improving performance: the KV cache, FlashAttention, and other performance enhancements
-likewise feel like they could make a good series.&lt;/li&gt;
-&lt;li&gt;I also want to do a separate series on LoRA.  In that, I'll draw on appendix E from
-this book, but also on other tutorials.&lt;/li&gt;
-&lt;li&gt;Likewise DPO, along with other post-training that can be done to make models more
-useful as chatbots, like Reinforcement Learning.   I'd really like to spend some
-time understanding that area.  (And Raschka's upcoming reasoning model book might
-fit into that category too.)&lt;/li&gt;
-&lt;li&gt;Optimisers: Adam, AdamW, maybe Muon (though the latter scares me a bit).&lt;/li&gt;
-&lt;li&gt;The maths -- softmax and higher-order tensor calculations -- also seems to belong
-in another series, perhaps an extension of the various "maths for AI" posts I've
-done in the past.&lt;/li&gt;
-&lt;li&gt;Automatic differentiation and the backward pass; that would make a great series.&lt;/li&gt;
-&lt;li&gt;A mixture-of-experts model would be excellent fun, I think.&lt;/li&gt;
-&lt;li&gt;Tokenisers would be a great stand-alone post, at least at the level that I can
-see myself covering it.  Perhaps that would develop into a series if I found
-myself getting sucked in.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I'm certainly not promising that I'll write up all (or even any) of that second list, but they
-all seem really tempting to me right now.  If you're particularly interested in seeing
-my take on any of them, please do leave a comment below.&lt;/p&gt;
-
-&lt;h3 id="coming-up"&gt;Coming up...&lt;/h3&gt;
-
-&lt;p&gt;I think the next post in this series -- maybe the next several posts -- will be on
-trying to train the model code provided in the book from scratch to produce my own
-base model.  Stay tuned!&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">/2025/11/llm-from-scratch-27-whats-left-and-whats-next</guid>
-      <pubDate>Tue, 04 Nov 2025 00:40:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
