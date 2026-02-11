@@ -5,7 +5,88 @@
     <link>https://blog.jim-nielsen.com</link>
     <description>Latest posts from Jim Nielsen’s Blog</description>
     <language>en</language>
-    <lastBuildDate>Wed, 11 Feb 2026 13:21:56 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 11 Feb 2026 14:59:55 +0000</lastBuildDate>
+    <item>
+      <title>Unresponsive Buttons on My Fastest Hardware Ever</title>
+      <link>https://blog.jim-nielsen.com/2026/unresponsive-buttons/</link>
+      <description>&lt;p&gt;This is one of those small things that drives me nuts.&lt;/p&gt;
+&lt;p&gt;Why? I don’t know. I think it has something to do with the fact that I have a computer that is faster than any computer I’ve ever used in my entire life — and yet, clicking on buttons results in slight but perceptible delays.&lt;/p&gt;
+&lt;p&gt;Let me explain.&lt;/p&gt;
+&lt;p&gt;Imagine a button that looks like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-jsx"&gt;&amp;lt;&lt;span class="hljs-title class_"&gt;Button&lt;/span&gt;
+  onClick={&lt;span class="hljs-title function_"&gt;async&lt;/span&gt; () =&amp;gt; {
+    &lt;span class="hljs-keyword"&gt;const&lt;/span&gt; data = &lt;span class="hljs-keyword"&gt;await&lt;/span&gt; &lt;span class="hljs-title function_"&gt;getSessionUrlFromStripe&lt;/span&gt;(id);
+    &lt;span class="hljs-variable language_"&gt;window&lt;/span&gt;.&lt;span class="hljs-property"&gt;location&lt;/span&gt; = data.&lt;span class="hljs-property"&gt;url&lt;/span&gt;;
+  }
+&amp;gt;&lt;span class="hljs-title class_"&gt;Upgrade&lt;/span&gt; to &lt;span class="hljs-title class_"&gt;Pro&lt;/span&gt;&amp;lt;/&lt;span class="hljs-title class_"&gt;Button&lt;/span&gt;&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For SPA apps, when the user clicks that button it takes a split second (even on a fast connection) for anything to happen because:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The browser makes a request to the server&lt;/li&gt;
+&lt;li&gt;The server talks to Stripe to get a session&lt;/li&gt;
+&lt;li&gt;The server responds with the session data to the client&lt;/li&gt;
+&lt;li&gt;The client redirects&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;When clicking on that button, even on a fast connection, my brain glitches for a second, my thought process going something like:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;I click&lt;/li&gt;
+&lt;li&gt;[nothing happens]&lt;/li&gt;
+&lt;li&gt;I think “Did that work?”&lt;/li&gt;
+&lt;li&gt;Just as I’m about to click again, I see the URL bar change&lt;/li&gt;
+&lt;li&gt;I think, “Oh, ok, it’s doing &lt;em&gt;something&lt;/em&gt;.”&lt;/li&gt;
+&lt;li&gt;I stop myself from clicking again while I wait for the UI to redraw&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Granted those thoughts occur in my brain in under a second, but I hate that pause of indetermination.&lt;/p&gt;
+&lt;p&gt;I clicked, I want (perceptibly) &lt;em&gt;instant&lt;/em&gt; feedback. If something is happening, tell me!&lt;/p&gt;
+&lt;p&gt;For SPA apps, you could put some state in there, like:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-jsx"&gt;&lt;span class="hljs-keyword"&gt;const&lt;/span&gt; [isLoading, setIsLoading] = &lt;span class="hljs-title function_"&gt;useState&lt;/span&gt;(&lt;span class="hljs-literal"&gt;false&lt;/span&gt;);
+
+&lt;span class="hljs-keyword"&gt;return&lt;/span&gt; (
+  &lt;span class="language-xml"&gt;&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;Button&lt;/span&gt;
+  &lt;span class="hljs-attr"&gt;onClick&lt;/span&gt;=&lt;span class="hljs-string"&gt;{async&lt;/span&gt; () =&amp;gt;&lt;/span&gt; {
+    setIsLoading(true);
+    const data = await getSessionUrlFromStripe(id);
+    window.location = data.url;
+  }
+  &amp;gt;{isLoading ? &amp;#x27;Upgrading...&amp;#x27; : &amp;#x27;Upgrade to Pro&amp;#x27;}&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;Button&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;/span&gt;
+)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This would provide more immediate feedback. But it also raises a whole set of other questions:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Is that actually the interaction you want, where the text changes? That’s probably gonna shift layout. Maybe you want something different, like a spinner in place of the text. How do you handle that?&lt;/li&gt;
+&lt;li&gt;What if you have multiple places to upgrade? Do you have to implement &lt;code&gt;isLoading&lt;/code&gt; state in all those places too? What if the trigger in each place is slightly different? A button here, some text there, and icon over yonder? How do you handle all of those different interactions in a standard, immediate way?&lt;/li&gt;
+&lt;li&gt;Errors. What if it fails? Well, we already weren’t handling that in the first code example were we? But maybe we should…&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Oh boy, this is getting complicated isn’t it?&lt;/p&gt;
+&lt;p&gt;This is why, I assume, lots of apps just don’t deal with it. &lt;/p&gt;
+&lt;p&gt;They accept there will be a slight delay in the responsiveness of the UI (and that it might error, but the user can just click again) and justify that it’s really not that big of a deal if there’s a slight, almost imperceptible delay between clicking a button and seeing the UI respond.&lt;/p&gt;
+&lt;p&gt;“We’ve got bigger fish to fry.”&lt;/p&gt;
+&lt;p&gt;And it makes sense. I mean, a slight delay in UI responsiveness, is that why people will or won’t buy your thing? Seems like a small detail. Who’s got the time to spend on details like this?Who cares? &lt;/p&gt;
+&lt;p&gt;I care. That’s why I’m writing this post.&lt;/p&gt;
+&lt;p&gt;To my original point, every piece of hardware I currently own is the fastest version of that device I’ve ever had in my life. And yet, everywhere I go I encounter lag. &lt;a href="https://world.hey.com/jason/the-big-regression-da7fc60d" &gt;Lag everywhere.&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;And I’m grumpy about it, hence this post.&lt;/p&gt;
+
+    &lt;hr /&gt;
+    
+
+    &lt;p&gt;
+      Reply via:
+      
+
+      &lt;a
+        href="mailto:jimniels%2Bblog@gmail.com?subject=Re:%20blog.jim-nielsen.com/2026/unresponsive-buttons/"
+        &gt;Email&lt;/a
+      &gt;
+      · &lt;a href="https://mastodon.social/@jimniels"&gt;Mastodon&lt;/a&gt; ·
+
+      &lt;a href="https://bsky.app/profile/jim-nielsen.com"&gt;Bluesky&lt;/a&gt;
+    &lt;/p&gt;
+
+    
+  </description>
+      <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/unresponsive-buttons/</guid>
+      <pubDate>Wed, 11 Feb 2026 19:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>A Brief History of App Icons From Apple’s Creator Studio</title>
       <link>https://blog.jim-nielsen.com/2026/history-of-creator-studio-icons/</link>
@@ -489,44 +570,6 @@
   </description>
       <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/easy-vs-simple/</guid>
       <pubDate>Sun, 18 Jan 2026 19:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>In The Beginning There Was Slop</title>
-      <link>https://blog.jim-nielsen.com/2026/in-the-beginning-slop/</link>
-      <description>&lt;p&gt;I’ve been slowly reading &lt;a href="https://blog.jim-nielsen.com/2025/internet-phone-book/" &gt;my copy of “The Internet Phone Book”&lt;/a&gt; and I recently read an essay in it by Elan Ullendorff called &lt;a href="https://escapethealgorithm.substack.com/p/the-new-turing-test" &gt;“The New Turing Test”&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;Elan argues that what matters in a work isn’t the tools used to make it, but the “expressiveness” of the work itself (was it made “from someone, for someone, in a particular context”):&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;If something feels robotic or generic, it is those very qualities that make the work problematic, not the tools used.&lt;/p&gt;
-&lt;/blockquote&gt;
-&lt;p&gt;This point reminded me that there was slop before AI came on the scene.&lt;/p&gt;
-&lt;p&gt;A lot of blogging was considered a primal form of slop when the internet first appeared: content of inferior substance, generated in quantities much vaster than heretofore considered possible. &lt;/p&gt;
-&lt;p&gt;And the truth is, perhaps a lot of the content in blogosphere was “slop”.&lt;/p&gt;
-&lt;p&gt;But it wasn’t slop because of the tools that made it — like Movable Type or Wordpress or Blogger. &lt;/p&gt;
-&lt;p&gt;It was slop because it lacked thought, care, and intention — the “expressiveness” Elan argues for.&lt;/p&gt;
-&lt;p&gt;You don’t need AI to produce slop because slop isn’t made by AI. It’s made by humans — AI is just the popular tool of choice for making it right now.&lt;/p&gt;
-&lt;p&gt;Slop existed long before LLMs came onto the scene.&lt;/p&gt;
-&lt;p&gt;It will doubtless exist long after too.&lt;/p&gt;
-
-    &lt;hr /&gt;
-    
-
-    &lt;p&gt;
-      Reply via:
-      
-
-      &lt;a
-        href="mailto:jimniels%2Bblog@gmail.com?subject=Re:%20blog.jim-nielsen.com/2026/in-the-beginning-slop/"
-        &gt;Email&lt;/a
-      &gt;
-      · &lt;a href="https://mastodon.social/@jimniels"&gt;Mastodon&lt;/a&gt; ·
-
-      &lt;a href="https://bsky.app/profile/jim-nielsen.com"&gt;Bluesky&lt;/a&gt;
-    &lt;/p&gt;
-
-    
-  </description>
-      <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/in-the-beginning-slop/</guid>
-      <pubDate>Sun, 11 Jan 2026 19:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
