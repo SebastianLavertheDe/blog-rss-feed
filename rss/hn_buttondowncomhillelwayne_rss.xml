@@ -15,7 +15,55 @@
 
 You can see the archive of all public essays [here](https://buttondown.email/hillelwayne/archive/).</description>
     <language>en</language>
-    <lastBuildDate>Wed, 11 Feb 2026 18:00:51 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 11 Feb 2026 19:17:59 +0000</lastBuildDate>
+    <item>
+      <title>Proving What's Possible</title>
+      <link>https://buttondown.com/hillelwayne/archive/proving-whats-possible/</link>
+      <description>
+&lt;p&gt;As a formal methods consultant I have to mathematically express properties of systems. I generally do this with two "temporal operators": &lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;A(x) means that &lt;code&gt;x&lt;/code&gt; is always true. For example, a database table &lt;em&gt;always&lt;/em&gt; satisfies all record-level constraints, and a state machine &lt;em&gt;always&lt;/em&gt; makes valid transitions between states. If &lt;code&gt;x&lt;/code&gt; is a statement about an individual state (as in the database but not state machine example), we further call it an &lt;strong&gt;invariant&lt;/strong&gt;.&lt;/li&gt;
+&lt;li&gt;E(x) means that &lt;code&gt;x&lt;/code&gt; is "eventually" true, conventionally meaning "guaranteed true at some point in the future". A database transaction &lt;em&gt;eventually&lt;/em&gt; completes or rolls back, a state machine &lt;em&gt;eventually&lt;/em&gt; reaches the "done" state, etc. &lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;These come from linear temporal logic, which is the mainstream notation for expressing system properties. &lt;sup id="fnref:modal"&gt;&lt;a class="footnote-ref" href="#fn:modal"&gt;1&lt;/a&gt;&lt;/sup&gt; We like these operators because they elegantly cover &lt;a href="https://www.hillelwayne.com/post/safety-and-liveness/" target="_blank"&gt;safety and liveness properties&lt;/a&gt;, and because &lt;a href="https://buttondown.com/hillelwayne/archive/formalizing-stability-and-resilience-properties/" target="_blank"&gt;we can combine them&lt;/a&gt;. &lt;code&gt;A(E(x))&lt;/code&gt; means &lt;code&gt;x&lt;/code&gt; is true an infinite number of times, while &lt;code&gt;A(x =&amp;gt; E(y)&lt;/code&gt; means that &lt;code&gt;x&lt;/code&gt; being true guarantees &lt;code&gt;y&lt;/code&gt; true in the future. &lt;/p&gt;
+&lt;p&gt;There's a third class of properties, that I will call &lt;em&gt;possibility&lt;/em&gt; properties: &lt;code&gt;P(x)&lt;/code&gt; is "can x happen in this model"? Is it possible for a table to have more than ten records? Can a state machine transition from "Done" to "Retry", even if it &lt;em&gt;doesn't&lt;/em&gt;? Importantly, &lt;code&gt;P(x)&lt;/code&gt; does not need to be possible &lt;em&gt;immediately&lt;/em&gt;, just at some point in the future. It's possible to lose 100 dollars betting on slot machines, even if you only bet one dollar at a time. If &lt;code&gt;x&lt;/code&gt; is a statement about an individual state, we can further call it a &lt;a href="https://en.wikipedia.org/wiki/Reachability" target="_blank"&gt;&lt;em&gt;reachability&lt;/em&gt; property&lt;/a&gt;. I'm going to use the two interchangeably for flow. &lt;/p&gt;
+&lt;p&gt;&lt;code&gt;A(P(x))&lt;/code&gt; says that &lt;code&gt;x&lt;/code&gt; is &lt;em&gt;always&lt;/em&gt; possible. No matter what we've done in our system, we can make &lt;code&gt;x&lt;/code&gt; happen again. There's no way to do this with just &lt;code&gt;A&lt;/code&gt; and &lt;code&gt;E&lt;/code&gt;. Other meaningful combinations include:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;P(A(x))&lt;/code&gt;: there is a reachable state from which &lt;code&gt;x&lt;/code&gt; is always true.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;A(x =&amp;gt; P(y))&lt;/code&gt;: &lt;code&gt;y&lt;/code&gt; is possible from any state where &lt;code&gt;x&lt;/code&gt; is true.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;E(x &amp;amp;&amp;amp; P(y))&lt;/code&gt;: There is always a future state where x is true and y is reachable.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;A(P(x) =&amp;gt; E(x))&lt;/code&gt;: If &lt;code&gt;x&lt;/code&gt; is ever possible, it will eventually happen.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;E(P(x))&lt;/code&gt; and &lt;code&gt;P(E(x))&lt;/code&gt; are the same as &lt;code&gt;P(x)&lt;/code&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;See the paper &lt;a href="https://dl.acm.org/doi/epdf/10.1145/567446.567463" target="_blank"&gt;"Sometime" is sometimes "not never"&lt;/a&gt; for a deeper discussion of &lt;code&gt;E&lt;/code&gt; and &lt;code&gt;P&lt;/code&gt;.&lt;/p&gt;
+&lt;h3&gt;The use case&lt;/h3&gt;
+&lt;p&gt;Possibility properties are "something good &lt;em&gt;can&lt;/em&gt; happen", which is generally less useful (&lt;em&gt;in specifications&lt;/em&gt;) than "something bad &lt;em&gt;can't&lt;/em&gt; happen" (safety) and "something good &lt;em&gt;will&lt;/em&gt; happen" (liveness). But it still comes up as an important property! My favorite example:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="A guy who can't shut down his computer because system preferences interrupts shutdown" class="newsletter-image" src="https://www.hillelwayne.com/post/safety-and-liveness/img/tweet2.png" /&gt;&lt;/p&gt;
+&lt;p&gt;The big use I've found for the idea is as a sense-check that we wrote the spec properly. Say I take the property "A worker in the 'Retry' state eventually leaves that state":&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;A(state == &amp;#39;Retry&amp;#39; =&amp;gt; E(state != &amp;#39;Retry&amp;#39;))
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;The model checker checks this property and confirms it holds of the spec. Great! Our system is correct! ...Unless the system can never &lt;em&gt;reach&lt;/em&gt; the "Retry" state, in which case the expression is trivially true. I need to verify that 'Retry' is reachable, eg &lt;code&gt;P(state == 'Retry')&lt;/code&gt;. Notice I can't use &lt;code&gt;E&lt;/code&gt; to do this, because I don't want to say "the worker always needs to retry at least once". &lt;/p&gt;
+&lt;h3&gt;It's not supported though&lt;/h3&gt;
+&lt;p&gt;I say "use I've found for &lt;em&gt;the idea&lt;/em&gt;" because the main formalisms I use (Alloy and TLA+) don't natively support &lt;code&gt;P&lt;/code&gt;. &lt;sup id="fnref:tla"&gt;&lt;a class="footnote-ref" href="#fn:tla"&gt;2&lt;/a&gt;&lt;/sup&gt; On top of &lt;code&gt;P&lt;/code&gt; being less useful than &lt;code&gt;A&lt;/code&gt; and &lt;code&gt;E&lt;/code&gt;, simple reachability properties are &lt;a href="https://www.hillelwayne.com/post/software-mimicry/" target="_blank"&gt;mimickable&lt;/a&gt; with A(x). &lt;code&gt;P(x)&lt;/code&gt; &lt;em&gt;passes&lt;/em&gt; whenever &lt;code&gt;A(!x)&lt;/code&gt; &lt;em&gt;fails&lt;/em&gt;, meaning I can verify &lt;code&gt;P(state == 'Retry')&lt;/code&gt; by testing that &lt;code&gt;A(!(state == 'Retry'))&lt;/code&gt; finds a counterexample. We &lt;em&gt;cannot&lt;/em&gt; mimic combined operators this way like &lt;code&gt;A(P(x))&lt;/code&gt; but those are significantly less common than state-reachability. &lt;/p&gt;
+&lt;p&gt;(Also, refinement doesn't preserve possibility properties, but that's a whole other kettle of worms.)&lt;/p&gt;
+&lt;p&gt;The one that's bitten me a little is that we can't mimic "&lt;code&gt;P(x)&lt;/code&gt; from every starting state". "&lt;code&gt;A(!x)&lt;/code&gt;" fails if there's at least one path from one starting state that leads to &lt;code&gt;x&lt;/code&gt;, but other starting states might not make &lt;code&gt;x&lt;/code&gt; possible.&lt;/p&gt;
+&lt;p&gt;I suspect there's also a chicken-and-egg problem here. Since my tools can't verify possibility properties, I'm not used to noticing them in systems. I'd be interested in hearing if anybody works with codebases where possibility properties are important, especially if it's something complex like &lt;code&gt;A(x =&amp;gt; P(y))&lt;/code&gt;.&lt;/p&gt;
+&lt;div class="footnote"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn:modal"&gt;
+&lt;p&gt;Instead of &lt;code&gt;A(x)&lt;/code&gt;, the literature uses &lt;code&gt;[]x&lt;/code&gt; or &lt;code&gt;Gx&lt;/code&gt; ("globally x") and instead of &lt;code&gt;E(x)&lt;/code&gt; it uses &lt;code&gt;&amp;lt;&amp;gt;x&lt;/code&gt; or &lt;code&gt;Fx&lt;/code&gt; ("finally x"). I'm using A and E because this isn't teaching material.&amp;#160;&lt;a class="footnote-backref" href="#fnref:modal" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:tla"&gt;
+&lt;p&gt;There's &lt;a href="https://github.com/tlaplus/tlaplus/issues/860" target="_blank"&gt;some discussion to add it to TLA+, though&lt;/a&gt;.&amp;#160;&lt;a class="footnote-backref" href="#fnref:tla" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/proving-whats-possible/</guid>
+      <pubDate>Wed, 11 Feb 2026 18:36:53 +0000</pubDate>
+    </item>
     <item>
       <title>Logic for Programmers New Release and Next Steps</title>
       <link>https://buttondown.com/hillelwayne/archive/logic-for-programmers-new-release-and-next-steps/</link>
@@ -2023,50 +2071,6 @@ pos = [you |-&amp;gt; [lr |-&amp;gt; 1, fb |-&amp;gt; 2], me |-&amp;gt; [lr |-&a
 </description>
       <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/write-the-most-clever-code-you-possibly-can/</guid>
       <pubDate>Thu, 08 May 2025 15:04:42 +0000</pubDate>
-    </item>
-    <item>
-      <title>Requirements change until they don't</title>
-      <link>https://buttondown.com/hillelwayne/archive/requirements-change-until-they-dont/</link>
-      <description>
-&lt;p&gt;Recently I got a question on formal methods&lt;sup id="fnref:fs"&gt;&lt;a class="footnote-ref" href="#fn:fs"&gt;1&lt;/a&gt;&lt;/sup&gt;: how does it help to mathematically model systems when the system requirements are constantly changing? It doesn't make sense to spend a lot of time proving a design works, and then deliver the product and find out it's not at all what the client needs. As the saying goes, the hard part is "building the right thing", not "building the thing right".&lt;/p&gt;
-&lt;p&gt;One possible response: "why write tests"? You shouldn't write tests, &lt;em&gt;especially&lt;/em&gt; &lt;a href="https://en.wikipedia.org/wiki/Test-driven_development" target="_blank"&gt;lots of unit tests ahead of time&lt;/a&gt;, if you might just throw them all away when the requirements change.&lt;/p&gt;
-&lt;p&gt;This is a bad response because we all know the difference between writing tests and formal methods: testing is &lt;em&gt;easy&lt;/em&gt; and FM is &lt;em&gt;hard&lt;/em&gt;. Testing requires low cost for moderate correctness, FM requires high(ish) cost for high correctness. And when requirements are constantly changing, "high(ish) cost" isn't affordable and "high correctness" isn't worthwhile, because a kinda-okay solution that solves a customer's problem is infinitely better than a solid solution that doesn't.&lt;/p&gt;
-&lt;p&gt;But eventually you get something that solves the problem, and what then?&lt;/p&gt;
-&lt;p&gt;Most of us don't work for Google, we can't axe features and products &lt;a href="https://killedbygoogle.com/" target="_blank"&gt;on a whim&lt;/a&gt;. If the client is happy with your solution, you are expected to support it. It should work when your customers run into new edge cases, or migrate all their computers to the next OS version, or expand into a market with shoddy internet. It should work when 10x as many customers are using 10x as many features. It should work when &lt;a href="https://www.hillelwayne.com/post/feature-interaction/" target="_blank"&gt;you add new features that come into conflict&lt;/a&gt;. &lt;/p&gt;
-&lt;p&gt;And just as importantly, &lt;em&gt;it should never stop solving their problem&lt;/em&gt;. Canonical example: your feature involves processing requested tasks synchronously. At scale, this doesn't work, so to improve latency you make it asynchronous. Now it's eventually consistent, but your customers were depending on it being always consistent. Now it no longer does what they need, and has stopped solving their problems.&lt;/p&gt;
-&lt;p&gt;Every successful requirement met spawns a new requirement: "keep this working". That requirement is permanent, or close enough to decide our long-term strategy. It takes active investment to keep a feature behaving the same as the world around it changes.&lt;/p&gt;
-&lt;p&gt;(Is this all a pretentious of way of saying "software maintenance is hard?" Maybe!)&lt;/p&gt;
-&lt;h3&gt;Phase changes&lt;/h3&gt;
-&lt;div class="subscribe-form"&gt;&lt;/div&gt;
-&lt;p&gt;In physics there's a concept of a &lt;a href="https://en.wikipedia.org/wiki/Phase_transition" target="_blank"&gt;phase transition&lt;/a&gt;. To raise the temperature of a gram of liquid water by 1° C, you have to add 4.184 joules of energy.&lt;sup id="fnref:calorie"&gt;&lt;a class="footnote-ref" href="#fn:calorie"&gt;2&lt;/a&gt;&lt;/sup&gt; This continues until you raise it to 100°C, then it stops. After you've added two &lt;em&gt;thousand&lt;/em&gt; joules to that gram, it suddenly turns into steam. The energy of the system changes continuously but the form, or phase, changes discretely.&lt;/p&gt;
-&lt;p&gt;&lt;img alt="Phase_diagram_of_water_simplified.svg.png (from above link)" class="newsletter-image" src="https://assets.buttondown.email/images/31676a33-be6a-4c6d-a96f-425723dcb0d5.png?w=960&amp;amp;fit=max"/&gt;&lt;/p&gt;
-&lt;p class="empty-line" style="height:16px; margin:0px !important;"&gt;&lt;/p&gt;
-&lt;p&gt;Software isn't physics but the idea works as a metaphor. A certain architecture handles a certain level of load, and past that you need a new architecture. Or a bunch of similar features are independently hardcoded until the system becomes too messy to understand, you remodel the internals into something unified and extendable. etc etc etc. It's doesn't have to be totally discrete phase transition, but there's definitely a "before" and "after" in the system form. &lt;/p&gt;
-&lt;p&gt;Phase changes tend to lead to more intricacy/complexity in the system, meaning it's likely that a phase change will introduce new bugs into existing behaviors. Take the synchronous vs asynchronous case. A very simple toy model of synchronous updates would be &lt;code&gt;Set(key, val)&lt;/code&gt;, which updates &lt;code&gt;data[key]&lt;/code&gt; to &lt;code&gt;val&lt;/code&gt;.&lt;sup id="fnref:tla"&gt;&lt;a class="footnote-ref" href="#fn:tla"&gt;3&lt;/a&gt;&lt;/sup&gt; A model of asynchronous updates would be &lt;code&gt;AsyncSet(key, val, priority)&lt;/code&gt; adds a &lt;code&gt;(key, val, priority, server_time())&lt;/code&gt; tuple to a &lt;code&gt;tasks&lt;/code&gt; set, and then another process asynchronously pulls a tuple (ordered by highest priority, then earliest time) and calls &lt;code&gt;Set(key, val)&lt;/code&gt;. Here are some properties the client may need preserved as a requirement: &lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;If &lt;code&gt;AsyncSet(key, val, _, _)&lt;/code&gt; is called, then &lt;em&gt;eventually&lt;/em&gt; &lt;code&gt;db[key] = val&lt;/code&gt; (possibly violated if higher-priority tasks keep coming in)&lt;/li&gt;
-&lt;li&gt;If someone calls &lt;code&gt;AsyncSet(key1, val1, low)&lt;/code&gt; and then &lt;code&gt;AsyncSet(key2, val2, low)&lt;/code&gt;, they should see the first update and then the second (linearizability, possibly violated if the requests go to different servers with different clock times)&lt;/li&gt;
-&lt;li&gt;If someone calls &lt;code&gt;AsyncSet(key, val, _)&lt;/code&gt; and &lt;em&gt;immediately&lt;/em&gt; reads &lt;code&gt;db[key]&lt;/code&gt; they should get &lt;code&gt;val&lt;/code&gt; (obviously violated, though the client may accept a &lt;em&gt;slightly&lt;/em&gt; weaker property)&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;If the new system doesn't satisfy an existing customer requirement, it's prudent to fix the bug &lt;em&gt;before&lt;/em&gt; releasing the new system. The customer doesn't notice or care that your system underwent a phase change. They'll just see that one day your product solves their problems, and the next day it suddenly doesn't. &lt;/p&gt;
-&lt;p&gt;This is one of the most common applications of formal methods. Both of those systems, and every one of those properties, is formally specifiable in a specification language. We can then automatically check that the new system satisfies the existing properties, and from there do things like &lt;a href="https://arxiv.org/abs/2006.00915" target="_blank"&gt;automatically generate test suites&lt;/a&gt;. This does take a lot of work, so if your requirements are constantly changing, FM may not be worth the investment. But eventually requirements &lt;em&gt;stop&lt;/em&gt; changing, and then you're stuck with them forever. That's where models shine.&lt;/p&gt;
-&lt;div class="footnote"&gt;
-&lt;hr/&gt;
-&lt;ol&gt;
-&lt;li id="fn:fs"&gt;
-&lt;p&gt;As always, I'm using formal methods to mean the subdiscipline of formal specification of designs, leaving out the formal verification of code. Mostly because "formal specification" is really awkward to say. &lt;a class="footnote-backref" href="#fnref:fs" title="Jump back to footnote 1 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:calorie"&gt;
-&lt;p&gt;Also called a "calorie". The US "dietary Calorie" is actually a kilocalorie. &lt;a class="footnote-backref" href="#fnref:calorie" title="Jump back to footnote 2 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:tla"&gt;
-&lt;p&gt;This is all directly translatable to a TLA+ specification, I'm just describing it in English to avoid paying the syntax tax &lt;a class="footnote-backref" href="#fnref:tla" title="Jump back to footnote 3 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/requirements-change-until-they-dont/</guid>
-      <pubDate>Thu, 24 Apr 2025 11:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
