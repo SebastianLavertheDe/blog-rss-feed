@@ -5,7 +5,414 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Mon, 16 Feb 2026 16:53:40 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 16 Feb 2026 17:43:06 +0000</lastBuildDate>
+    <item>
+      <title>Type-based alias analysis in the Toy Optimizer</title>
+      <link>https://bernsteinbear.com/blog/toy-tbaa/?utm_source=rss</link>
+      <description>&lt;p&gt;&lt;em&gt;Another entry in the &lt;a href="https://pypy.org/categories/toy-optimizer.html"&gt;Toy Optimizer series&lt;/a&gt;&lt;/em&gt;.&lt;/p&gt;
+
+&lt;p&gt;Last time, we did &lt;a href="/blog/toy-load-store/"&gt;load-store forwarding&lt;/a&gt; in the context
+of our Toy Optimizer. We managed to cache the results of both reads from and
+writes to the heap—at compile-time!&lt;/p&gt;
+
+&lt;p&gt;We were careful to mind object aliasing: we separated our heap information into
+alias classes based on what offset the reads/writes referenced. This way, if we
+didn’t know if object &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt; aliased, we could at least know that
+different offsets would never alias (assuming our objects don’t overlap and
+memory accesses are on word-sized slots). This is a coarse-grained heuristic.&lt;/p&gt;
+
+&lt;p&gt;Fortunately, we often have much more information available at compile-time than
+just the offset, so we should use it. I mentioned in a footnote that we could
+use type information, for example, to improve our alias analysis. We’ll add
+a lightweight form of &lt;a href="/assets/img/tbaa.pdf"&gt;type-based alias analysis (TBAA)&lt;/a&gt;
+(PDF) in this post.&lt;/p&gt;
+
+&lt;h2 id="representing-types"&gt;Representing types&lt;/h2&gt;
+
+&lt;p&gt;We return once again to Fil Pizlo land, specifically &lt;a href="https://gist.github.com/pizlonator/cf1e72b8600b1437dda8153ea3fdb963"&gt;How I implement SSA
+form&lt;/a&gt;.
+We’re going to be using the hierarchical heap effect representation from the
+post in our implementation, but you can use your own type representation if you
+have one already.&lt;/p&gt;
+
+&lt;p&gt;This representation divides the heap into disjoint regions by type. Consider,
+for example, that &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt; objects and &lt;code class="language-plaintext highlighter-rouge"&gt;String&lt;/code&gt; objects do not overlap. A
+&lt;code class="language-plaintext highlighter-rouge"&gt;LinkedList&lt;/code&gt; pointer is never going to alias an &lt;code class="language-plaintext highlighter-rouge"&gt;Integer&lt;/code&gt; pointer. They can
+therefore be reasoned about separately.&lt;/p&gt;
+
+&lt;p&gt;But sometimes you don’t have perfect type information available. If you have in
+your language an &lt;code class="language-plaintext highlighter-rouge"&gt;Object&lt;/code&gt; base class of all objects, then the &lt;code class="language-plaintext highlighter-rouge"&gt;Object&lt;/code&gt; heap
+overlaps with, say, the &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt; heap. So you need some way to represent that
+too—just having an enum doesn’t work cleanly.&lt;/p&gt;
+
+&lt;p&gt;Here is an example simplified type hierarchy:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;Any
+  Object
+    Array
+    String
+  Other
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Where &lt;code class="language-plaintext highlighter-rouge"&gt;Other&lt;/code&gt; might represent different parts of the runtime’s data structures,
+and could be further segmented into &lt;code class="language-plaintext highlighter-rouge"&gt;GC&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;Thread&lt;/code&gt;, etc.&lt;/p&gt;
+
+&lt;p&gt;Fil’s idea is that we can represent each node in that hierarchy with a tuple of
+integers &lt;code class="language-plaintext highlighter-rouge"&gt;[start, end)&lt;/code&gt; (inclusive, exclusive) that represent the pre- and
+post-order traversals of the tree. Or, if tree traversals are not engraved into
+your bones, they represent the range of all the nested objects within them.&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;Any [0, 3)
+  Object [0, 2)
+    Array [0, 1)
+    String [1, 2)
+  Other [2, 3)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Then the “does this write interfere with this read” check—the aliasing
+check—is a range overlap query.&lt;/p&gt;
+
+&lt;p&gt;Here’s a perhaps over-engineered Python implementation of the range and heap
+hierarchy based on the Ruby generator and C++ runtime code from JavaScriptCore:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;HeapRange&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;end&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;end&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;__repr__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s"&gt;"[&lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;, &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;)"&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;bool&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;overlaps&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s"&gt;"HeapRange"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;bool&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="c1"&gt;# Empty ranges interfere with nothing
+&lt;/span&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="ow"&gt;or&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+            &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;False&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt; &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;
+
+
+&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;AbstractHeap&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;name&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parent&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;AbstractHeap&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;result&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parent&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;result&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;compute&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="n"&gt;current&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;HeapRange&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;current&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="k"&gt;return&lt;/span&gt;
+        &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;child&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;child&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compute&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;current&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;current&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;child&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;HeapRange&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;current&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+
+&lt;span class="n"&gt;Any&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;AbstractHeap&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Any"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;Object&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Any&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Object"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;Array&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Array"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;String&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"String"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;Other&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Any&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Other"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;Any&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compute&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Where &lt;code class="language-plaintext highlighter-rouge"&gt;Any.compute(0)&lt;/code&gt; kicks off the tree-numbering scheme.&lt;/p&gt;
+
+&lt;p&gt;Fil’s implementation also covers a bunch of abstract heaps such as SSAState and
+Control because his is used for code motion and whatnot. That can be added on
+later but we will not do so in this post.&lt;/p&gt;
+
+&lt;p&gt;So there you have it: a type representation. Now we need to use it in our
+load-store forwarding.&lt;/p&gt;
+
+&lt;h2 id="load-store-forwarding"&gt;Load-store forwarding&lt;/h2&gt;
+
+&lt;p&gt;Recall that our load-store optimization pass looks like this:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;optimize_load_store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;opt_bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="c1"&gt;# Stores things we know about the heap at... compile-time.
+&lt;/span&gt;    &lt;span class="c1"&gt;# Key: an object and an offset pair acting as a heap address
+&lt;/span&gt;    &lt;span class="c1"&gt;# Value: a previous SSA value we know exists at that address
+&lt;/span&gt;    &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Dict&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;Tuple&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;Value&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;Value&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;obj&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;store_info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;current_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;store_info&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;new_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;eq_value&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;current_value&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;new_value&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+                &lt;span class="k"&gt;continue&lt;/span&gt;
+            &lt;span class="n"&gt;compile_time_heap&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;
+                &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+                &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;
+            &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;store_info&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new_value&lt;/span&gt;
+        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;load_info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;load_info&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+                &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;make_equal_to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+                &lt;span class="k"&gt;continue&lt;/span&gt;
+            &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;
+        &lt;span class="n"&gt;opt_bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;opt_bb&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;At its core, it iterates over the instructions, keeping a representation of the
+heap at compile-time. Reads get cached, writes get cached, and writes also
+invalidate the state of compile-time information about fields that may alias.&lt;/p&gt;
+
+&lt;p&gt;In this case, our &lt;em&gt;may alias&lt;/em&gt; asks only if the offsets overlap. This means that
+the following unit test will fail:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;test_store_to_same_offset_different_heaps_does_not_invalidate_load&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="n"&gt;bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="n"&gt;var0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getarg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;var0&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;
+    &lt;span class="n"&gt;var1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getarg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;var1&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;String&lt;/span&gt;
+    &lt;span class="n"&gt;var2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;var3&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;var4&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;escape&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var4&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;opt_bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;optimize_load_store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;
+        &lt;span class="n"&gt;bb_to_str&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;opt_bb&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"""&lt;/span&gt;&lt;span class="se"&gt;\
+&lt;/span&gt;&lt;span class="s"&gt;var0 = getarg(0)
+var1 = getarg(1)
+var2 = store(var0, 0, 3)
+var3 = store(var1, 0, 4)
+var4 = escape(3)"""&lt;/span&gt;
+    &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This test is expecting the write to &lt;code class="language-plaintext highlighter-rouge"&gt;var0&lt;/code&gt; to still remain cached even though
+we wrote to the same offset in &lt;code class="language-plaintext highlighter-rouge"&gt;var1&lt;/code&gt;—because we have annotated &lt;code class="language-plaintext highlighter-rouge"&gt;var0&lt;/code&gt; as
+being an &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;var1&lt;/code&gt; as being a &lt;code class="language-plaintext highlighter-rouge"&gt;String&lt;/code&gt;. If we account for type
+information in our alias analysis, we can get this test to pass.&lt;/p&gt;
+
+&lt;p&gt;After doing a bunch of fussing around with the load-store forwarding (many
+rewrites), I eventually got it down to a very short diff:&lt;/p&gt;
+
+&lt;div class="language-diff highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gi"&gt;+def may_alias(left: Value, right: Value) -&amp;gt; bool:
++    return (left.info or Any).range.overlaps((right.info or Any).range)
++
++
+&lt;/span&gt; def optimize_load_store(bb: Block):
+     opt_bb = Block()
+     # Stores things we know about the heap at... compile-time.
+&lt;span class="p"&gt;@@ -138,6 +210,10 @@&lt;/span&gt; def optimize_load_store(bb: Block):
+                 load_info: value
+                 for load_info, value in compile_time_heap.items()
+                 if load_info[1] != offset
+&lt;span class="gi"&gt;+                or not may_alias(load_info[0], obj)
+&lt;/span&gt;             }
+             compile_time_heap[store_info] = new_value
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;If we don’t have any type/alias information, we default to “I know nothing”
+(&lt;code class="language-plaintext highlighter-rouge"&gt;Any&lt;/code&gt;) for each object. Then we check range overlap.&lt;/p&gt;
+
+&lt;p&gt;The boolean logic in &lt;code class="language-plaintext highlighter-rouge"&gt;optimize_load_store&lt;/code&gt; looks a little weird, maybe. But we
+can also rewrite (via DeMorgan’s law) as:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="p"&gt;...&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;
+            &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;may_alias&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;So, keeping all the cached field state about fields that are known by offset
+and by type not to alias. Maybe that is clearer (but not as nice a diff).&lt;/p&gt;
+
+&lt;!--
+Note that we do not currently have a notion of "must-alias" other than if two
+SSA values are equal. Therefore we can't make use of writes to object A for
+loads from object B even if A and B must alias.
+--&gt;
+
+&lt;p&gt;Nice, now our test passes! We can differentiate between memory accesses on
+objects of different types.&lt;/p&gt;
+
+&lt;p&gt;But what if we knew more?&lt;/p&gt;
+
+&lt;h2 id="object-provenance--allocation-site"&gt;Object provenance / allocation site&lt;/h2&gt;
+
+&lt;p&gt;Sometimes we know where an object came from. For example, we may have seen it
+get allocated in the trace. If we saw an object’s allocation, we know that it
+does not alias (for example) any object that was passed in via a parameter. We
+can use this kind of information to our advantage.&lt;/p&gt;
+
+&lt;p&gt;For example, in the following made up IR snippet:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;trace(arg0):
+  v0 = malloc(8)
+  v1 = malloc(16)
+  ...
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;We know that (among other facts) &lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; doesn’t alias &lt;code class="language-plaintext highlighter-rouge"&gt;arg0&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;v1&lt;/code&gt; because we
+have seen its allocation site.&lt;/p&gt;
+
+&lt;p&gt;I saw this in the old V8 IR Hydrogen’s lightweight alias analysis&lt;sup id="fnref:fork" role="doc-noteref"&gt;&lt;a href="#fn:fork" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;:&lt;/p&gt;
+
+&lt;div class="language-c++ highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;enum&lt;/span&gt; &lt;span class="n"&gt;HAliasing&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+  &lt;span class="n"&gt;kMustAlias&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+  &lt;span class="n"&gt;kMayAlias&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+  &lt;span class="n"&gt;kNoAlias&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+
+&lt;span class="n"&gt;HAliasing&lt;/span&gt; &lt;span class="n"&gt;Query&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;HValue&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;HValue&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+  &lt;span class="c1"&gt;// The same SSA value always references the same object.&lt;/span&gt;
+  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kMustAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+
+  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsAllocate&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;||&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsInnerAllocatedObject&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="c1"&gt;// Two non-identical allocations can never be aliases.&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsAllocate&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsInnerAllocatedObject&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="c1"&gt;// An allocation can never alias a parameter or a constant.&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsParameter&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+  &lt;span class="p"&gt;}&lt;/span&gt;
+  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsAllocate&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;||&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsInnerAllocatedObject&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="c1"&gt;// An allocation can never alias a parameter or a constant.&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsParameter&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+  &lt;span class="p"&gt;}&lt;/span&gt;
+
+  &lt;span class="c1"&gt;// Constant objects can be distinguished statically.&lt;/span&gt;
+  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;Equals&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;?&lt;/span&gt; &lt;span class="n"&gt;kMustAlias&lt;/span&gt; &lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+  &lt;span class="p"&gt;}&lt;/span&gt;
+  &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kMayAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;There is plenty of other useful information such as:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;If we know at compile-time that object A has 5 at offset 0 and object B has 7
+at offset 0, then A and B don’t alias (thanks, CF)
+    &lt;ul&gt;
+      &lt;li&gt;In the RPython JIT in PyPy, this is used to determine if two user (Python)
+objects don’t alias because we know the contents of the user (Python) class
+field&lt;/li&gt;
+    &lt;/ul&gt;
+  &lt;/li&gt;
+  &lt;li&gt;Object size (though perhaps that is a special case of the above bullet)&lt;/li&gt;
+  &lt;li&gt;Field size/type&lt;/li&gt;
+  &lt;li&gt;Deferring alias checks to run-time
+    &lt;ul&gt;
+      &lt;li&gt;Have a branch &lt;code class="language-plaintext highlighter-rouge"&gt;if (a == b) { ... } else { ... }&lt;/code&gt;&lt;/li&gt;
+    &lt;/ul&gt;
+  &lt;/li&gt;
+  &lt;li&gt;…&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;If you have other fun ones, please write in.&lt;/p&gt;
+
+&lt;h2 id="interacting-with-other-instructions"&gt;Interacting with other instructions&lt;/h2&gt;
+
+&lt;p&gt;We only handle loads and stores in our optimizer. Unfortunately, this means we
+may accidentally cache stale information. Consider: what happens if a function
+call (or any other opaque instruction) writes into an object we are tracking?&lt;/p&gt;
+
+&lt;p&gt;The conservative approach is to invalidate all cached information on a function
+call. This is definitely correct, but it’s a bummer for the optimizer. Can we
+do anything?&lt;/p&gt;
+
+&lt;p&gt;Well, perhaps we are calling a well-known function or a specific IR
+instruction. In that case, we can annotate it with effects in the same abstract
+heap model: if the instruction does not write, or only writes to some heaps, we
+can at least only partially invalidate our heap.&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;known_builtin_functions&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+  &lt;span class="s"&gt;"Array_length"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Effects&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reads&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;writes&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Empty&lt;/span&gt;&lt;span class="p"&gt;()),&lt;/span&gt;
+  &lt;span class="s"&gt;"Object_setShape"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Effects&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reads&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Empty&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;writes&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
+  &lt;span class="s"&gt;"String_setEncoding"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Effects&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reads&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Empty&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;writes&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;String&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;However, if the function is unknown or otherwise opaque, we need at least more
+advanced alias information and perhaps even (partial) escape analysis.&lt;/p&gt;
+
+&lt;p&gt;Consider: even if an instruction takes no operands, we have no idea what state
+it has access to. If it writes to any object A, we cannot safely cache
+information about any other object B unless we know &lt;em&gt;for sure&lt;/em&gt; that A and B do
+not alias. And we don’t know what the instruction writes to. So we may only
+know we can cache information about B because it was allocated locally and has
+not escaped.&lt;/p&gt;
+
+&lt;h2 id="storing-vs-computing-on-the-fly"&gt;Storing vs computing on the fly&lt;/h2&gt;
+
+&lt;p&gt;Some runtimes such as ART &lt;a href="https://github.com/LineageOS/android_art/blob/8ce603e0c68899bdfbc9cd4c50dcc65bbf777982/compiler/optimizing/load_store_analysis.h#L395"&gt;pre-compute all of their alias information&lt;/a&gt; in a bit
+matrix. This makes more sense if you are using alias information in a full
+control-flow graph, where you might need to iterate over the graph a few times.
+In a trace context, you can do a lot in one single pass—no need to make a
+matrix.&lt;/p&gt;
+
+&lt;h2 id="when-is-this-useful-how-much"&gt;When is this useful? How much?&lt;/h2&gt;
+
+&lt;p&gt;As usual, this is a toy IR and a toy optimizer, so it’s hard to say how much
+faster it makes its toy programs.&lt;/p&gt;
+
+&lt;p&gt;In general, though, there is a dial for analysis and optimization that goes
+between precision and speed. This is a happy point on that dial, only a tiny
+incremental analysis cost bump above offset-only invalidation, but for higher
+precision. I like that tradeoff.&lt;/p&gt;
+
+&lt;p&gt;Also, it is very useful in JIT compilers where generally the managed language
+is a little &lt;a href="https://blog.regehr.org/archives/959"&gt;better-behaved than a C-like
+language&lt;/a&gt;. Somewhere in your IR there
+will be a lot of duplicate loads and stores from a strength reduction pass, and
+this can clean up the mess.&lt;/p&gt;
+
+&lt;!--
+## In other languages
+
+Taking address of objects throws a wrench in it
+
+Can't really do it in C, even though UB
+--&gt;
+
+&lt;!--
+https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/dfg/DFGObjectAllocationSinkingPhase.cpp
+--&gt;
+
+&lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
+
+&lt;p&gt;Thanks for joining as I work through a small use of type-based alias analysis
+for myself. I hope you enjoyed.&lt;/p&gt;
+
+&lt;h2 id="thanks"&gt;Thanks&lt;/h2&gt;
+
+&lt;p&gt;Thank you to &lt;a href="https://www.chrisgregory.me/"&gt;Chris Gregory&lt;/a&gt; for helpful feedback.&lt;/p&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:fork" role="doc-endnote"&gt;
+      &lt;p&gt;I made &lt;a href="https://github.com/tekknolagi/v8"&gt;a fork of V8&lt;/a&gt; to go spelunk
+around the Hydrogen IR. I reset the V8 repo to the last commit before they
+deleted it in favor of their new Sea of Nodes based IR called TurboFan. &lt;a href="#fnref:fork" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/toy-tbaa/</guid>
+      <pubDate>Mon, 16 Feb 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>A multi-entry CFG design conundrum</title>
       <link>https://bernsteinbear.com/blog/multiple-entry/?utm_source=rss</link>
@@ -1775,8 +2182,10 @@ compiler’s own &lt;code class="language-plaintext highlighter-rouge"&gt;DOMJIT
 &lt;span class="p"&gt;}&lt;/span&gt;
 &lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
 
-&lt;p&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;clobberize&lt;/code&gt; is the function that calls these functors (&lt;code class="language-plaintext highlighter-rouge"&gt;noOp&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;addWrite&lt;/code&gt; in
+&lt;p&gt;[&lt;code class="language-plaintext highlighter-rouge"&gt;clobberize&lt;/code&gt;][clobberize] is the function that calls these functors (&lt;code class="language-plaintext highlighter-rouge"&gt;noOp&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;addWrite&lt;/code&gt; in
 this case) for each effect that the given IR instruction &lt;code class="language-plaintext highlighter-rouge"&gt;node&lt;/code&gt; declares.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://github.com/WebKit/WebKit/blob/4865155d2fcb7cf39aad87597da8f29909d9b7f7/Source/JavaScriptCore/dfg/DFGClobberize.h#L49"&gt;clobberize&lt;/a&gt;&lt;/p&gt;
 
 &lt;p&gt;I’ve pulled some relevant snippets of &lt;code class="language-plaintext highlighter-rouge"&gt;clobberize&lt;/code&gt;, which is quite long, that I
 think are interesting.&lt;/p&gt;
@@ -3292,1552 +3701,6 @@ McSherry&lt;/a&gt;’s
 &lt;p&gt;That’s all for now, folks. Just a couple Datalog snippets. Happy hacking.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/liveness-datalog/</guid>
-      <pubDate>Wed, 13 Aug 2025 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Linear scan register allocation on SSA</title>
-      <link>https://bernsteinbear.com/blog/linear-scan/?utm_source=rss</link>
-      <description>&lt;p&gt;&lt;em&gt;Much of the code and education that resulted in this post happened with &lt;a href="https://tenderlovemaking.com/"&gt;Aaron
-Patterson&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
-
-&lt;p&gt;The fundamental problem in register allocation is to take an IR that uses a
-virtual registers (as many as you like) and rewrite it to use a finite amount
-of physical registers and stack space&lt;sup id="fnref:calendaring" role="doc-noteref"&gt;&lt;a href="#fn:calendaring" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
-
-&lt;p&gt;This is an example of a code snippet using virtual registers:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;add R1, R2 -&amp;gt; R3
-add R1, R3 -&amp;gt; R4
-ret R4
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;And here is the same example after it has been passed through a register
-allocator (note that Rs changed to Ps):&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;add Stack[0], P0 -&amp;gt; P1
-add Stack[0], P1 -&amp;gt; P0
-ret
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Each virtual register was assigned a physical place: R1 to the stack, R2 to P0,
-R3 to P1, and R4 &lt;em&gt;also&lt;/em&gt; to P0 (since we weren’t using R2 anymore).&lt;/p&gt;
-
-&lt;p&gt;People use register allocators like they use garbage collectors: it’s an
-abstraction that can manage your resources for you, maybe with some cost. When
-writing the back-end of a compiler, it’s probably much easier to have a
-separate register-allocator-in-a-box than manually managing variable lifetimes
-while also considering all of your different target architectures.&lt;/p&gt;
-
-&lt;p&gt;How do JIT compilers do register allocation? Well, “everyone knows” that “every
-JIT does its own variant of linear scan”&lt;sup id="fnref:everyone" role="doc-noteref"&gt;&lt;a href="#fn:everyone" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt;. This bothered me for some
-time because I’ve worked on a couple of JITs and still didn’t understand the
-backend bits.&lt;/p&gt;
-
-&lt;p&gt;There are a couple different approaches to register allocation, but in this
-post we’ll focus on &lt;em&gt;linear scan of SSA&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;I started reading &lt;a href="/assets/img/wimmer-linear-scan-ssa.pdf"&gt;Linear Scan Register Allocation on SSA Form&lt;/a&gt; (PDF,
-2010) by Wimmer and Franz after writing &lt;a href="/blog/ssa/"&gt;A catalog of ways to generate
-SSA&lt;/a&gt;. Reading alone didn’t make a ton of sense—I ended up with a
-lot of very frustrated margin notes. I started trying to implement it alongside
-the paper. As it turns out, though, there is a rich history of papers in this
-area that it leans on really heavily. I needed to follow the chain of
-references!&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;For example, here is a lovely explanation of the process, start to finish,
-from Christian Wimmer’s &lt;a href="/assets/img/wimmer-masters-thesis.pdf"&gt;Master’s thesis&lt;/a&gt; (PDF, 2004).&lt;/p&gt;
-
-  &lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;LINEAR_SCAN
-  // order blocks and operations (including loop detection)
-  COMPUTE_BLOCK_ORDER
-  NUMBER_OPERATIONS
-  // create intervals with live ranges
-  COMPUTE_LOCAL_LIVE_SETS
-  COMPUTE_GLOBAL_LIVE_SETS
-  BUILD_INTERVALS
-  // allocate registers
-  WALK_INTERVALS
-  RESOLVE_DATA_FLOW
-  // replace virtual registers with physical registers
-  ASSIGN_REG_NUM
-  // special handling for the Intel FPU stack
-  ALLOCATE_FPU_STACK
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;  &lt;/div&gt;
-
-  &lt;p&gt;There it is, all laid out at once. It’s very refreshing when compared to all
-of the compact research papers.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;I didn’t realize that there were more than one or two papers on linear scan. So
-this post will also incidentally serve as a bit of a survey or a history of
-linear scan—as best as I can figure it out, anyway. If you were in or near
-the room where it happened, please feel free to reach out and correct some
-parts.&lt;/p&gt;
-
-&lt;h2 id="some-example-code"&gt;Some example code&lt;/h2&gt;
-
-&lt;p&gt;Throughout this post, we’ll use an example SSA code snippet from Wimmer2010,
-adapted from phi-SSA to block-argument-SSA. Wimmer2010’s code snippet is
-between the arrows and we add some filler (as alluded to in the paper):&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;label B1(R10, R11):
-jmp B2($1, R11)
- # vvvvvvvvvv #
-label B2(R12, R13)
-cmp R13, $1
-branch lessThan B4()
-
-label B3()
-mul R12, R13 -&amp;gt; R14
-sub R13, $1 -&amp;gt; R15
-jump B2(R14, R15)
-
-label B4()
- # ^^^^^^^^^^ #
-add R10, R12 -&amp;gt; R16
-ret R16
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Virtual registers start with R and are defined either with an arrow or by a
-block parameter.&lt;/p&gt;
-
-&lt;p&gt;Because it takes a moment to untangle the unfamiliar syntax and draw the
-control-flow graph by hand, I’ve also provided the same code in graphical form.
-Block names (and block parameters) are shaded with grey.&lt;/p&gt;
-
-&lt;!--
-# dot IN.dot -Tsvg -Nfontname=Monospace -Efontname=Monospace &gt; OUT.svg
-
-digraph G {
-node [shape=plaintext]
-B1 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B1(R10, R11)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;jump →B2($1, R11)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-B1:s -&gt; B2:params:n;
-B2 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B2(R12, R13)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;cmp R13, $1&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;blt →B4, →B3&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-B2:s -&gt; B4:params:n;
-B2:s -&gt; B3:params:n;
-B3 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B3()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;R14 = mul R12, R13&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;R15 = sub R13, $1&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="2"&gt;jump →B2(R14, R15)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-B3:s -&gt; B2:params:n;
-B4 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B4()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;R16 = add R10, R12&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;ret R16&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-}
---&gt;
-&lt;figure&gt;
-&lt;object class="svg" type="image/svg+xml" data="/assets/img/wimmer-lsra-cfg.svg"&gt;&lt;/object&gt;
-&lt;figcaption&gt;
-    &lt;p&gt;We have one entry block, &lt;code class="language-plaintext highlighter-rouge"&gt;B1&lt;/code&gt;, that is implied in
-Wimmer2010. Its only job is to define &lt;code class="language-plaintext highlighter-rouge"&gt;R10&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;R11&lt;/code&gt; for the rest of the CFG.&lt;/p&gt;
-
-    &lt;p&gt;Then we have a loop between &lt;code class="language-plaintext highlighter-rouge"&gt;B2&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;B3&lt;/code&gt; with an implicit fallthrough. Instead
-of doing that, we instead generate a conditional branch with explicit jump
-targets. This makes it possible to re-order blocks as much as we like.&lt;/p&gt;
-
-    &lt;p&gt;The contents of &lt;code class="language-plaintext highlighter-rouge"&gt;B4&lt;/code&gt; are also just to fill in the blanks from Wimmer2010 and
-add some variable uses.&lt;/p&gt;
-  &lt;/figcaption&gt;
-&lt;/figure&gt;
-
-&lt;p&gt;Our goal for the post is to analyze this CFG, assign physical locations
-(registers or stack slots) to each virtual register, and then rewrite the code
-appropriately.&lt;/p&gt;
-
-&lt;p&gt;For now, let’s rewind the clock and look at how linear scan came about.&lt;/p&gt;
-
-&lt;h2 id="in-the-beginning"&gt;In the beginning&lt;/h2&gt;
-
-&lt;p&gt;Linear scan register allocation (LSRA) has been around for awhile. It’s neat
-because it does the actual register assignment part of register allocation in
-one pass over your low-level IR. (We’ll talk more about what that means in a
-minute.)&lt;/p&gt;
-
-&lt;p&gt;It first appeared in the literature in &lt;a href="/assets/img/tcc-linearscan-ra.pdf"&gt;tcc: A System for Fast, Flexible, and
-High-level Dynamic Code Generation&lt;/a&gt; (PDF, 1997) by Poletto, Engler,
-and Kaashoek. (Until writing this post, I had never seen this paper. It was
-only on a re-read of the 1999 paper (below) that I noticed it.) In this paper,
-they mostly describe a staged variant of C called ‘C (TickC), for which a fast
-register allocator is quite useful.&lt;/p&gt;
-
-&lt;p&gt;Then came a paper called &lt;a href="/assets/img/quality-speed-linear-scan-ra-clean.pdf"&gt;Quality and Speed in Linear-scan Register
-Allocation&lt;/a&gt; (PDF, 1998) by Traub, Holloway, and Smith. It adds
-some optimizations (lifetime holes, binpacking) to the algorithm presented in
-Poletto1997.&lt;/p&gt;
-
-&lt;p&gt;Then came the first paper I read, and I think the paper everyone refers to when
-they talk about linear scan: &lt;a href="/assets/img/linearscan-ra.pdf"&gt;Linear Scan Register Allocation&lt;/a&gt; (PDF,
-1999) by Poletto and Sarkar. In this paper, they give a fast alternative to
-graph coloring register allocation, especially motivated by just-in-time
-compilers. In retrospect, it seems to be a bit of a rehash of the previous two
-papers.&lt;/p&gt;
-
-&lt;p&gt;Linear scan (1997, 1999) operates on &lt;em&gt;live ranges&lt;/em&gt; instead of virtual
-registers. A live range is a pair of integers [start, end) (end is exclusive)
-that begins when the register is defined and ends when it is last used. This
-means that there is an assumption that the order for instructions in your
-program has already been fixed into a single linear sequence! It also means
-that you have given each instruction a number that represents its position in
-that order.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;This may or not be a surprising requirement depending on your compilers
-background. It was surprising to me because I often live in control flow
-graph fantasy land where blocks are unordered and instructions sometimes
-float around. But if you live in a land of basic blocks that are already in
-reverse post order, then it may be less surprising.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;In non-SSA-land, these live ranges are different from the virtual registers:
-they represent some kind of lifetimes of each &lt;em&gt;version&lt;/em&gt; of a virtual register.
-For an example, consider the following code snippet:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;...      -&amp;gt; a
-add 1, a -&amp;gt; b
-add 1, b -&amp;gt; c
-add 1, c -&amp;gt; a
-add 1, a -&amp;gt; d
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;There are two definitions of &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; and they each live for different amounts of
-time:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;                  a  b  c  a  d
-...      -&amp;gt; a     |                &amp;lt;- the first a
-add 1, a -&amp;gt; b     v  |
-add 1, b -&amp;gt; c        v  |
-add 1, c -&amp;gt; a           v  |       &amp;lt;- the second a
-add 1, a -&amp;gt; d              v  |
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;In fact, the ranges are completely disjoint. It wouldn’t make sense for the
-register allocator to consider variables, because there’s no reason the two
-&lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt;s should necessarily live in the same physical register.&lt;/p&gt;
-
-&lt;p&gt;In SSA land, it’s a little different: since each virtual registers only has one
-definition (by, uh, definition), live ranges are an exact 1:1 mapping with
-virtual registers. &lt;strong&gt;We’ll focus on SSA for the remainder of the post because
-this is what I am currently interested in.&lt;/strong&gt; The research community seems to
-have decided that allocating directly on SSA gives more information to the
-register allocator&lt;sup id="fnref:allocate-on-ssa" role="doc-noteref"&gt;&lt;a href="#fn:allocate-on-ssa" class="footnote" rel="footnote"&gt;3&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
-
-&lt;p&gt;Linear scan starts at the point in your compiler process where you already know
-these live ranges—that you have already done some kind of analysis to build a
-mapping.&lt;/p&gt;
-
-&lt;p&gt;In this blog post, we’re going to back up to the point where we’ve just built
-our SSA low-level IR and have yet to do any work on it. We’ll do all of the
-analysis from scratch.&lt;/p&gt;
-
-&lt;p&gt;Part of this analysis is called &lt;em&gt;liveness analysis&lt;/em&gt;.&lt;/p&gt;
-
-&lt;h2 id="liveness-analysis"&gt;Liveness analysis&lt;/h2&gt;
-
-&lt;p&gt;The result of liveness analysis is a mapping of &lt;code class="language-plaintext highlighter-rouge"&gt;BasicBlock -&amp;gt;
-Set[Instruction]&lt;/code&gt; that tells you which virtual registers (remember, since we’re
-in SSA, instruction==vreg) are alive (used later) at the beginning of the basic
-block. This is called a &lt;em&gt;live-in&lt;/em&gt; set. For example:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;B0:
-... -&amp;gt; R12
-... -&amp;gt; R13
-jmp B1
-
-B1:
-mul R12, R13 -&amp;gt; R14
-sub R13, 1 -&amp;gt; R15
-jmp B2
-
-B2:
-add R14, R15 -&amp;gt; R16
-ret R16
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;We compute liveness by working backwards: a variable is &lt;em&gt;live&lt;/em&gt; from the moment
-it is backwardly-first used until its definition.&lt;/p&gt;
-
-&lt;p&gt;In this case, at the end of B2, nothing is live. If we step backwards to the
-&lt;code class="language-plaintext highlighter-rouge"&gt;ret&lt;/code&gt;, we see a use: R16 becomes live. If we step once more, we see its
-definition—R16 no longer live—but now we see a use of R14 and R15, which
-become live. This leaves us with R14 and R15 being &lt;em&gt;live-in&lt;/em&gt; to B2.&lt;/p&gt;
-
-&lt;p&gt;This live-in set becomes B1’s &lt;em&gt;live-out&lt;/em&gt; set because B1 is B2’s predecessor. We
-continue in B1. We could continue backwards linearly through the blocks. In
-fact, I encourage you to do it as an exercise. You should have a (potentially
-emtpy) set of registers per basic block.&lt;/p&gt;
-
-&lt;p&gt;It gets more interesting, though, when we have branches: what does it mean when
-two blocks’ live-in results merge into their shared predecessor? If we have two
-blocks A and B that are successors of a block C, the live-in sets get
-&lt;em&gt;unioned&lt;/em&gt; together.&lt;/p&gt;
-
-&lt;!--
-digraph G {
-  node [shape=square];
-  C -&gt; A;
-  C -&gt; B;
-}
---&gt;
-&lt;figure&gt;
-&lt;svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="98pt" height="116pt" viewBox="0.00 0.00 98.00 116.00"&gt;
-&lt;g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 112)"&gt;
-&lt;title&gt;G&lt;/title&gt;
-&lt;polygon fill="white" stroke="none" points="-4,4 -4,-112 94,-112 94,4 -4,4" /&gt;
-&lt;!-- C --&gt;
-&lt;g id="node1" class="node"&gt;
-&lt;title&gt;C&lt;/title&gt;
-&lt;polygon fill="none" stroke="black" points="63,-108 27,-108 27,-72 63,-72 63,-108" /&gt;
-&lt;text text-anchor="middle" x="45" y="-85.8" font-family="Times,serif" font-size="14.00"&gt;C&lt;/text&gt;
-&lt;/g&gt;
-&lt;!-- A --&gt;
-&lt;g id="node2" class="node"&gt;
-&lt;title&gt;A&lt;/title&gt;
-&lt;polygon fill="none" stroke="black" points="36,-36 0,-36 0,0 36,0 36,-36" /&gt;
-&lt;text text-anchor="middle" x="18" y="-13.8" font-family="Times,serif" font-size="14.00"&gt;A&lt;/text&gt;
-&lt;/g&gt;
-&lt;!-- C&amp;#45;&amp;gt;A --&gt;
-&lt;g id="edge1" class="edge"&gt;
-&lt;title&gt;C-&amp;gt;A&lt;/title&gt;
-&lt;path fill="none" stroke="black" d="M38.33,-71.7C35.42,-64.15 31.93,-55.12 28.68,-46.68" /&gt;
-&lt;polygon fill="black" stroke="black" points="32.01,-45.59 25.14,-37.52 25.48,-48.11 32.01,-45.59" /&gt;
-&lt;/g&gt;
-&lt;!-- B --&gt;
-&lt;g id="node3" class="node"&gt;
-&lt;title&gt;B&lt;/title&gt;
-&lt;polygon fill="none" stroke="black" points="90,-36 54,-36 54,0 90,0 90,-36" /&gt;
-&lt;text text-anchor="middle" x="72" y="-13.8" font-family="Times,serif" font-size="14.00"&gt;B&lt;/text&gt;
-&lt;/g&gt;
-&lt;!-- C&amp;#45;&amp;gt;B --&gt;
-&lt;g id="edge2" class="edge"&gt;
-&lt;title&gt;C-&amp;gt;B&lt;/title&gt;
-&lt;path fill="none" stroke="black" d="M51.67,-71.7C54.58,-64.15 58.07,-55.12 61.32,-46.68" /&gt;
-&lt;polygon fill="black" stroke="black" points="64.52,-48.11 64.86,-37.52 57.99,-45.59 64.52,-48.11" /&gt;
-&lt;/g&gt;
-&lt;/g&gt;
-&lt;/svg&gt;
-&lt;/figure&gt;
-
-&lt;p&gt;That is, if there were some register R0 live-in to B and some register R1
-live-in to A, both R0 and R1 would be live-out of C. They may also be live-in
-to C, but that entirely depends on the contents of C.&lt;/p&gt;
-
-&lt;p&gt;Since the total number of virtual registers is nonnegative and is finite for a
-given program, it seems like a good lattice for an &lt;em&gt;abstract interpreter&lt;/em&gt;.
-That’s right, we’re doing AI.&lt;/p&gt;
-
-&lt;p&gt;In this liveness analysis, we’ll:&lt;/p&gt;
-
-&lt;ol&gt;
-  &lt;li&gt;compute a summary of what virtual registers each basic block needs to be
-alive (gen set) and what variables it defines (kill set)&lt;/li&gt;
-  &lt;li&gt;initialize all live-in sets to 0&lt;/li&gt;
-  &lt;li&gt;do an iterative dataflow analysis over the blocks until the live-in sets
-converge&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;p&gt;We store gen, kill, and live-in sets as bitsets, using some APIs conveniently
-available on Ruby’s Integer class.&lt;/p&gt;
-
-&lt;p&gt;Like most abstract interpretations, it doesn’t matter what order we iterate
-over the collection of basic blocks for correctness, but it &lt;em&gt;does&lt;/em&gt; matter for
-performance. In this case, iterating backwards (&lt;code class="language-plaintext highlighter-rouge"&gt;post_order&lt;/code&gt;) converges much
-faster than forwards (&lt;code class="language-plaintext highlighter-rouge"&gt;reverse_post_order&lt;/code&gt;):&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;compute_initial_liveness_sets&lt;/span&gt; &lt;span class="n"&gt;order&lt;/span&gt;
-    &lt;span class="c1"&gt;# Map of Block -&amp;gt; what variables it alone needs to be live-in&lt;/span&gt;
-    &lt;span class="n"&gt;gen&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Hash&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-    &lt;span class="c1"&gt;# Map of Block -&amp;gt; what variables it alone defines&lt;/span&gt;
-    &lt;span class="n"&gt;kill&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Hash&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-    &lt;span class="n"&gt;order&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;instructions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;reverse_each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;out&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;out&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;as_vreg&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;out&lt;/span&gt;
-          &lt;span class="n"&gt;kill&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;|=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;out&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;num&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-        &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;vreg_ins&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;vreg&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-          &lt;span class="n"&gt;gen&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;|=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;vreg&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;num&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;param&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;kill&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;|=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;param&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;num&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;gen&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;kill&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;analyze_liveness&lt;/span&gt;
-    &lt;span class="n"&gt;order&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;post_order&lt;/span&gt;
-    &lt;span class="n"&gt;gen&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;kill&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;compute_initial_liveness_sets&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;order&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="c1"&gt;# Map from Block -&amp;gt; what variables are live-in&lt;/span&gt;
-    &lt;span class="n"&gt;live_in&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Hash&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-    &lt;span class="n"&gt;changed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;true&lt;/span&gt;
-    &lt;span class="k"&gt;while&lt;/span&gt; &lt;span class="n"&gt;changed&lt;/span&gt;
-      &lt;span class="n"&gt;changed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;false&lt;/span&gt;
-      &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="k"&gt;in&lt;/span&gt; &lt;span class="n"&gt;order&lt;/span&gt;
-        &lt;span class="c1"&gt;# Union-ing all the successors' live-in sets gives us this block's&lt;/span&gt;
-        &lt;span class="c1"&gt;# live-out, which is a good starting point for computing the live-in&lt;/span&gt;
-        &lt;span class="n"&gt;block_live&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;successors&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;succ&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="n"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;succ&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="p"&gt;}.&lt;/span&gt;&lt;span class="nf"&gt;reduce&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="ss"&gt;:|&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;block_live&lt;/span&gt; &lt;span class="o"&gt;|=&lt;/span&gt; &lt;span class="n"&gt;gen&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-        &lt;span class="n"&gt;block_live&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;=&lt;/span&gt; &lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;kill&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;block_live&lt;/span&gt;
-          &lt;span class="n"&gt;changed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;true&lt;/span&gt;
-          &lt;span class="n"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block_live&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="n"&gt;live_in&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;We could also use a worklist here, and it would be faster, but eh. Repeatedly
-iterating over all blocks is fine for now.&lt;/p&gt;
-
-&lt;p&gt;The Wimmer2010 paper skips this liveness analysis entirely by assuming some
-computed information about your CFG: where loops start and end. It also
-requires all loop blocks be contiguous. Then it makes variables defined before
-a loop and used at any point inside the loop live &lt;em&gt;for the whole loop&lt;/em&gt;. By
-having this information available, it folds the liveness analysis into the live
-range building, which we’ll instead do separately in a moment.&lt;/p&gt;
-
-&lt;p&gt;The Wimmer approach sounded complicated and finicky. Maybe it is, maybe it
-isn’t. So I went with a dataflow liveness analysis instead. If it turns out to
-be the slow part, maybe it will matter enough to learn about this loop tagging
-method.&lt;/p&gt;
-
-&lt;p&gt;For now, we will pick a &lt;em&gt;schedule&lt;/em&gt; for the control-flow graph.&lt;/p&gt;
-
-&lt;h2 id="scheduling"&gt;Scheduling&lt;/h2&gt;
-
-&lt;p&gt;In order to build live ranges, you have to have some kind of numbering system
-for your instructions, otherwise a live range’s start and end are meaningless.
-We can write a function that fixes a particular block order (in this case,
-reverse post-order) and then assigns each block and instruction a number in a
-linear sequence. You can think of this as flattening or projecting the graph:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;number_instructions!&lt;/span&gt;
-    &lt;span class="vi"&gt;@block_order&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;rpo&lt;/span&gt;
-    &lt;span class="n"&gt;number&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;16&lt;/span&gt;  &lt;span class="c1"&gt;# just so we match the Wimmer2010 paper&lt;/span&gt;
-    &lt;span class="vi"&gt;@block_order&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;blk&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="n"&gt;blk&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;number&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;number&lt;/span&gt;
-      &lt;span class="n"&gt;number&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-      &lt;span class="n"&gt;blk&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;instructions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;number&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;number&lt;/span&gt;
-        &lt;span class="n"&gt;number&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="n"&gt;blk&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;to&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;number&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;!--
-I think using RPO is just a heuristic; other block orders may shrink live
-ranges, reduce parallel moves, etc. I could be way off base here but I don't
-think we even have to order the blocks in dominance order because we're doing a
-full dataflow-based liveness analysis; the ordering and positioning
-requirements from Wimmer2010 come from the quick liveness with loop headers
-thing.
---&gt;
-
-&lt;p&gt;A couple interesting things to note:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;We number blocks because we use block starts as the start index for all of
-that block’s parameters&lt;/li&gt;
-  &lt;li&gt;We start numbering at 16 just so we can eyeball things and make sure they
-line up with the Wimmer2010 paper&lt;/li&gt;
-  &lt;li&gt;We only give out even numbers because later we’ll insert loads and stores at
-odd-numbered instructions
-    &lt;ul&gt;
-      &lt;li&gt;Cinder does this to &lt;a href="https://github.com/facebookincubator/cinderx/blob/2b8774f077d6ef441207067411d157bb4f94a40b/cinderx/Jit/lir/regalloc.cpp#L243"&gt;separately identify instruction input and instruction output&lt;/a&gt;&lt;/li&gt;
-      &lt;li&gt;Vox &lt;a href="https://github.com/MrSmith33/vox/blob/b49cc734d6e5119e20229ee2d14612e33c6a5499/source/vox/be/reg_alloc/linear_scan.d#L10"&gt;splits only at odd positions&lt;/a&gt;&lt;/li&gt;
-    &lt;/ul&gt;
-  &lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;Even though we have extra instructions, it looks very similar to the example in
-the Wimmer2010 paper.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;16: label B1(R10, R11):
-18: jmp B2($1, R11)
-     # vvvvvvvvvv #
-20: label B2(R12, R13)
-22: cmp R13, $1
-24: branch lessThan B4() else B3()
-
-26: label B3()
-28: mul R12, R13 -&amp;gt; R14
-30: sub R13, $1 -&amp;gt; R15
-32: jump B2(R14, R15)
-
-34: label B4()
-     # ^^^^^^^^^^ #
-36: add R10, R12 -&amp;gt; R16
-38: ret R16
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Since we’re not going to be messing with the order of the instructions within a
-block anymore, all we have to do going forward is make sure that we iterate
-through the blocks in &lt;code class="language-plaintext highlighter-rouge"&gt;@block_order&lt;/code&gt;.&lt;/p&gt;
-
-&lt;p&gt;Finally, we have all that we need to compute live ranges.&lt;/p&gt;
-
-&lt;h2 id="live-ranges"&gt;Live ranges&lt;/h2&gt;
-
-&lt;p&gt;We’ll more or less copy the algorithm to compute live ranges from the
-Wimmer2010 paper. We’ll have two main differences:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;We’re going to compute live ranges, not live intervals (as they do in the
-paper)&lt;/li&gt;
-  &lt;li&gt;We’re going to use our dataflow liveness analysis, not the loop header thing&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I know I said we were going to be computing live ranges. So why am I presenting
-you with a function called &lt;code class="language-plaintext highlighter-rouge"&gt;build_intervals&lt;/code&gt;? That’s because early in
-the history of linear scan (Traub1998!), people moved from having a single range for a
-particular virtual register to having &lt;em&gt;multiple&lt;/em&gt; disjoint ranges. This
-collection of multiple ranges is called an &lt;em&gt;interval&lt;/em&gt; and it exists to free up
-registers in the context of branches.&lt;/p&gt;
-
-&lt;p&gt;For example, in the our IR snippet (above), R12 is defined in B2 as a block
-parameter, used in B3, and then not used again until some indetermine point in
-B4. (Our example uses it immediately in an add instruction to keep things
-short, but pretend the second use is some time away.)&lt;/p&gt;
-
-&lt;p&gt;The Wimmer2010 paper creates a &lt;em&gt;lifetime hole&lt;/em&gt; between 28 and 34, meaning that the
-interval for R12 (called i12) is &lt;code class="language-plaintext highlighter-rouge"&gt;[[20, 28), [34, ...)]&lt;/code&gt;. Interval holes are
-not strictly necessary—they exist to generate better code. So for this post,
-we’re going to start simple and assume 1 interval == 1 range. We may come back
-later and add additional ranges, but that will require some fixes to our later
-implementation. We’ll note where we think those fixes should happen.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;BUILDINTERVALS
-for each block b in reverse order do
-  live = union of successor.liveIn for each successor of b
-  for each phi function phi of successors of b do
-    live.add(phi.inputOf(b))
-  for each opd in live do
-    intervals[opd].addRange(b.from, b.to)
-  for each operation op of b in reverse order do
-    for each output operand opd of op do
-      intervals[opd].setFrom(op.id)
-      live.remove(opd)
-    for each input operand opd of op do
-      intervals[opd].addRange(b.from, op.id)
-      live.add(opd)
-  for each phi function phi of b do
-    live.remove(phi.output)
-  if b is loop header then
-    loopEnd = last block of the loop starting at b
-    for each opd in live do
-      intervals[opd].addRange(b.from, loopEnd.to)
-  b.liveIn = live
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Anyway, here is the mostly-copied annotated implementation of BuildIntervals
-from the Wimmer2010 paper:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;build_intervals&lt;/span&gt; &lt;span class="n"&gt;live_in&lt;/span&gt;
-    &lt;span class="n"&gt;intervals&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Hash&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt;
-    &lt;span class="vi"&gt;@block_order&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;reverse_each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="c1"&gt;# live = union of successor.liveIn for each successor of b&lt;/span&gt;
-      &lt;span class="c1"&gt;# this is the *live out* of the current block since we're going to be&lt;/span&gt;
-      &lt;span class="c1"&gt;# iterating backwards over instructions&lt;/span&gt;
-      &lt;span class="n"&gt;live&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;successors&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;succ&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="n"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;succ&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="p"&gt;}.&lt;/span&gt;&lt;span class="nf"&gt;reduce&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="ss"&gt;:|&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="c1"&gt;# for each phi function phi of successors of b do&lt;/span&gt;
-      &lt;span class="c1"&gt;#   live.add(phi.inputOf(b))&lt;/span&gt;
-      &lt;span class="n"&gt;live&lt;/span&gt; &lt;span class="o"&gt;|=&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;out_vregs&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;vreg&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;vreg&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;num&lt;/span&gt; &lt;span class="p"&gt;}.&lt;/span&gt;&lt;span class="nf"&gt;reduce&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="ss"&gt;:|&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="n"&gt;each_bit&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;live&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;idx&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;opd&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;vreg&lt;/span&gt; &lt;span class="n"&gt;idx&lt;/span&gt;
-        &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;opd&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;&lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;instructions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;reverse&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;out&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;out&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;as_vreg&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;out&lt;/span&gt;
-          &lt;span class="c1"&gt;# for each output operand opd of op do&lt;/span&gt;
-          &lt;span class="c1"&gt;#   intervals[opd].setFrom(op.id)&lt;/span&gt;
-          &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;out&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;&lt;span class="nf"&gt;set_from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;number&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-        &lt;span class="c1"&gt;# for each input operand opd of op do&lt;/span&gt;
-        &lt;span class="c1"&gt;#   intervals[opd].addRange(b.from, op.id)&lt;/span&gt;
-        &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;vreg_ins&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;opd&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-          &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;opd&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;&lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;number&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;default_proc&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;nil&lt;/span&gt;
-    &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;freeze&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Another difference is that since we’re using block parameters, we don’t really
-have this &lt;code class="language-plaintext highlighter-rouge"&gt;phi.inputOf&lt;/code&gt; thing. That’s just the block argument.&lt;/p&gt;
-
-&lt;p&gt;The last difference is that since we’re skipping the loop liveness hack, we
-don’t modify a block’s &lt;code class="language-plaintext highlighter-rouge"&gt;live&lt;/code&gt; set as we iterate through instructions.&lt;/p&gt;
-
-&lt;p&gt;I know we said we’re building live ranges, so our &lt;code class="language-plaintext highlighter-rouge"&gt;Interval&lt;/code&gt; class only has
-one &lt;code class="language-plaintext highlighter-rouge"&gt;Range&lt;/code&gt; on it. This is Ruby’s built-in range, but it’s really just being
-used as a tuple of integers here.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="nb"&gt;attr_reader&lt;/span&gt; &lt;span class="ss"&gt;:range&lt;/span&gt;
-
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;=&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;
-      &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="no"&gt;ArgumentError&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"Invalid range: &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt; to &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="vi"&gt;@range&lt;/span&gt;
-      &lt;span class="vi"&gt;@range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="k"&gt;return&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="vi"&gt;@range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="vi"&gt;@range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;begin&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;&lt;span class="nf"&gt;min&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="vi"&gt;@range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;&lt;span class="nf"&gt;max&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;set_from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="vi"&gt;@range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="vi"&gt;@range&lt;/span&gt;
-      &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="vi"&gt;@range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;=&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;
-        &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="no"&gt;ArgumentError&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"Invalid range: &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt; to &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="vi"&gt;@range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="vi"&gt;@range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;else&lt;/span&gt;
-      &lt;span class="c1"&gt;# This happens when we don't have a use of the vreg&lt;/span&gt;
-      &lt;span class="c1"&gt;# If we don't have a use, the live range is very short&lt;/span&gt;
-      &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;==&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;is_a?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="no"&gt;Interval&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="vi"&gt;@range&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Note that there’s some implicit behavior happening here:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;If we haven’t initialized a range yet, we build one automatically&lt;/li&gt;
-  &lt;li&gt;If we have a range, &lt;code class="language-plaintext highlighter-rouge"&gt;add_range&lt;/code&gt; builds the smallest range that overlaps with
-the existing range and incoming information&lt;/li&gt;
-  &lt;li&gt;If we have a range, &lt;code class="language-plaintext highlighter-rouge"&gt;set_from&lt;/code&gt; may shrink it&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;For example, if we have &lt;code class="language-plaintext highlighter-rouge"&gt;[1, 5)&lt;/code&gt; and someone calls &lt;code class="language-plaintext highlighter-rouge"&gt;add_range(7, 10)&lt;/code&gt;, we end
-up with &lt;code class="language-plaintext highlighter-rouge"&gt;[1, 10)&lt;/code&gt;. There’s no gap in the middle.&lt;/p&gt;
-
-&lt;p&gt;And if we have &lt;code class="language-plaintext highlighter-rouge"&gt;[1, 7)&lt;/code&gt; and someone calls &lt;code class="language-plaintext highlighter-rouge"&gt;set_from(3)&lt;/code&gt;, we end up with &lt;code class="language-plaintext highlighter-rouge"&gt;[3,
-7)&lt;/code&gt;.&lt;/p&gt;
-
-&lt;p&gt;After figuring out from scratch some of these assumptions about what the
-interval/range API should and should not do, Aaron and I realized that there
-was some actual code for &lt;code class="language-plaintext highlighter-rouge"&gt;add_range&lt;/code&gt; in a different, earlier paper: &lt;a href="/assets/img/linear-scan-ra-context-ssa.pdf"&gt;Linear
-Scan Register Allocation in the Context of SSA Form and Register
-Constraints&lt;/a&gt; (PDF, 2002) by Mössenböck and Pfeiffer.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;ADDRANGE(i: Instruction; b: Block; end: integer)
-  if b.first.n ≤ i.n ≤ b.last.n then range ← [i.n, end[ else range ← [b.first.n, end[
-  add range to interval[i.n] // merging adjacent ranges
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Unfortunately, many other versions of this PDF look absolutely horrible (like
-bad OCR) and I had to do some digging to find the version linked above.&lt;/p&gt;
-
-&lt;p&gt;Finally we can start thinking about doing some actual register assignment.
-Let’s return to the 90s.&lt;/p&gt;
-
-&lt;h2 id="linear-scan"&gt;Linear scan&lt;/h2&gt;
-
-&lt;p&gt;Because we have faithfully kept 1 interval == 1 range, we can re-use the linear
-scan algorithm from Poletto1999 (which looks, at a glance, to be the same
-as 1997).&lt;/p&gt;
-
-&lt;p&gt;I recommend looking at the PDF side by side with the code. We have tried to
-keep the structure very similar.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;LinearScanRegisterAllocation
-active ← {}
-foreach live interval i, in order of increasing start point
-  ExpireOldIntervals(i)
-  if length(active) = R then
-    SpillAtInterval(i)
-  else
-    register[i] ← a register removed from pool of free registers
-    add i to active, sorted by increasing end point
-
-ExpireOldIntervals(i)
-foreach interval j in active, in order of increasing end point
-  if endpoint[j] ≥ startpoint[i] then
-    return
-  remove j from active
-  add register[j] to pool of free registers
-
-SpillAtInterval(i)
-spill ← last interval in active
-if endpoint[spill] &amp;gt; endpoint[i] then
-  register[i] ← register[spill]
-  location[spill] ← new stack location
-  remove spill from active
-  add i to active, sorted by increasing end point
-else
-  location[i] ← new stack location
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Note that unlike in many programming languages these days, &lt;code class="language-plaintext highlighter-rouge"&gt;{}&lt;/code&gt; in the
-algorithm description represents a &lt;em&gt;set&lt;/em&gt;, not a (hash-)map.&lt;/p&gt;
-
-&lt;p&gt;In our Ruby code, we represent &lt;code class="language-plaintext highlighter-rouge"&gt;active&lt;/code&gt; as an array:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;ye_olde_linear_scan&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;num_registers&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;num_registers&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-      &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="no"&gt;ArgumentError&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"Number of registers must be positive"&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="n"&gt;free_registers&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Set&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="n"&gt;num_registers&lt;/span&gt;
-    &lt;span class="n"&gt;active&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;  &lt;span class="c1"&gt;# Active intervals, sorted by increasing end point&lt;/span&gt;
-    &lt;span class="n"&gt;assignment&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;  &lt;span class="c1"&gt;# Map from Interval to PReg|StackSlot&lt;/span&gt;
-    &lt;span class="n"&gt;num_stack_slots&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-    &lt;span class="c1"&gt;# Iterate through intervals in order of increasing start point&lt;/span&gt;
-    &lt;span class="c1"&gt;# TODO(max): Build a deque for intervals, pushing to the front, so we&lt;/span&gt;
-    &lt;span class="c1"&gt;# automatically get this in sorted order&lt;/span&gt;
-    &lt;span class="n"&gt;sorted_intervals&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;sort_by&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;begin&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt;
-    &lt;span class="n"&gt;sorted_intervals&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;_vreg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="c1"&gt;# expire_old_intervals(interval)&lt;/span&gt;
-      &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;select!&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;active_interval&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;active_interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;begin&lt;/span&gt;
-          &lt;span class="kp"&gt;true&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;
-          &lt;span class="n"&gt;operand&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;fetch&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;active_interval&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-          &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="s2"&gt;"Should be assigned a register"&lt;/span&gt; &lt;span class="k"&gt;unless&lt;/span&gt; &lt;span class="n"&gt;operand&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;is_a?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="no"&gt;PReg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-          &lt;span class="n"&gt;free_registers&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;add&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;operand&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;name&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-          &lt;span class="kp"&gt;false&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;num_registers&lt;/span&gt;
-        &lt;span class="c1"&gt;# spill_at_interval(interval)&lt;/span&gt;
-        &lt;span class="c1"&gt;# Pick an interval to spill. Picking the longest-lived active one is&lt;/span&gt;
-        &lt;span class="c1"&gt;# a heuristic from the original linear scan paper.&lt;/span&gt;
-        &lt;span class="n"&gt;spill&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;last&lt;/span&gt;
-        &lt;span class="c1"&gt;# In either case, we need to allocate a slot on the stack.&lt;/span&gt;
-        &lt;span class="n"&gt;slot&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;StackSlot&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;num_stack_slots&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;num_stack_slots&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;spill&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt;
-          &lt;span class="c1"&gt;# The last active interval ends further away than the current&lt;/span&gt;
-          &lt;span class="c1"&gt;# interval; spill the last active interval.&lt;/span&gt;
-          &lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;spill&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-          &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="s2"&gt;"Should be assigned a register"&lt;/span&gt; &lt;span class="k"&gt;unless&lt;/span&gt; &lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;&lt;span class="nf"&gt;is_a?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="no"&gt;PReg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-          &lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;spill&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;slot&lt;/span&gt;
-          &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;  &lt;span class="c1"&gt;# We know spill is the last one&lt;/span&gt;
-          &lt;span class="c1"&gt;# Insert interval into already-sorted active&lt;/span&gt;
-          &lt;span class="n"&gt;insert_idx&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;bsearch_index&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;=&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="o"&gt;||&lt;/span&gt; &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;
-          &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;insert&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;insert_idx&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;
-          &lt;span class="c1"&gt;# The current interval ends further away than the last active&lt;/span&gt;
-          &lt;span class="c1"&gt;# interval; spill the current interval.&lt;/span&gt;
-          &lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;slot&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;else&lt;/span&gt;
-        &lt;span class="n"&gt;reg&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;free_registers&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;min&lt;/span&gt;
-        &lt;span class="n"&gt;free_registers&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;delete&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;PReg&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="c1"&gt;# Insert interval into already-sorted active&lt;/span&gt;
-        &lt;span class="n"&gt;insert_idx&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;bsearch_index&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;=&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="o"&gt;||&lt;/span&gt; &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;
-        &lt;span class="n"&gt;active&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;insert&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;insert_idx&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;assignment&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;num_stack_slots&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Internalizing this took us a bit. It is mostly a three-state machine:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;have not been allocated&lt;/li&gt;
-  &lt;li&gt;have been allocated a register&lt;/li&gt;
-  &lt;li&gt;have been allocated a stack slot&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;We would like to come back to this and incrementally modify it as we add
-lifetime holes to intervals.&lt;/p&gt;
-
-&lt;p&gt;I finally understood, very late in the game, that Poletto1999 linear scan assigns only one
-location per virtual register. &lt;em&gt;Ever&lt;/em&gt;. It’s not that every virtual register
-gets a shot in a register and then gets moved to a stack slot—that would be
-interval splitting and hopefully we get to that later—if a register gets
-spilled, it’s in a stack slot from beginning to end.&lt;/p&gt;
-
-&lt;p&gt;I only found this out accidentally after trying to figure out a bug (that
-wasn’t a bug) due to a lovely sentence in &lt;a href="/assets/img/optimized-interval-splitting-linear-scan-ra.pdf"&gt;Optimized Interval Splitting in a
-Linear Scan Register Allocator&lt;/a&gt; (PDF, 2005) by
-Wimmer and Mössenböck):&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;However, it cannot deal with lifetime holes and does not split intervals, so
-an interval has either a register assigned for the whole lifetime, or it is
-spilled completely.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Also,&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;In particular, it is not possible to implement the algorithm without
-reserving a scratch register: When a spilled interval is used by an
-instruction requiring the operand in a register, the interval must be
-temporarily reloaded to the scratch register&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Also,&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Additionally, register constraints for method calls and instructions
-requiring fixed registers must be handled separately&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Marvelous.&lt;/p&gt;
-
-&lt;p&gt;Let’s take a look at the code snippet again. Here it is before register
-allocation, using virtual registers:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;16: label B1(R10, R11):
-18: jmp B2($1, R11)
-     # vvvvvvvvvv #
-20: label B2(R12, R13)
-22: cmp R13, $1
-24: branch lessThan B4()
-
-26: label B3()
-28: mul R12, R13 -&amp;gt; R14
-30: sub R13, $1 -&amp;gt; R15
-32: jump B2(R14, R15)
-
-34: label B4()
-     # ^^^^^^^^^^ #
-36: add R10, R12 -&amp;gt; R16
-38: ret R16
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Let’s run it through register allocation with incrementally decreasing numbers
-of physical registers available. We get the following assignments:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;4 registers &lt;code class="language-plaintext highlighter-rouge"&gt;{R10: P0, R11: P1, R12: P1, R13: P2, R14: P3, R15: P2, R16: P0}&lt;/code&gt;&lt;/li&gt;
-  &lt;li&gt;3 registers &lt;code class="language-plaintext highlighter-rouge"&gt;{R10: Stack[0], R11: P1, R12: P1, R13: P2, R14: P0, R15: P2, R16: P0}&lt;/code&gt;&lt;/li&gt;
-  &lt;li&gt;2 registers &lt;code class="language-plaintext highlighter-rouge"&gt;{R10: Stack[0], R11: P1, R12: Stack[1], R13: P0, R14: P1, R15: P0, R16: P0}&lt;/code&gt;&lt;/li&gt;
-  &lt;li&gt;1 register &lt;code class="language-plaintext highlighter-rouge"&gt;{R10: Stack[0], R11: P0, R12: Stack[1], R13: P0, R14: Stack[2], R15: P0, R16: P0}&lt;/code&gt;&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;Some other things to note:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;
-    &lt;p&gt;If you have a register free, choosing which register to allocate is a
-heuristic! It is tunable. There is probably some research out there that
-explores the space.&lt;/p&gt;
-
-    &lt;p&gt;In fact, you might even consider &lt;em&gt;not&lt;/em&gt; allocating a register greedily. What
-might that look like? I have no idea.&lt;/p&gt;
-  &lt;/li&gt;
-  &lt;li&gt;
-    &lt;p&gt;Spilling the interval with the furthest endpoint is a heuristic! You can
-pick any active interval you want. In &lt;a href="/assets/img/register-spilling-range-splitting-ssa.pdf"&gt;Register Spilling and Live-Range
-Splitting for SSA-Form Programs&lt;/a&gt; (PDF,
-2009) by Braun and Hack, for example, they present the MIN algorithm, which
-spills the interval with the furthest next use.&lt;/p&gt;
-
-    &lt;p&gt;This requires slightly more information and takes slightly more time than
-the default heuristic but apparently generates much better code.&lt;/p&gt;
-  &lt;/li&gt;
-  &lt;li&gt;
-    &lt;p&gt;Also, block ordering? You guessed it. Heuristic.&lt;/p&gt;
-  &lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;Here is an example “slideshow” I generated by running linear scan with 2
-registers. Use the arrow keys to navigate forward and backward in time&lt;sup id="fnref:rsms" role="doc-noteref"&gt;&lt;a href="#fn:rsms" class="footnote" rel="footnote"&gt;4&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
-
-&lt;iframe src="/assets/lsra.html" width="100%" onload="this.style.height = this.contentWindow.document.documentElement.scrollHeight + 'px';"&gt;&lt;/iframe&gt;
-
-&lt;h2 id="resolving-ssa"&gt;Resolving SSA&lt;/h2&gt;
-
-&lt;p&gt;At this point we have register &lt;em&gt;assignments&lt;/em&gt;: we have a hash table mapping
-intervals to physical locations. That’s great but we’re still in SSA form:
-labelled code regions don’t have block arguments in hardware. We need to write
-some code to take us out of SSA and into the real world.&lt;/p&gt;
-
-&lt;p&gt;We can use a modified Wimmer2010 as a great start point here. It handles more
-than we need to right now—interval splitting—but we can simplify.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;RESOLVE
-for each control flow edge from predecessor to successor do
-  for each interval it live at begin of successor do
-    if it starts at begin of successor then
-      phi = phi function defining it
-      opd = phi.inputOf(predecessor)
-      if opd is a constant then
-        moveFrom = opd
-      else
-        moveFrom = location of intervals[opd] at end of predecessor
-    else
-      moveFrom = location of it at end of predecessor
-    moveTo = location of it at begin of successor
-    if moveFrom ≠ moveTo then
-      mapping.add(moveFrom, moveTo)
-  mapping.orderAndInsertMoves()
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Because we don’t split intervals, we know that every interval live at the
-beginning of a block is either:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;live across an edge between two blocks and therefore has already been placed
-in a location by assignment/spill code&lt;/li&gt;
-  &lt;li&gt;beginning its life at the beginning of the block as a block parameter and
-therefore needs to be moved from its source location&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;For this reason, we only handle the second case in our SSA resolution. If we
-added &lt;del&gt;lifetime holes&lt;/del&gt; interval splitting, we would have to go back to the
-full Wimmer SSA resolution.&lt;/p&gt;
-
-&lt;p&gt;This means that we’re going to iterate over every outbound edge from every
-block. For each edge, we’re going to insert some parallel moves.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;resolve_ssa&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;assignments&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-    &lt;span class="vi"&gt;@block_order&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;predecessor&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="n"&gt;outgoing_edges&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;predecessor&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;edges&lt;/span&gt;
-      &lt;span class="n"&gt;num_successors&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;outgoing_edges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;
-      &lt;span class="n"&gt;outgoing_edges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;mapping&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
-        &lt;span class="n"&gt;successor&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;block&lt;/span&gt;
-        &lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;args&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;zip&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;successor&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;moveFrom&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;moveTo&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-          &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;moveFrom&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;moveTo&lt;/span&gt;
-            &lt;span class="n"&gt;mapping&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;moveFrom&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;moveTo&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-          &lt;span class="k"&gt;end&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-        &lt;span class="c1"&gt;# predecessor.order_and_insert_moves(mapping)&lt;/span&gt;
-        &lt;span class="c1"&gt;# TODO: order_and_insert_moves&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="c1"&gt;# Remove all block parameters and arguments; we have resolved SSA&lt;/span&gt;
-    &lt;span class="vi"&gt;@block_order&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;clear&lt;/span&gt;
-      &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;edges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;args&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;clear&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This already looks very similar to the RESOLVE function from Wimmer2010.
-Unfortunately, Wimmer2010 basically shrugs off &lt;code class="language-plaintext highlighter-rouge"&gt;orderAndInsertMoves&lt;/code&gt; with an &lt;em&gt;eh, it’s
-already in the literature&lt;/em&gt; comment.&lt;/p&gt;
-
-&lt;h3 id="a-brief-and-frustrating-parallel-moves-detour"&gt;A brief and frustrating parallel moves detour&lt;/h3&gt;
-
-&lt;p&gt;What’s not made clear, though, is that this particular subroutine has been the
-source of a significant amount of bugs in the literature. Only recently did
-some folks roll through and suggest (proven!) fixes:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;&lt;a href="/assets/img/parallel-move-leroy.pdf"&gt;Battling windmills with Coq: formal verification of a compilation algorithm
-for parallel moves&lt;/a&gt; (PDF, 2007) by Rideau, Serpette, and
-Leroy&lt;/li&gt;
-  &lt;li&gt;&lt;a href="/assets/img/boissinot-out-ssa.pdf"&gt;Revisiting Out-of-SSA Translation for Correctness, Code Quality, and
-Efficiency&lt;/a&gt; (PDF, 2009) by Boissinot, Darte, Rastello,
-Dupont de Dinechin, and Guillon.
-    &lt;ul&gt;
-      &lt;li&gt;and again in &lt;a href="/assets/img/boissinot-thesis.pdf"&gt;Boissinot’s thesis&lt;/a&gt; (PDF, 2010)&lt;/li&gt;
-    &lt;/ul&gt;
-  &lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;This sent us on a deep rabbit hole of trying to understand what bugs occur,
-when, and how to fix them. We implemented both the Leroy and the Boissinot
-algorithms. We found differences between Boissinot2009, Boissinot2010, and the
-SSA book implementation following those algorithms. We found Paul Sokolovsky’s
-&lt;a href="https://github.com/pfalcon/parcopy/"&gt;implementation with bugfixes&lt;/a&gt;. We found
-Dmitry Stogov’s &lt;a href="https://github.com/pfalcon/parcopy/pull/1"&gt;unmerged pull
-request&lt;/a&gt; to the same repository to
-fix another bug.&lt;/p&gt;
-
-&lt;p&gt;We looked at Benoit Boissinot’s thesis again and emailed him some questions. He
-responded! And then he even put up an &lt;a href="https://github.com/bboissin/thesis_bboissin"&gt;amended version of his
-algorithm&lt;/a&gt; in Rust with tests and
-fuzzing.&lt;/p&gt;
-
-&lt;p&gt;All this is to say that this is still causing people grief and, though I
-understand page limits, I wish parallel moves were not handwaved away.&lt;/p&gt;
-
-&lt;p&gt;We ended up with this implementation which passes all of the tests from
-Sokolovsky’s repository as well as the example from Boissinot’s thesis (though,
-as we discussed in the email, the example solution in the thesis is
-incorrect&lt;sup id="fnref:thesis-correction" role="doc-noteref"&gt;&lt;a href="#fn:thesis-correction" class="footnote" rel="footnote"&gt;5&lt;/a&gt;&lt;/sup&gt;).&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# copies contains an array of [src, dst] arrays&lt;/span&gt;
-&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;sequentialize&lt;/span&gt; &lt;span class="n"&gt;copies&lt;/span&gt;
-  &lt;span class="n"&gt;ready&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;  &lt;span class="c1"&gt;# Contains only destination regs ("available")&lt;/span&gt;
-  &lt;span class="n"&gt;to_do&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;  &lt;span class="c1"&gt;# Contains only destination regs&lt;/span&gt;
-  &lt;span class="n"&gt;pred&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;  &lt;span class="c1"&gt;# Map of destination reg -&amp;gt; what reg is written to it (its source)&lt;/span&gt;
-  &lt;span class="n"&gt;loc&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;  &lt;span class="c1"&gt;# Map of reg -&amp;gt; the current location where the initial value of reg is available ("resource")&lt;/span&gt;
-  &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
-
-  &lt;span class="n"&gt;emit_copy&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="c1"&gt;# We add an arrow here just for clarity in reading this algorithm because&lt;/span&gt;
-    &lt;span class="c1"&gt;# different people do [src, dst] and [dst, src] depending on if they prefer&lt;/span&gt;
-    &lt;span class="c1"&gt;# Intel or AT&amp;amp;T&lt;/span&gt;
-    &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"-&amp;gt;"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-  &lt;span class="p"&gt;}&lt;/span&gt;
-
-  &lt;span class="c1"&gt;# In Ruby, loc[x] is nil if x not in loc, so this loop could be omitted&lt;/span&gt;
-  &lt;span class="n"&gt;copies&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-    &lt;span class="n"&gt;loc&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;nil&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-
-  &lt;span class="n"&gt;copies&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-    &lt;span class="n"&gt;loc&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;pred&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;key?&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;  &lt;span class="c1"&gt;# Alternatively, to_do.include? dst&lt;/span&gt;
-      &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="s2"&gt;"Conflicting assignments to destination &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;, latest: &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="n"&gt;pred&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;
-    &lt;span class="n"&gt;to_do&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-
-  &lt;span class="n"&gt;copies&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;loc&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-      &lt;span class="c1"&gt;# All destinations that are not also sources can be written to immediately (tree leaves)&lt;/span&gt;
-      &lt;span class="n"&gt;ready&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-
-  &lt;span class="k"&gt;while&lt;/span&gt; &lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;to_do&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;empty?&lt;/span&gt;
-    &lt;span class="k"&gt;while&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ready&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;
-      &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;loc&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;pred&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;]]&lt;/span&gt; &lt;span class="c1"&gt;# a in the paper&lt;/span&gt;
-      &lt;span class="n"&gt;emit_copy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="c1"&gt;# pred[b] is now living at b&lt;/span&gt;
-      &lt;span class="n"&gt;loc&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;pred&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;]]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;
-      &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;to_do&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;include?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;to_do&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;delete&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;pred&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;pred&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;include?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;ready&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;to_do&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;empty?&lt;/span&gt;
-      &lt;span class="k"&gt;break&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-
-    &lt;span class="n"&gt;dst&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;to_do&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;loc&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;pred&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;]]&lt;/span&gt;
-      &lt;span class="n"&gt;emit_copy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"tmp"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="n"&gt;loc&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;"tmp"&lt;/span&gt;
-      &lt;span class="n"&gt;ready&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="n"&gt;result&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Leroy’s algorithm, which is shorter, passes almost all the tests—in one test
-case, it uses one more temporary variable than Boissinot’s does. We haven’t
-spent much time looking at why.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;move_one&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;status&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt;
-  &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-  &lt;span class="n"&gt;status&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="ss"&gt;:being_moved&lt;/span&gt;
-  &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt; &lt;span class="k"&gt;in&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;j&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-      &lt;span class="k"&gt;case&lt;/span&gt; &lt;span class="n"&gt;status&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;j&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-      &lt;span class="k"&gt;when&lt;/span&gt; &lt;span class="ss"&gt;:to_move&lt;/span&gt;
-        &lt;span class="n"&gt;move_one&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;status&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt;
-      &lt;span class="k"&gt;when&lt;/span&gt; &lt;span class="ss"&gt;:being_moved&lt;/span&gt;
-        &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;j&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="s2"&gt;"-&amp;gt;"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"tmp"&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-        &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;j&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;"tmp"&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="s2"&gt;"-&amp;gt;"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;]]&lt;/span&gt;
-  &lt;span class="n"&gt;status&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="ss"&gt;:moved&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-
-&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;leroy_sequentialize&lt;/span&gt; &lt;span class="n"&gt;copies&lt;/span&gt;
-  &lt;span class="n"&gt;src&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;copies&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="n"&gt;it&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt;
-  &lt;span class="n"&gt;dst&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;copies&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="n"&gt;it&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt;
-  &lt;span class="n"&gt;status&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:to_move&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;
-  &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
-  &lt;span class="n"&gt;status&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each_with_index&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;item&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;item&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="ss"&gt;:to_move&lt;/span&gt;
-      &lt;span class="n"&gt;move_one&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;status&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="n"&gt;result&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;h3 id="back-to-ssa-resolution"&gt;Back to SSA resolution&lt;/h3&gt;
-
-&lt;p&gt;Whatever algorithm you choose, you now have a way to parallel move some
-registers to some other registers. You have avoided the “swap problem”.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;resolve_ssa&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;assignments&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-        &lt;span class="c1"&gt;# predecessor.order_and_insert_moves(mapping)&lt;/span&gt;
-        &lt;span class="n"&gt;sequence&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;sequentialize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;mapping&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-          &lt;span class="no"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="ss"&gt;:mov&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-        &lt;span class="c1"&gt;# TODO: insert the moves!&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;That’s great. You can generate an ordered list of instructions from a tangled
-graph. But where do you put them? What about the “lost copy” problem?&lt;/p&gt;
-
-&lt;p&gt;As it turns out, we still need to handle critical edge splitting. Let’s
-consider what it means to insert moves at an edge between blocks &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; B&lt;/code&gt; when
-the surrounding CFG looks a couple of different ways.&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;Case 1: &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; B&lt;/code&gt;&lt;/li&gt;
-  &lt;li&gt;Case 2: &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; B&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; C&lt;/code&gt;&lt;/li&gt;
-  &lt;li&gt;Case 3: &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; B&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;D -&amp;gt; B&lt;/code&gt;&lt;/li&gt;
-  &lt;li&gt;Case 4: &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; B&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; C&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;D -&amp;gt; B&lt;/code&gt;&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;These are the four (really, three) cases we may come across.&lt;/p&gt;
-
-&lt;p&gt;In Case 1, if we only have two neighboring blocks A and B, we can
-insert the moves into either block. It doesn’t matter: at the end of A or at
-the beginning of B are both fine.&lt;/p&gt;
-
-&lt;p&gt;In Case 2, if A has two successors, then we should insert the moves at the
-beginning of B. That way we won’t be mucking things up for the edge &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; C&lt;/code&gt;.&lt;/p&gt;
-
-&lt;p&gt;In Case 3, if B has two predecessors, then we should insert the moves at the
-end of A. That way we won’t be mucking things up for the edge &lt;code class="language-plaintext highlighter-rouge"&gt;D -&amp;gt; B&lt;/code&gt;.&lt;/p&gt;
-
-&lt;p&gt;Case 4 is the most complicated. There is no extant place in the graph we can
-insert moves. If we insert in A, we mess things up for &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; C&lt;/code&gt;. If we insert
-in &lt;code class="language-plaintext highlighter-rouge"&gt;B&lt;/code&gt;, we mess things up for &lt;code class="language-plaintext highlighter-rouge"&gt;D -&amp;gt; B&lt;/code&gt;. Inserting in &lt;code class="language-plaintext highlighter-rouge"&gt;C&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;D&lt;/code&gt; doesn’t make
-any sense. What is there to do?&lt;/p&gt;
-
-&lt;p&gt;As it turns out, Case 4 is called a &lt;em&gt;critical edge&lt;/em&gt;. And we have to split it.&lt;/p&gt;
-
-&lt;p&gt;We can insert a new block E along the edge &lt;code class="language-plaintext highlighter-rouge"&gt;A -&amp;gt; B&lt;/code&gt; and put the moves in E!
-That way they still happen along the edge without affecting any other blocks.
-Neat.&lt;/p&gt;
-
-&lt;p&gt;In Ruby code, that looks like:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;resolve_ssa&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;assignments&lt;/span&gt;
-    &lt;span class="n"&gt;num_predecessors&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Hash&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-    &lt;span class="vi"&gt;@block_order&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;edges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="n"&gt;num_predecessors&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-        &lt;span class="c1"&gt;# predecessor.order_and_insert_moves(mapping)&lt;/span&gt;
-        &lt;span class="n"&gt;sequence&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;...&lt;/span&gt;
-        &lt;span class="c1"&gt;# If we don't have any moves to insert, we don't have any block to&lt;/span&gt;
-        &lt;span class="c1"&gt;# insert&lt;/span&gt;
-        &lt;span class="k"&gt;next&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;sequence&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;empty?&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;num_predecessors&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;successor&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;num_successors&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-          &lt;span class="c1"&gt;# Make a new interstitial block&lt;/span&gt;
-          &lt;span class="n"&gt;b&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new_block&lt;/span&gt;
-          &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;insert_moves_at_start&lt;/span&gt; &lt;span class="n"&gt;sequence&lt;/span&gt;
-          &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;instructions&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="no"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="ss"&gt;:jump&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kp"&gt;nil&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="no"&gt;Edge&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;successor&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[])])&lt;/span&gt;
-          &lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;block&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;
-        &lt;span class="k"&gt;elsif&lt;/span&gt; &lt;span class="n"&gt;num_successors&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-          &lt;span class="c1"&gt;# Insert into the beginning of the block&lt;/span&gt;
-          &lt;span class="n"&gt;successor&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;insert_moves_at_start&lt;/span&gt; &lt;span class="n"&gt;sequence&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;
-          &lt;span class="c1"&gt;# Insert into the end of the block... before the terminator&lt;/span&gt;
-          &lt;span class="n"&gt;predecessor&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;insert_moves_at_end&lt;/span&gt; &lt;span class="n"&gt;sequence&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Adding a new block invalidates the cached &lt;code class="language-plaintext highlighter-rouge"&gt;@block_order&lt;/code&gt;, so we also need to
-recompute that.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;We could also avoid that by splitting critical edges earlier, before
-numbering. Then, when we arrive in &lt;code class="language-plaintext highlighter-rouge"&gt;resolve_ssa&lt;/code&gt;, we can clean up branches to
-empty blocks!&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;(See also &lt;a href="https://nickdesaulniers.github.io/blog/2023/01/27/critical-edge-splitting/"&gt;Nick’s post on critical edge
-splitting&lt;/a&gt;,
-which also links to Faddegon’s thesis, which I should at least skim.)&lt;/p&gt;
-
-&lt;p&gt;And that’s it, folks. We have gone from virtual registers in SSA form to
-physical locations. Everything’s all hunky-dory. We can just turn these LIR
-instructions into their very similar looking machine equivalents, right?&lt;/p&gt;
-
-&lt;p&gt;Not so fast…&lt;/p&gt;
-
-&lt;h2 id="calls"&gt;Calls&lt;/h2&gt;
-
-&lt;p&gt;You may have noticed that the original linear scan paper does not mention calls
-or other register constraints. I didn’t really think about it until I wanted to
-make a function call. The authors of later linear scan papers definitely
-noticed, though; Wimmer2005 writes the following about Poletto1999:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;When a spilled interval is used by an instruction requiring the operand in a
-register, the interval must be temporarily reloaded to the scratch register.
-Additionally, register constraints for method calls and instructions
-requiring fixed registers must be handled separately.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Fun. We will start off by handling calls and method parameters separately, we
-will note that it’s not amazing code, and then we will eventually implement the
-later papers, which handle register constraints more naturally.&lt;/p&gt;
-
-&lt;p&gt;We’ll call this new function &lt;code class="language-plaintext highlighter-rouge"&gt;handle_caller_saved_regs&lt;/code&gt; after register
-allocation but before SSA resolution. We do it after register allocation so we
-know where each virtual register goes but before resolution so we can still
-inspect the virtual register operands.&lt;/p&gt;
-
-&lt;p&gt;Its goal is to do a couple of things:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;Insert special &lt;code class="language-plaintext highlighter-rouge"&gt;push&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;pop&lt;/code&gt; instructions around &lt;code class="language-plaintext highlighter-rouge"&gt;call&lt;/code&gt; instructions to
-preserve virtual registers that are used on the other side of the &lt;code class="language-plaintext highlighter-rouge"&gt;call&lt;/code&gt;. We
-only care about preserving virtual registers that are stored in physical
-registers, though; no need to preserve anything that already lives on the
-stack.&lt;/li&gt;
-  &lt;li&gt;Do a parallel move of the call arguments into the ABI-specified parameter
-registers. We need to do a parallel move in case any of the arguments happen
-to already be living in parameter registers. (We’re really getting good
-mileage out of this function.)&lt;/li&gt;
-  &lt;li&gt;Make sure that the value returned by the call in the ABI-specified return
-register ends up in in the location allocated to the output of the &lt;code class="language-plaintext highlighter-rouge"&gt;call&lt;/code&gt;
-instruction.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;We’ll also remove the &lt;code class="language-plaintext highlighter-rouge"&gt;call&lt;/code&gt; operands since we’re placing them in special
-registers explicitly now.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;handle_caller_saved_regs&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;assignments&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;return_reg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;param_regs&lt;/span&gt;
-    &lt;span class="vi"&gt;@block_order&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;instructions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;flat_map&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="ss"&gt;:call&lt;/span&gt;
-          &lt;span class="n"&gt;survivors&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;select&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;_vreg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-            &lt;span class="n"&gt;interval&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;survives?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;number&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-          &lt;span class="p"&gt;}.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="ss"&gt;:first&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;select&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;vreg&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-            &lt;span class="n"&gt;assignments&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;vreg&lt;/span&gt;&lt;span class="p"&gt;]].&lt;/span&gt;&lt;span class="nf"&gt;is_a?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="no"&gt;PReg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-          &lt;span class="p"&gt;}&lt;/span&gt;
-          &lt;span class="n"&gt;mov_input&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;out&lt;/span&gt;
-          &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;out&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;return_reg&lt;/span&gt;
-
-          &lt;span class="n"&gt;ins&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;ins&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;drop&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-          &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;ins&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;param_regs&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;
-
-          &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;ins&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;replace&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;ins&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;first&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-
-          &lt;span class="n"&gt;mapping&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ins&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;zip&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;param_regs&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;to_h&lt;/span&gt;
-          &lt;span class="n"&gt;sequence&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;sequentialize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;mapping&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-            &lt;span class="no"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="ss"&gt;:mov&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-          &lt;span class="k"&gt;end&lt;/span&gt;
-
-          &lt;span class="n"&gt;survivors&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="no"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="ss"&gt;:push&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kp"&gt;nil&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt;
-            &lt;span class="n"&gt;sequence&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt;
-            &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="no"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="ss"&gt;:mov&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;mov_input&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;return_reg&lt;/span&gt;&lt;span class="p"&gt;])]&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt;
-            &lt;span class="n"&gt;survivors&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="no"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="ss"&gt;:pop&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kp"&gt;nil&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt; &lt;span class="p"&gt;}.&lt;/span&gt;&lt;span class="nf"&gt;reverse&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;
-          &lt;span class="n"&gt;insn&lt;/span&gt;
-        &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-      &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;instructions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;replace&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;(Unfortunately, this sidesteps handling the less-fun bit of calls in ABIs where
-after the 6th parameter, they are expected on the stack. It also completely
-ignores ABI size constraints.)&lt;/p&gt;
-
-&lt;p&gt;Now, you may have noticed that we don’t do anything special for the incoming
-params of the function we’re compiling! That’s another thing we have to handle.
-Thankfully, we can handle it with yet another parallel move (wow!) at the end
-of &lt;code class="language-plaintext highlighter-rouge"&gt;resolve_ssa&lt;/code&gt;.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Function&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;resolve_ssa&lt;/span&gt; &lt;span class="n"&gt;intervals&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;assignments&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-    &lt;span class="c1"&gt;# We're typically going to have more param regs than block parameters&lt;/span&gt;
-    &lt;span class="c1"&gt;# When we zip the param regs with block params, we'll end up with param&lt;/span&gt;
-    &lt;span class="c1"&gt;# regs mapping to nil. We filter those away by selecting for tuples&lt;/span&gt;
-    &lt;span class="c1"&gt;# that have a truthy second value&lt;/span&gt;
-    &lt;span class="c1"&gt;# [[x, y], [z, nil]].select(&amp;amp;:last) (reject the second tuple)&lt;/span&gt;
-    &lt;span class="n"&gt;mapping&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;param_regs&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;zip&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;entry_block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;select&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="ss"&gt;:last&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;to_h&lt;/span&gt;
-    &lt;span class="n"&gt;sequence&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;sequentialize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;mapping&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
-      &lt;span class="no"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="ss"&gt;:mov&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;dst&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;src&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="n"&gt;entry_block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;insert_moves_at_start&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;sequence&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Again, this is yet another kind of thing where some of the later papers have
-much better ergonomics and also much better generated code.&lt;/p&gt;
-
-&lt;p&gt;But this is really cool! If you have arrived at this point with me, we have
-successfully made it to 1997 and that is nothing to sneeze at. We have even
-adapted research from 1997 to work with SSA, avoiding several significant
-classes of bugs along the way.&lt;/p&gt;
-
-&lt;!--
-## Instruction selection and instruction splitting
-
-## Interval splitting
-
-## Register hints
-
-What is this iterated linear scan thing? Appears in JSC
-
-while (true) {
-  linearscan();
-  if (!would_spill) { break; }
-  interval = pick_an_interval_to_spill();
-  spill(interval);
-  remove_interval(interval);
-}
---&gt;
-
-&lt;h2 id="validation-by-abstract-interpretation"&gt;Validation by abstract interpretation&lt;/h2&gt;
-
-&lt;p&gt;We have just built an enormously complex machine. Even out the gate, with the
-original linear scan, there is a lot of machinery. It’s possible to write tests
-that spot check sample programs of all shapes and sizes but it’s &lt;em&gt;very&lt;/em&gt;
-difficult to anticipate every possible edge case that will appear in the real
-world.&lt;/p&gt;
-
-&lt;p&gt;Even if the original algorithm you’re using has been proven correct, your
-implementation may have subtle bugs due to (for example) having slightly
-different invariants or even transcription errors.&lt;/p&gt;
-
-&lt;p&gt;We have all these proof tools at our disposal: we can write an abstract
-interpreter that verifies properties of &lt;em&gt;one&lt;/em&gt; graph, but it’s very hard
-(impossible?) to scale that to sets of graphs.&lt;/p&gt;
-
-&lt;p&gt;Maybe that’s enough, though. In one of my favorite blog posts, Chris Fallin
-&lt;a href="https://cfallin.org/blog/2021/03/15/cranelift-isel-3/"&gt;writes about&lt;/a&gt; writing a
-register allocation verifier based on abstract interpretation. It can verify
-one concrete LIR function at a time. It’s fast enough that it can be left on in
-debug builds. This means that a decent chunk of the time (tests, CI, maybe a
-production cluster) we can get a very clear signal that every register
-assignment that passes through the verifier satisfies some invariants.&lt;/p&gt;
-
-&lt;p&gt;Furthermore, we are not limited to Real World Code. With the advent of fuzzing,
-one can imagine an always-on fuzzer that tries to break the register allocator.
-A verifier can then catch bugs that come from exploring this huge search space.&lt;/p&gt;
-
-&lt;p&gt;Some time after finding Chris’s blog post, I also stumbled across &lt;a href="https://github.com/v8/v8/blob/cac6de03372c25987c6cbea49b4b39d9da437978/src/compiler/backend/register-allocator-verifier.h"&gt;the very same
-thing in
-V8&lt;/a&gt;!&lt;/p&gt;
-
-&lt;p&gt;I find this stuff so cool. I’ll also mention Boissinot’s &lt;a href="https://github.com/bboissin/thesis_bboissin"&gt;Rust
-code&lt;/a&gt; again because it does
-something similar for parallel moves.&lt;/p&gt;
-
-&lt;h2 id="see-also"&gt;See also&lt;/h2&gt;
-
-&lt;p&gt;It’s possible to do linear scan allocation in reverse, at least on traces
-without control-flow. See for example &lt;a href="https://www.mattkeeter.com/blog/2022-10-04-ssra/"&gt;The Solid-State Register
-Allocator&lt;/a&gt;, the &lt;a href="https://github.com/LuaJIT/LuaJIT/blob/5e3c45c43bb0e0f1f2917d432e9d2dba12c42a6e/src/lj_asm.c#L198"&gt;LuaJIT
-register allocator&lt;/a&gt;, and &lt;a href="https://brrt-to-the-future.blogspot.com/2019/03/reverse-linear-scan-allocation-is.html"&gt;Reverse Linear Scan Allocation is
-probably a good idea&lt;/a&gt;.
-By doing linear scan this way, it is also possible to avoid computing liveness
-and intervals. I am not sure if this works on programs with control-flow,
-though.&lt;/p&gt;
-
-&lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
-
-&lt;p&gt;We built a register allocator that works on SSA. Hopefully next time we will
-add features such as lifetime holes, interval splitting, and register hints.&lt;/p&gt;
-
-&lt;p&gt;The full Ruby code listing is &lt;del&gt;not (yet?) public&lt;/del&gt; &lt;a href="https://github.com/tenderworks/regalloc"&gt;available under the Apache
-2 license&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;UPDATE: See the post on &lt;a href="/blog/linear-scan-lifetime-holes/"&gt;lifetime holes&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h2 id="thanks"&gt;Thanks&lt;/h2&gt;
-
-&lt;p&gt;Thanks to &lt;a href="https://waleedkhan.name/"&gt;Waleed Khan&lt;/a&gt; and &lt;a href="https://mstdn.ca/@iainireland"&gt;Iain
-Ireland&lt;/a&gt; for giving feedback on this post.&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:calendaring" role="doc-endnote"&gt;
-      &lt;p&gt;It’s not just about registers, either. In 2016, Facebook
-engineer Dave &lt;a href="https://blog.waleedkhan.name/will-i-ever-use-this/"&gt;legendarily used linear-scan register allocation to book
-meeting rooms&lt;/a&gt;. &lt;a href="#fnref:calendaring" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-    &lt;li id="fn:everyone" role="doc-endnote"&gt;
-      &lt;p&gt;Well. As I said on one of the social media sites earlier this
-year, “All AOT compilers are alike; each JIT compiler is fucked up in its
-own way.”&lt;/p&gt;
-
-      &lt;p&gt;JavaScript:&lt;/p&gt;
-
-      &lt;!-- * V8's Maglev uses --&gt;
-      &lt;ul&gt;
-        &lt;li&gt;V8’s TurboFan uses &lt;a href="https://github.com/v8/v8/blob/12fa27f2f4d999320c524776ed29810c8694bafc/src/compiler/backend/register-allocator.h#L1545"&gt;linear scan&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;SpiderMonkey uses a &lt;a href="https://searchfox.org/mozilla-central/rev/c85c168374483a3c37aab49d7f587ea74a516492/js/src/jit/BacktrackingAllocator.h#28-31"&gt;backtracking allocator&lt;/a&gt;
-based on &lt;a href="https://blog.llvm.org/2011/09/greedy-register-allocation-in-llvm-30.html"&gt;LLVM’s&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;JavaScriptCore uses &lt;a href="https://github.com/WebKit/WebKit/blob/f5a9393bdeff7c89685de21aa9f2df392139cc07/Source/JavaScriptCore/b3/air/AirAllocateRegistersAndStackByLinearScan.h#L37"&gt;linear scan “for
-optLevel&amp;lt;2”&lt;/a&gt;
-and &lt;a href="https://github.com/WebKit/WebKit/blob/f5a9393bdeff7c89685de21aa9f2df392139cc07/Source/JavaScriptCore/b3/air/AirAllocateRegistersByGraphColoring.h"&gt;graph coloring otherwise&lt;/a&gt;
-          &lt;ul&gt;
-            &lt;li&gt;There’s also a “cssjit” with its own register allocator…&lt;/li&gt;
-          &lt;/ul&gt;
-        &lt;/li&gt;
-      &lt;/ul&gt;
-
-      &lt;p&gt;Java:&lt;/p&gt;
-
-      &lt;ul&gt;
-        &lt;li&gt;HotSpot C1 uses (naturally) &lt;a href="https://github.com/openjdk/jdk/blob/87d734012e3130501bfd37b23cee7f5e0a3a476f/src/hotspot/share/c1/c1_LinearScan.hpp"&gt;Wimmer2010 linear scan&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;HotSpot C2 uses &lt;a href="https://github.com/openjdk/jdk/blob/87d734012e3130501bfd37b23cee7f5e0a3a476f/src/hotspot/share/opto/regalloc.hpp"&gt;Chaitin-Briggs-Click graph coloring&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;GraalVM uses &lt;a href="https://github.com/oracle/graal/blob/e482f988939235ce94ee4a756c6bcc1d3df2bab2/compiler/src/jdk.graal.compiler/src/jdk/graal/compiler/lir/alloc/lsra/LinearScan.java"&gt;linear scan&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;
-          &lt;!-- Dalvik, ART --&gt;
-        &lt;/li&gt;
-      &lt;/ul&gt;
-
-      &lt;p&gt;Python:&lt;/p&gt;
-
-      &lt;!-- * PyPy uses --&gt;
-      &lt;ul&gt;
-        &lt;li&gt;Cinder uses &lt;a href="https://github.com/facebookincubator/cinderx/blob/5cf14ad8a68b6f04c1ca1cb99947da7d8d09c28b/cinderx/Jit/lir/regalloc.h"&gt;Wimmer2010 linear scan&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;S6 uses a &lt;a href="https://github.com/google-deepmind/s6/blob/69cac9c981fbd3217ed117c3898382cfe094efc0/src/code_generation/trace_register_allocator.h"&gt;trace register allocator&lt;/a&gt;
-          &lt;ul&gt;
-            &lt;li&gt;This is a different thing than a tracing JIT; see &lt;a href="/assets/img/trace-ra.pdf"&gt;Josef Eisl’s thesis&lt;/a&gt; (PDF, 2018)&lt;/li&gt;
-          &lt;/ul&gt;
-        &lt;/li&gt;
-      &lt;/ul&gt;
-
-      &lt;p&gt;Ruby:&lt;/p&gt;
-
-      &lt;ul&gt;
-        &lt;li&gt;YJIT uses &lt;a href="https://github.com/ruby/ruby/blob/231407c251d82573f578caf569a934c0ebb344e5/yjit/src/backend/ir.rs#L1388"&gt;linear scan&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;ZJIT uses more or less the same backend, so also linear scan&lt;/li&gt;
-      &lt;/ul&gt;
-
-      &lt;p&gt;PHP:&lt;/p&gt;
-
-      &lt;ul&gt;
-        &lt;li&gt;PHP uses &lt;a href="https://github.com/php/php-src/blob/77dace78c324ef731e60fa98b4b8008cd7df1657/ext/opcache/jit/ir/ir_ra.c#L3479"&gt;linear scan&lt;/a&gt;&lt;/li&gt;
-        &lt;li&gt;HHVM uses &lt;a href="https://github.com/facebook/hhvm/blob/e7bca518648e16bdb7c08e91d02f8c158d8e6c6f/hphp/runtime/vm/jit/vasm-xls.cpp#L1448"&gt;extended linear scan&lt;/a&gt;&lt;/li&gt;
-      &lt;/ul&gt;
-
-      &lt;p&gt;Lua:&lt;/p&gt;
-
-      &lt;ul&gt;
-        &lt;li&gt;LuaJIT uses &lt;a href="https://github.com/LuaJIT/LuaJIT/blob/5e3c45c43bb0e0f1f2917d432e9d2dba12c42a6e/src/lj_asm.c#L198"&gt;reverse linear scan&lt;/a&gt;&lt;/li&gt;
-      &lt;/ul&gt;
-      &lt;p&gt;&lt;a href="#fnref:everyone" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-    &lt;li id="fn:allocate-on-ssa" role="doc-endnote"&gt;
-      &lt;p&gt;&lt;a href="/assets/img/linear-scan-ra-context-ssa.pdf"&gt;Linear Scan Register Allocation in the Context of SSA Form
-and Register Constraints&lt;/a&gt; (PDF, 2002) by Mössenböck and
-Pfeiffer notes:&lt;/p&gt;
-
-      &lt;blockquote&gt;
-        &lt;p&gt;Our allocator relies on static single assignment form, which simplifies
-data flow analysis and tends to produce short live intervals.&lt;/p&gt;
-      &lt;/blockquote&gt;
-
-      &lt;p&gt;&lt;a href="/assets/img/ra-programs-ssa.pdf"&gt;Register allocation for programs in SSA-form&lt;/a&gt; (PDF, 2006)
-by Hack, Grund, and Goos notes that interference graphs for SSA programs
-are chordal and can be optimally colored in quadratic time.&lt;/p&gt;
-
-      &lt;p&gt;&lt;a href="/assets/img/ssa-elimination-after-ra.pdf"&gt;SSA Elimination after Register Allocation&lt;/a&gt; (PDF, 2008)
-by Pereira and Palsberg notes:&lt;/p&gt;
-
-      &lt;blockquote&gt;
-        &lt;p&gt;One of the main advantages of SSA based register allocation is the
-separation of phases between spilling and register assignment.&lt;/p&gt;
-      &lt;/blockquote&gt;
-
-      &lt;p&gt;Cliff Click (private communication, 2025) notes:&lt;/p&gt;
-
-      &lt;blockquote&gt;
-        &lt;p&gt;It’s easier. Got it already, why lose it […] spilling always uses
-use/def and def/use edges.&lt;/p&gt;
-      &lt;/blockquote&gt;
-      &lt;p&gt;&lt;a href="#fnref:allocate-on-ssa" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-    &lt;li id="fn:rsms" role="doc-endnote"&gt;
-      &lt;p&gt;This is inspired by &lt;a href="https://rsms.me/"&gt;Rasmus Andersson&lt;/a&gt;’s graph
-coloring &lt;a href="https://rsms.me/projects/chaitin/"&gt;visualization&lt;/a&gt; that I saw some
-years ago. &lt;a href="#fnref:rsms" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-    &lt;li id="fn:thesis-correction" role="doc-endnote"&gt;
-      &lt;p&gt;The example in the thesis is to sequentialize the
-following parallel copy:&lt;/p&gt;
-
-      &lt;ul&gt;
-        &lt;li&gt;a → b&lt;/li&gt;
-        &lt;li&gt;b → c&lt;/li&gt;
-        &lt;li&gt;c → a&lt;/li&gt;
-        &lt;li&gt;c → d&lt;/li&gt;
-      &lt;/ul&gt;
-
-      &lt;p&gt;The solution in the thesis is:&lt;/p&gt;
-
-      &lt;ol&gt;
-        &lt;li&gt;c → d (c now lives in d)&lt;/li&gt;
-        &lt;li&gt;a → c (a now lives in c)&lt;/li&gt;
-        &lt;li&gt;b → a (b now lives in a)&lt;/li&gt;
-        &lt;li&gt;d → b (why are we copying c to b?)&lt;/li&gt;
-      &lt;/ol&gt;
-
-      &lt;p&gt;but we think this is incorrect. Solving manually, Aaron and I got:&lt;/p&gt;
-
-      &lt;ol&gt;
-        &lt;li&gt;c → d (because d is not read from anywhere)&lt;/li&gt;
-        &lt;li&gt;b → c (because c is “freed up”; now in d)&lt;/li&gt;
-        &lt;li&gt;a → b (because b is “freed up”; now in c)&lt;/li&gt;
-        &lt;li&gt;d → a (because c is now in d, so d → a is equivalent to old_c → a)&lt;/li&gt;
-      &lt;/ol&gt;
-
-      &lt;p&gt;which is what the code gives us, too. &lt;a href="#fnref:thesis-correction" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/linear-scan/</guid>
       <pubDate>Wed, 13 Aug 2025 00:00:00 +0000</pubDate>
     </item>
   </channel>
