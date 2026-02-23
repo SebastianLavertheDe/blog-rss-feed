@@ -5,7 +5,116 @@
     <link>https://blog.jim-nielsen.com</link>
     <description>Latest posts from Jim Nielsen’s Blog</description>
     <language>en</language>
-    <lastBuildDate>Mon, 23 Feb 2026 15:52:53 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 23 Feb 2026 17:06:16 +0000</lastBuildDate>
+    <item>
+      <title>Making Icon Sets Easy With Web Origami</title>
+      <link>https://blog.jim-nielsen.com/2026/origami-icons/</link>
+      <description>&lt;p&gt;Over the years, I’ve used different icon sets on my blog. Right now I use &lt;a href="https://heroicons.com" &gt;Heroicons&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://github.com/tailwindlabs/heroicons" &gt;The recommended way&lt;/a&gt; to use them is to copy/paste the source from the website directly into your HTML. It’s a pretty straightforward process:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Go to the website&lt;/li&gt;
+&lt;li&gt;Search for the icon you want&lt;/li&gt;
+&lt;li&gt;Hover it&lt;/li&gt;
+&lt;li&gt;Click to “Copy SVG”&lt;/li&gt;
+&lt;li&gt;Go back to your IDE and paste it&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If you’re using React or Vue, there are also npm packages you can install so you can import the icons as components.&lt;/p&gt;
+&lt;p&gt;But I’m not using either of those frameworks, so I need the raw SVGs and there’s no &lt;code&gt;npm i&lt;/code&gt; for those so I have to manually grab the ones I want.&lt;/p&gt;
+&lt;p&gt;In the past, my approach has been to copy the SVGs into individual files in my project, like:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;src/
+  icons/
+    home.svg
+    about.svg
+    search.svg
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then I have a “component” for reading those icons from disk which I use in my template files to inline the SVGs in my HTML. For example:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-js"&gt;&lt;span class="hljs-comment"&gt;// Some page template file&lt;/span&gt;
+&lt;span class="hljs-keyword"&gt;import&lt;/span&gt; { &lt;span class="hljs-title class_"&gt;Icon&lt;/span&gt; } &lt;span class="hljs-keyword"&gt;from&lt;/span&gt; &lt;span class="hljs-string"&gt;&amp;#x27;./Icon.js&amp;#x27;&lt;/span&gt;
+&lt;span class="hljs-keyword"&gt;const&lt;/span&gt; template = &lt;span class="hljs-string"&gt;`&amp;lt;div&amp;gt;&lt;span class="hljs-subst"&gt;${Icon(&lt;span class="hljs-string"&gt;&amp;#x27;search.svg&amp;#x27;&lt;/span&gt;)}&lt;/span&gt; Search&amp;lt;/div&amp;gt;`&lt;/span&gt;
+
+&lt;span class="hljs-comment"&gt;// Icon.js&lt;/span&gt;
+&lt;span class="hljs-keyword"&gt;import&lt;/span&gt; fs &lt;span class="hljs-keyword"&gt;from&lt;/span&gt; &lt;span class="hljs-string"&gt;&amp;#x27;fs&amp;#x27;&lt;/span&gt;
+&lt;span class="hljs-keyword"&gt;import&lt;/span&gt; path &lt;span class="hljs-keyword"&gt;from&lt;/span&gt; &lt;span class="hljs-string"&gt;&amp;#x27;path&amp;#x27;&lt;/span&gt;
+&lt;span class="hljs-keyword"&gt;const&lt;/span&gt; __dirname = &lt;span class="hljs-comment"&gt;/* Do the stuff to properly resolve the file path */&lt;/span&gt;;
+&lt;span class="hljs-keyword"&gt;export&lt;/span&gt; &lt;span class="hljs-keyword"&gt;const&lt;/span&gt; &lt;span class="hljs-title function_"&gt;Icon&lt;/span&gt; = (&lt;span class="hljs-params"&gt;name&lt;/span&gt;) =&amp;gt; fs.&lt;span class="hljs-title function_"&gt;readFileSync&lt;/span&gt;(
+  path.&lt;span class="hljs-title function_"&gt;join&lt;/span&gt;(__dirname, &lt;span class="hljs-string"&gt;&amp;#x27;icons&amp;#x27;&lt;/span&gt;, name),
+  &lt;span class="hljs-string"&gt;&amp;#x27;utf8&amp;#x27;&lt;/span&gt;
+).&lt;span class="hljs-title function_"&gt;toString&lt;/span&gt;();
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It’s fine. It works. It’s a lot of node boilerplate to read files from disk.&lt;/p&gt;
+&lt;p&gt;But changing icons is a bit of a pain. I have to find new SVGs, overwrite my existing ones, re-commit them to source control, etc. &lt;/p&gt;
+&lt;p&gt;I suppose it would be nice if I could just &lt;code&gt;npm i heroicons&lt;/code&gt; and get the raw SVGs installed into my &lt;code&gt;node_modules&lt;/code&gt; folder and then I could read those. But that has its own set of trade-offs. For example:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Names are different between icon packs, so when you switch, names don’t match. For example, an icon might be named &lt;code&gt;search&lt;/code&gt; in one pack and &lt;code&gt;magnifying-glass&lt;/code&gt; in another. So changing sets requires going through all your templates and updating references.&lt;/li&gt;
+&lt;li&gt;Icon packs are often quite large and you only need a subset. &lt;code&gt;npm i icon-pack&lt;/code&gt; might install hundreds or even thousands of icons I don’t need.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;So the project’s npm packages don’t provide the raw SVGs. The website does, but I want a more programatic way to easily grab the icons I want.&lt;/p&gt;
+&lt;p&gt;How can I do this?&lt;/p&gt;
+&lt;h2 id="enter-origami"&gt;Enter Origami&lt;/h2&gt;
+&lt;p&gt;I’m using &lt;a href="https://weborigami.org" &gt;Web Origami&lt;/a&gt; for my blog which makes it easy to map icons I use in my templates to Heroicons hosted on Github. It doesn’t require an &lt;code&gt;npm install&lt;/code&gt; or a &lt;code&gt;git submodule add&lt;/code&gt;. Here’s an snippet of my file:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-ori"&gt;{
+  home.svg: https://raw.githubusercontent.com/tailwindlabs/heroicons/refs/heads/master/optimized/24/outline/home.svg,
+  about.svg: https://raw.githubusercontent.com/tailwindlabs/heroicons/refs/heads/master/optimized/24/outline/question-mark-circle.svg,
+  search.svg: https://raw.githubusercontent.com/tailwindlabs/heroicons/refs/heads/master/optimized/24/outline/magnifying-glass.svg
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As you can see, I name my icon (e.g. &lt;code&gt;search&lt;/code&gt;) and then I point it to the SVG as hosted on Github via the Heroicons repo. Origami takes care of fetching the icons over the network and caching them in-memory.&lt;/p&gt;
+&lt;p&gt;Beautiful, isn’t it? It kind of reminds me of &lt;a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script/type/importmap" &gt;import maps&lt;/a&gt; where you can map a bare module specifier to a URL (and &lt;a href="https://blog.jim-nielsen.com/2024/deno-de-emphasizes-http-imports/" &gt;Deno’s semi-abandoned HTTP imports&lt;/a&gt; which were beautiful in their own right).&lt;/p&gt;
+&lt;h2 id="how-it-works"&gt;How It Works&lt;/h2&gt;
+&lt;p&gt;Origami makes file paths first-class citizens of the language — even “remote” file paths — so it’s very simple to create a single file that maps &lt;em&gt;your&lt;/em&gt; icon names in a codebase to &lt;em&gt;someone else’s&lt;/em&gt; icon names from a set, whether those are being installed on disk via npm or fetched over the internet.&lt;/p&gt;
+&lt;p&gt;To simplify my example earlier, I can have a file like &lt;code&gt;icons.ori&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-ori"&gt;{
+  home.svg: https://example.com/path/to/home.svg
+  about.svg: https://example.com/path/to/information-circle.svg
+  search.svg: https://example.com/path/to/magnifying-glass.svg
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then I can reference those icons in my templates like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-html"&gt;&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;div&lt;/span&gt;&amp;gt;&lt;/span&gt;${icons.ori/home.svg} Search&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;div&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Easy-peasy! And when I want to change icons, I simply update the entries in &lt;code&gt;icons.ori&lt;/code&gt; to point somewhere else — at a remote or local path.&lt;/p&gt;
+&lt;p&gt;And if you really want to go the extra mile, you can use Origami’s caching feature:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-ori"&gt;Tree.cache(
+  {
+    home.svg: https://raw.github.com/path/to/home.svg
+    about.svg: https://raw.github.com/path/to/information-circle.svg
+    search.svg: https://raw.github.com/path/to/magnifying-glass.svg
+  },
+  Origami.projectRoot()/cache
+)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Rather than just caching the files in memory, this will cache them to a local folder like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;cache/
+  home.svg
+  about.svg
+  search.svg
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Which is really cool because now when I run my site locally I have a folder of SVG files cached locally that I can look at and explore (useful for debugging, etc.)&lt;/p&gt;
+&lt;p&gt;This makes &lt;a href="https://blog.jim-nielsen.com/2025/be-mindful-of-what-you-make-easy/" &gt;vendoring&lt;/a&gt; really easy if I want to put these in my project under source control. Just run the file once and boom, they’re on disk!&lt;/p&gt;
+&lt;p&gt;There’s something really appealing to me about this. I think it’s because it feels very “webby” — akin to the same reasons I liked HTTP imports in Deno. You declare your dependencies with URLs, then they’re fetched over the network and become available to the rest of your code. No package manager middleman introducing extra complexity like versioning, transitive dependencies, install bloat, etc.&lt;/p&gt;
+&lt;p&gt;What’s cool about Origami is that handling icons like this isn’t a “feature” of the language. It’s an outcome of the expressiveness of the language. In some frameworks, this kind of problem would require a special feature (that’s why you have special npm packages for implementations of Heroicons in frameworks like react and vue). But because of the way Origami is crafted as a tool, it sort of pushes you towards crafting solutions in the same manner as you would with web-based technologies (HTML/CSS/JS). It helps you speak “web platform” rather than some other abstraction on top of it. I like that.&lt;/p&gt;
+
+    &lt;hr /&gt;
+    
+
+    &lt;p&gt;
+      Reply via:
+      
+
+      &lt;a
+        href="mailto:jimniels%2Bblog@gmail.com?subject=Re:%20blog.jim-nielsen.com/2026/origami-icons/"
+        &gt;Email&lt;/a
+      &gt;
+      · &lt;a href="https://mastodon.social/@jimniels"&gt;Mastodon&lt;/a&gt; ·
+
+      &lt;a href="https://bsky.app/profile/jim-nielsen.com"&gt;Bluesky&lt;/a&gt;
+    &lt;/p&gt;
+
+    
+  </description>
+      <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/origami-icons/</guid>
+      <pubDate>Mon, 23 Feb 2026 19:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>How AI Labs Proliferate</title>
       <link>https://blog.jim-nielsen.com/2026/how-ai-labs-proliferate/</link>
@@ -484,53 +593,6 @@
   </description>
       <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/say-no-to-data/</guid>
       <pubDate>Mon, 26 Jan 2026 19:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>CTA Hierarchy in the Wild</title>
-      <link>https://blog.jim-nielsen.com/2026/cta-hierarchy/</link>
-      <description>&lt;p&gt;The other day I was browsing YouTube — as one does — and I clicked a link in the video description to a book.&lt;/p&gt;
-&lt;p&gt;I was then subjected to a man-in-the-middle attack, where YouTube put themselves in the middle of me and the link I had clicked:&lt;/p&gt;
-&lt;p class="image-container"&gt;&lt;img src="https://cdn.jim-nielsen.com/blog/2026/youtube-are-you-sure.png" width="680" height="381" alt="Screenshot of a webpage that says “Are you sure you want to leave YouTube?” and there are two buttons. On the left is the secondary, de-emphasized button that says “GO TO SITE” and on the right is the primary, visually emphasized button that says “BACK TO YOUTUBE”." /&gt;
-
-&lt;/p&gt;&lt;p&gt;&lt;a href="https://blog.jim-nielsen.com/2024/the-subversive-hyperlink/" &gt;Hyperlinks are subversive&lt;/a&gt;. Big Tech must protect themselves and their interests.&lt;/p&gt;
-&lt;p&gt;But link hijacking isn’t why I’m writing this post.&lt;/p&gt;
-&lt;p&gt;What struck me was the ordering and visual emphasis of the “call to action” (CTA) buttons. I almost clicked “Back to YouTube”, which was precisely the action I didn’t want.&lt;/p&gt;
-&lt;p&gt;I paused and laughed to myself.&lt;/p&gt;
-&lt;p&gt;Look how the design pattern for primary/secondary user interface controls has inverted over time:&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Classic software:&lt;ul&gt;
-&lt;li&gt;Primary CTA: what’s best for you&lt;/li&gt;
-&lt;li&gt;Secondary CTA: an alternative for you&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/li&gt;
-&lt;li&gt;Modern software:&lt;ul&gt;
-&lt;li&gt;Primary CTA: what’s best for us&lt;/li&gt;
-&lt;li&gt;Secondary CTA: what’s acceptable to us&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;It seems like everywhere I go, software is increasingly designed &lt;em&gt;against&lt;/em&gt; me.&lt;/p&gt;
-
-    &lt;hr /&gt;
-    
-
-    &lt;p&gt;
-      Reply via:
-      
-
-      &lt;a
-        href="mailto:jimniels%2Bblog@gmail.com?subject=Re:%20blog.jim-nielsen.com/2026/cta-hierarchy/"
-        &gt;Email&lt;/a
-      &gt;
-      · &lt;a href="https://mastodon.social/@jimniels"&gt;Mastodon&lt;/a&gt; ·
-
-      &lt;a href="https://bsky.app/profile/jim-nielsen.com"&gt;Bluesky&lt;/a&gt;
-    &lt;/p&gt;
-
-    
-  </description>
-      <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/cta-hierarchy/</guid>
-      <pubDate>Thu, 22 Jan 2026 19:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
