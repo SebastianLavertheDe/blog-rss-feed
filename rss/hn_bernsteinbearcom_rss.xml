@@ -5,7 +5,250 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Wed, 25 Feb 2026 13:17:02 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 25 Feb 2026 14:56:19 +0000</lastBuildDate>
+    <item>
+      <title>A fuzzer for the Toy Optimizer</title>
+      <link>https://bernsteinbear.com/blog/toy-fuzzer/?utm_source=rss</link>
+      <description>&lt;p&gt;It’s hard to get optimizers right. Even if you build up a painstaking test
+suite by hand, you will likely miss corner cases, especially corner cases at
+the interactions of multiple components or multiple optimization passes.&lt;/p&gt;
+
+&lt;p&gt;I wanted to see if I could write a fuzzer to catch some of these bugs
+automatically. But a fuzzer alone isn’t much use without some correctness
+oracle—in this case, we want a more interesting bug than accidentally
+crashing the optimizer. We want to see if the optimizer introduces a
+correctness bug in the program.&lt;/p&gt;
+
+&lt;p&gt;So I set off in the most straightforward way possible, inspired by my
+hazy memories of a former &lt;a href="https://pypy.org/posts/2024/03/fixing-bug-incremental-gc.html"&gt;CF blog post&lt;/a&gt;.&lt;/p&gt;
+
+&lt;h2 id="generating-programs"&gt;Generating programs&lt;/h2&gt;
+
+&lt;p&gt;Generating random programs isn’t so bad. We have program generation APIs and we
+can dynamically pick which ones we want to call. I wrote a small loop that
+generates &lt;code class="language-plaintext highlighter-rouge"&gt;load&lt;/code&gt;s from and &lt;code class="language-plaintext highlighter-rouge"&gt;store&lt;/code&gt;s to the arguments at random offsets and with
+random values, and &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt;s to random instructions with outputs. The idea
+with the &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt; is to keep track of the values as if there was some other
+function relying on them.&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;generate_program&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="n"&gt;bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="n"&gt;args&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getarg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+    &lt;span class="n"&gt;num_ops&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;30&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;ops_with_values&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;[:]&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;_&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;num_ops&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;choice&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"escape"&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+        &lt;span class="n"&gt;arg&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;choice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;a_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;choice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ops_with_values&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;v&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;ops_with_values&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"escape"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;escape&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a_value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="nb"&gt;NotImplementedError&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s"&gt;"Unknown operation &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This generates random programs. Here is an example stringified random program:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;var0 = getarg(0)
+var1 = getarg(1)
+var2 = getarg(2)
+var3 = load(var2, 0)
+var4 = load(var0, 1)
+var5 = load(var1, 1)
+var6 = escape(var0)
+var7 = store(var0, 2, 3)
+var8 = store(var2, 0, 7)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;No idea what would generate something like this, but oh well.&lt;/p&gt;
+
+&lt;h2 id="verifying-programs"&gt;Verifying programs&lt;/h2&gt;
+
+&lt;p&gt;Then we want to come up with our invariants. I picked the invariant that, under
+the same preconditions, the heap will look the same after running an optimized
+program as it would under an un-optimized program&lt;sup id="fnref:equivalence" role="doc-noteref"&gt;&lt;a href="#fn:equivalence" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;. So we can delete
+instructions, but if we don’t have a load-bearing store, store the wrong
+information, or cache stale loads, we will probably catch that.&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;verify_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;before_no_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s"&gt;"a"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"b"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"c"&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+    &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s"&gt;"a"&lt;/span&gt;
+    &lt;span class="n"&gt;before_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+    &lt;span class="n"&gt;optimized&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;optimize_load_store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;after_no_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimized&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s"&gt;"a"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"b"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"c"&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+    &lt;span class="n"&gt;after_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimized&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="n"&gt;before_no_alias&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;after_no_alias&lt;/span&gt;
+    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="n"&gt;before_alias&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;after_alias&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;I have a very silly verifier that tests two cases: one where the arguments do
+not alias and one where they are all the same object. Generating partial
+aliases would be a good extension here.&lt;/p&gt;
+
+&lt;p&gt;Last, we have the interpreter.&lt;/p&gt;
+
+&lt;h2 id="running-programs"&gt;Running programs&lt;/h2&gt;
+
+&lt;p&gt;The interpreter is responsible for keeping track of the heap (as indexed by
+&lt;code class="language-plaintext highlighter-rouge"&gt;(object, offset)&lt;/code&gt; pairs) as well as the results of the various instructions.&lt;/p&gt;
+
+&lt;p&gt;We keep track of the &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt;d values so we can see results of some
+instructions even if they do not get written back to the heap. Maybe we should
+be &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt;ing all instructions with output instead of only random ones. Who
+knows.&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;heap&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
+    &lt;span class="n"&gt;ssa&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
+    &lt;span class="n"&gt;escaped&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"getarg"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;obj&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+            &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;heap&lt;/span&gt;&lt;span class="p"&gt;[(&lt;/span&gt;&lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;
+        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;obj&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+            &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;heap&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="s"&gt;"unknown"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;
+        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"escape"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="nb"&gt;isinstance&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;Constant&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+                &lt;span class="n"&gt;escaped&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+                &lt;span class="n"&gt;escaped&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="nb"&gt;NotImplementedError&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s"&gt;"Unknown operation &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s"&gt;"escaped"&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;escaped&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;heap&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Then we return the heap so that the verifier can check.&lt;/p&gt;
+
+&lt;h2 id="the-harness"&gt;The harness&lt;/h2&gt;
+
+&lt;p&gt;Then we run a bunch of random tests through the verifier!&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;test_random_programs&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="c1"&gt;# Remove random.seed if using in CI... instead print the seed out so you
+&lt;/span&gt;    &lt;span class="c1"&gt;# can reproduce crashes if you find them
+&lt;/span&gt;    &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;seed&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;num_programs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;100000&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;num_programs&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;program&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;generate_program&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+        &lt;span class="n"&gt;verify_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;program&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The number of programs is configurable. Or you could make this &lt;code class="language-plaintext highlighter-rouge"&gt;while True&lt;/code&gt;.
+But due to how simple the optimizer is, we will find all the possible bugs
+pretty quickly.&lt;/p&gt;
+
+&lt;p&gt;I initially started writing this post because I thought I had found a bug, but
+it turns out that I had, with CF’s help, in 2022, walked through every possible
+case in the “buggy” situation, and the optimizer handles those cases correctly.
+That explains why the verifier didn’t find that bug!&lt;/p&gt;
+
+&lt;h2 id="testing-the-verifier"&gt;Testing the verifier&lt;/h2&gt;
+
+&lt;p&gt;So does it work? If you run it, it’ll hang for a bit and then report no issues.
+That’s helpful, in a sense… it’s revealing that it is unable to find a
+certain class of bug in the optimizer.&lt;/p&gt;
+
+&lt;p&gt;Let’s comment out the main load-bearing pillar of correctness in the
+optimizer—removing aliasing writes—and see what happens.&lt;/p&gt;
+
+&lt;p&gt;We get a crash nearly instantly:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ uv run --with pytest pytest loadstore.py -k random
+...
+=========================================== FAILURES ============================================
+_____________________________________ test_random_programs ______________________________________
+
+    def test_random_programs():
+        random.seed(0)
+        num_programs = 100000
+        for i in range(num_programs):
+            program = generate_program()
+&amp;gt;           verify_program(program)
+
+loadstore.py:617:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+bb = [Operation(getarg, [Constant(0)], None, None), Operation(getarg, [Constant(1)], None, None), Operation(getarg, [Consta...], None, None)], None, None), Operation(load, [Operation(getarg, [Constant(0)], None, None), Constant(0)], None, None)]
+
+    def verify_program(bb):
+        before_no_alias = interpret_program(bb, ["a", "b", "c"])
+        a = "a"
+        before_alias = interpret_program(bb, [a, a, a])
+        optimized = optimize_load_store(bb)
+        after_no_alias = interpret_program(optimized, ["a", "b", "c"])
+        after_alias = interpret_program(optimized, [a, a, a])
+        assert before_no_alias == after_no_alias
+&amp;gt;       assert before_alias == after_alias
+E       AssertionError: assert {('a', 0): 4,...', 3): 1, ...} == {('a', 0): 9,...', 3): 1, ...}
+E
+E         Omitting 4 identical items, use -vv to show
+E         Differing items:
+E         {('a', 0): 4} != {('a', 0): 9}
+E         Use -v to get more diff
+
+loadstore.py:610: AssertionError
+==================================== short test summary info ====================================
+FAILED loadstore.py::test_random_programs - AssertionError: assert {('a', 0): 4,...', 3): 1, ...} == {('a', 0): 9,...', 3): 1, ...}
+=============================== 1 failed, 15 deselected in 0.04s ================================
+$
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;We should probably use &lt;code class="language-plaintext highlighter-rouge"&gt;bb_to_str(bb)&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;bb_to_str(optimized)&lt;/code&gt; to print out
+the un-optimized and optimized traces in the &lt;code class="language-plaintext highlighter-rouge"&gt;assert&lt;/code&gt; failure messages. But we
+get a nice diff of the heap automatically, which is neat. And it points to an
+aliasing problem!&lt;/p&gt;
+
+&lt;h2 id="full-code"&gt;Full code&lt;/h2&gt;
+
+&lt;p&gt;See the &lt;a href="https://github.com/tekknolagi/tekknolagi.github.com/blob/fbccf9696e98721ca77c8d5ec5f828a11492b04c/loadstore.py"&gt;full code&lt;/a&gt;.&lt;/p&gt;
+
+&lt;h2 id="extensions"&gt;Extensions&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Synthesize (different) types for non-aliasing objects and add them in &lt;code class="language-plaintext highlighter-rouge"&gt;info&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;Shrink/reduce failing examples down for easier debugging&lt;/li&gt;
+  &lt;li&gt;Use Hypothesis for property-based testing, which CF notes also gives you
+shrinking&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://pypy.org/posts/2022/12/jit-bug-finding-smt-fuzzing.html"&gt;Use Z3 to encode&lt;/a&gt; the generated programs instead of randomly interpreting them&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id="thanks"&gt;Thanks&lt;/h2&gt;
+
+&lt;p&gt;Thank you to &lt;a href="https://cfbolz.de/"&gt;CF Bolz-Tereick&lt;/a&gt; for feedback on this post!&lt;/p&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:equivalence" role="doc-endnote"&gt;
+      &lt;p&gt;CF notes that this notion of equivalence works for this
+optimizer but not for one that does allocation removal (escape analysis).
+If we removed allocations and writes to them, we would be changing the heap
+results and our verifier would appear to fail. This means we have to, if we
+are to delete allocations, pick a more subtle definition of equivalence.&lt;/p&gt;
+
+      &lt;p&gt;Perhaps something that looks like escape analysis in the verifier’s
+interpreter? &lt;a href="#fnref:equivalence" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/toy-fuzzer/</guid>
+      <pubDate>Wed, 25 Feb 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Type-based alias analysis in the Toy Optimizer</title>
       <link>https://bernsteinbear.com/blog/toy-tbaa/?utm_source=rss</link>
@@ -399,6 +642,8 @@ https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/dfg/DFGObjectAl
 --&gt;
 
 &lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
+
+&lt;p&gt;See the &lt;a href="https://github.com/tekknolagi/tekknolagi.github.com/blob/67a1c5cbcf81d96cc63f8b3904619c018d1f2be1/loadstore.py"&gt;full code&lt;/a&gt;.&lt;/p&gt;
 
 &lt;p&gt;Thanks for joining as I work through a small use of type-based alias analysis
 for myself. I hope you enjoyed.&lt;/p&gt;
@@ -1282,6 +1527,8 @@ eventually.)&lt;/p&gt;
 is right now.&lt;/p&gt;
 
 &lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
+
+&lt;p&gt;See the &lt;a href="https://github.com/tekknolagi/tekknolagi.github.com/blob/74aad4d26d166f9bc847bafcd503378d78d294ee/loadstore.py"&gt;full code&lt;/a&gt;.&lt;/p&gt;
 
 &lt;p&gt;Thanks for reading the text version of the video that CF and I made a while
 back. Now you know how to do load/store elimination on traces.&lt;/p&gt;
@@ -3293,425 +3540,6 @@ reserving a scratch register.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/linear-scan-lifetime-holes/</guid>
       <pubDate>Sun, 24 Aug 2025 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Liveness analysis with Datalog</title>
-      <link>https://bernsteinbear.com/blog/liveness-datalog/?utm_source=rss</link>
-      <description>&lt;p&gt;After publishing &lt;a href="/blog/linear-scan"&gt;Linear scan register allocation on SSA&lt;/a&gt;, I
-had a nice call with &lt;a href="https://waleedkhan.name"&gt;Waleed Khan&lt;/a&gt; where he showed me
-how to Datalog. He thought it might be useful to try implementing liveness
-analysis as a Datalog problem.&lt;/p&gt;
-
-&lt;p&gt;We started off with the Wimmer2010 CFG example from that post, sketching out
-manually which variables were live out of each block: R10 out of B1, R12 out of
-B2, etc.&lt;/p&gt;
-
-&lt;figure&gt;
-&lt;object class="svg" type="image/svg+xml" data="/assets/img/wimmer-lsra-cfg.svg"&gt;&lt;/object&gt;
-&lt;figcaption&gt;
-    &lt;p&gt;The graph from Wimmer2010 has come back! Remember, we’re using block arguments
-instead of phis, so &lt;code class="language-plaintext highlighter-rouge"&gt;B1(R10, R11)&lt;/code&gt; defines R10 and R11 before the first
-instruction in B1.&lt;/p&gt;
-  &lt;/figcaption&gt;
-&lt;/figure&gt;
-
-&lt;p&gt;Then we tried to formulate liveness as a Datalog relation.&lt;/p&gt;
-
-&lt;p&gt;Liveness is normally (at least for me) defined in terms of two relations:
-live-in and live-out. Live-out is “what is needed” from all of the successors
-of a block and live-in is the “what is needed” summary for a block. So, in
-fake math notation:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;live-out(b) = union(live-in(s) for each successor s of b)
-live-in(b) = (live-out(b) + used(b)) - defined(b)
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;where each of the component parts of that expression represent sets of
-variables:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;&lt;em&gt;used(b)&lt;/em&gt; is the set of variables referenced as in-operands to instructions in
-a block&lt;/li&gt;
-  &lt;li&gt;&lt;em&gt;defined(b)&lt;/em&gt; is the set of variables defined by instructions in a block&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;We ended up computing the live-in sets for blocks in the register allocator
-post but then using the live-out sets instead. So today let’s compute both
-live-in and live-out sets with Datalog!&lt;/p&gt;
-
-&lt;h2 id="datalog"&gt;Datalog&lt;/h2&gt;
-
-&lt;p&gt;Datalog is a logic programming language. It probably looks and feels different
-from every other programming language you have used… except for maybe SQL. It
-might feel similar to SQL, except SQL has a certain order to it that Datalog
-does not.&lt;/p&gt;
-
-&lt;p&gt;We’ll be using Souffle here because Waleed mentioned it and also I learned a
-bit about it in my databases class.&lt;/p&gt;
-
-&lt;p&gt;The thing you do first is define your relations, which is what Datalog calls a
-table.&lt;/p&gt;
-
-&lt;p&gt;In this case, if we want to compute liveness information, we have to know
-information about what a block uses, defines, and what successors it has.&lt;/p&gt;
-
-&lt;p&gt;First, the thing you have to know about Datalog, is that it’s kind of like
-the opposite of array programming. We’re going to express things about sets by
-expressing facts about individual items in a set.&lt;/p&gt;
-
-&lt;p&gt;For example, we’re not going to say “this block B4 uses [R10, R12, R16]”. We’re
-going to say three separate facts: “B4 uses R10”, “B4 uses R12”, “B4 uses R16”.
-You can think about it like each relation being a database table where each
-parameter is a column name.&lt;/p&gt;
-
-&lt;p&gt;Here are the relations for block uses, block defs, and which blocks follow
-other blocks:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;// liveness.dl
-.decl block_use(block:symbol, var:symbol)
-.decl block_def(block:symbol, var:symbol)
-.decl block_succ(succ:symbol, pred:symbol)
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Where &lt;code class="language-plaintext highlighter-rouge"&gt;symbol&lt;/code&gt; here means string.&lt;/p&gt;
-
-&lt;p&gt;We can then embed some facts inline. For example, this says “A defines R0 and
-R1 and uses R0”:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;block_def("A", "R0").
-block_def("A", "R1").
-block_use("A", "R0").
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;You can also provide facts as a TSV but this file format is so irritating to
-construct manually and has given me silently wrong answers in Souffle before so
-I am not doing that for this example.&lt;/p&gt;
-
-&lt;p&gt;You can, for your edification, manually encode all the use/def/successor facts
-from the previous post into Souffle—or you can copy this chunk into your file:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;// liveness.dl
-// ...
-block_def("B1", "R10").
-block_def("B1", "R11").
-block_use("B1", "R11").
-
-block_def("B2", "R12").
-block_def("B2", "R13").
-block_use("B2", "R13").
-
-block_def("B3", "R14").
-block_def("B3", "R15").
-block_use("B3", "R12").
-block_use("B3", "R13").
-block_use("B3", "R14").
-block_use("B3", "R15").
-
-block_def("B4", "R16").
-block_use("B4", "R16").
-block_use("B4", "R10").
-block_use("B4", "R12").
-
-block_succ("B2", "B1").
-block_succ("B3", "B2").
-block_succ("B2", "B3").
-block_succ("B4", "B2").
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;We can declare our live-in and live-out relations similarly to our use/def/succ
-relations. We mark them as being &lt;code class="language-plaintext highlighter-rouge"&gt;.output&lt;/code&gt; so that Souffle presents us with the
-results.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;// liveness.dl
-// ...
-.decl live_out(block:symbol, var:symbol)
-.output live_out
-.decl live_in(block:symbol, var:symbol)
-.output live_in
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Now it’s time to define our relations. You may notice that the Souffle
-definitions look very similar to our earlier definitions. This is no mistake;
-Datalog was created for dataflow and graph problems.&lt;/p&gt;
-
-&lt;p&gt;We’ll start with live-out:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;// liveness.dl
-// ...
-live_out(b, v) :- block_succ(s, b), live_in(s, v).
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;We read this left to right as “a variable &lt;code class="language-plaintext highlighter-rouge"&gt;v&lt;/code&gt; is live-out of block &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt; if block
-&lt;code class="language-plaintext highlighter-rouge"&gt;s&lt;/code&gt; is a successor of &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;v&lt;/code&gt; is live-in to &lt;code class="language-plaintext highlighter-rouge"&gt;s&lt;/code&gt;”. The &lt;code class="language-plaintext highlighter-rouge"&gt;:-&lt;/code&gt; defines the left
-side in terms of the right side. The comma between &lt;code class="language-plaintext highlighter-rouge"&gt;block_succ&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;live_in&lt;/code&gt;
-means it’s a conjunction—&lt;em&gt;and&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;Where’s the union? Well, remember what I said about array programming? We’re
-not thinking in terms of sets. We’re thinking one program variable at a time.
-As Souffle executes our relations, &lt;code class="language-plaintext highlighter-rouge"&gt;live_out&lt;/code&gt; will incrementally build up a
-table.&lt;/p&gt;
-
-&lt;p&gt;It’s also a little weird to program in this style because &lt;code class="language-plaintext highlighter-rouge"&gt;s&lt;/code&gt; wasn’t textually
-defined anywhere like a parameter or a variable. You kind of have to think of
-&lt;code class="language-plaintext highlighter-rouge"&gt;s&lt;/code&gt; as connector, a binder, a foreign key—what have you. It’s a placeholder.
-(I don’t know how to explain this well. Sorry.)&lt;/p&gt;
-
-&lt;p&gt;Then we can define live-in. This on the surface looks more complicated but I
-think that is only because of Souffle’s choice of syntax.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;// liveness.dl
-// ...
-live_in(b, v) :- (live_out(b, v) ; block_use(b, v)), !block_def(b, v).
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;It reads as “a variable &lt;code class="language-plaintext highlighter-rouge"&gt;v&lt;/code&gt; is live-in to &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt; if it is either live-out of &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt;
-or used in &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt;, and &lt;em&gt;not&lt;/em&gt; defined in &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt;. The semicolons are
-disjunctions—&lt;em&gt;or&lt;/em&gt;—and the exclamation points negations—&lt;em&gt;not&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;These relations look endlessly mutually recursive but you have to keep in mind
-that we’re not running functions on data, exactly. We’re declaratively
-expressing definitions of rules—relations. &lt;code class="language-plaintext highlighter-rouge"&gt;block_use(b, v)&lt;/code&gt; in the body of
-&lt;code class="language-plaintext highlighter-rouge"&gt;live_in&lt;/code&gt; is not calling a function but instead making a query—is the row
-&lt;code class="language-plaintext highlighter-rouge"&gt;(b, v)&lt;/code&gt; in the table &lt;code class="language-plaintext highlighter-rouge"&gt;block_use&lt;/code&gt;? Datalog builds the tables until saturation.&lt;/p&gt;
-
-&lt;p&gt;Now we can run Souffle! We tell it to dump to standard output with &lt;code class="language-plaintext highlighter-rouge"&gt;-D-&lt;/code&gt; but
-you could just as easily have it dump each output relation in its own separate
-file in the current directory by specifying &lt;code class="language-plaintext highlighter-rouge"&gt;-D.&lt;/code&gt;.&lt;/p&gt;
-
-&lt;div class="language-console highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;souffle &lt;span class="nt"&gt;-D-&lt;/span&gt; liveness.dl
-&lt;span class="go"&gt;---------------
-live_in
-block   var
-===============
-B2      R10
-B3      R10
-B3      R12
-B3      R13
-B4      R10
-B4      R12
-===============
----------------
-live_out
-block   var
-===============
-B1      R10
-B2      R10
-B2      R12
-B2      R13
-B3      R10
-===============
-&lt;/span&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt;
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;That’s neat. We got nicely formatted tables and it only took us two lines of
-code! Let’s compare to our Ruby code from the previous post to underscore the
-point:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;analyze_liveness&lt;/span&gt;
-  &lt;span class="n"&gt;order&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;post_order&lt;/span&gt;
-  &lt;span class="n"&gt;gen&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;kill&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;compute_initial_liveness_sets&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;order&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="n"&gt;live_in&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Hash&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-  &lt;span class="n"&gt;changed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;true&lt;/span&gt;
-  &lt;span class="k"&gt;while&lt;/span&gt; &lt;span class="n"&gt;changed&lt;/span&gt;
-    &lt;span class="n"&gt;changed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;false&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="k"&gt;in&lt;/span&gt; &lt;span class="n"&gt;order&lt;/span&gt;
-      &lt;span class="n"&gt;block_live&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;successors&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;map&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;succ&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="n"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;succ&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="p"&gt;}.&lt;/span&gt;&lt;span class="nf"&gt;reduce&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="ss"&gt;:|&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="n"&gt;block_live&lt;/span&gt; &lt;span class="o"&gt;|=&lt;/span&gt; &lt;span class="n"&gt;gen&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-      &lt;span class="n"&gt;block_live&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;=&lt;/span&gt; &lt;span class="o"&gt;~&lt;/span&gt;&lt;span class="n"&gt;kill&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-      &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;block_live&lt;/span&gt;
-        &lt;span class="n"&gt;changed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kp"&gt;true&lt;/span&gt;
-        &lt;span class="n"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block_live&lt;/span&gt;
-      &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-  &lt;span class="n"&gt;live_in&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This is because we have separated the iteration-to-fixpoint bit from the main
-bit of the dataflow analysis: the equation. If we let Datalog do the data
-movement for us, we can work on defining the rules—and only the rules.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;This is probably why, in the fullness of time, many static analysis and
-compiler tools end up growing some kind of embedded (partial) Datalog engine.
-Call it Scholz’s tenth rule.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Souffle also has the ability to compile to C++, which gives you two nice
-things:&lt;/p&gt;
-
-&lt;ol&gt;
-  &lt;li&gt;you can probably get faster execution&lt;/li&gt;
-  &lt;li&gt;you can use it from an existing C++ program&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;p&gt;I don’t have any experience with this API.&lt;/p&gt;
-
-&lt;p&gt;This is when Waleed mentioned offhandedly that he had heard about some embedded
-Rust datalog called &lt;a href="https://s-arash.github.io/ascent/"&gt;Ascent&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h2 id="rust"&gt;Rust&lt;/h2&gt;
-
-&lt;p&gt;The front page of the Ascent website is a really great sell if you show up
-thinking “gee, I wish I had Datalog to use in my Rust program”. Right out the
-gate, you get reasonable-enough Datalog syntax via a proc macro.&lt;/p&gt;
-
-&lt;p&gt;For example, here is the canonical path example for Souffle:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;.decl edge(x:number, y:number)
-.decl path(x:number, y:number)
-
-path(x, y) :- edge(x, y).
-path(x, y) :- path(x, z), edge(z, y).
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;and in Ascent:&lt;/p&gt;
-
-&lt;div class="language-rust highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="nd"&gt;ascent!&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-   &lt;span class="n"&gt;relation&lt;/span&gt; &lt;span class="nf"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nb"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-   &lt;span class="n"&gt;relation&lt;/span&gt; &lt;span class="nf"&gt;path&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nb"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-
-   &lt;span class="nf"&gt;path&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;--&lt;/span&gt; &lt;span class="nf"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-   &lt;span class="nf"&gt;path&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;--&lt;/span&gt; &lt;span class="nf"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="nf"&gt;path&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;z&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Super.&lt;/p&gt;
-
-&lt;p&gt;We weren’t sure if the Souffle liveness would port cleanly to Rust, but it sure
-did! It even lets you use your own datatypes instead of just &lt;code class="language-plaintext highlighter-rouge"&gt;i32&lt;/code&gt; (which the
-front-page example uses).&lt;/p&gt;
-
-&lt;div class="language-rust highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;use&lt;/span&gt; &lt;span class="nn"&gt;ascent&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;ascent&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-
-&lt;span class="nd"&gt;#[derive(Clone,&lt;/span&gt; &lt;span class="nd"&gt;PartialEq,&lt;/span&gt; &lt;span class="nd"&gt;Eq,&lt;/span&gt; &lt;span class="nd"&gt;Hash,&lt;/span&gt; &lt;span class="nd"&gt;Copy)]&lt;/span&gt;
-&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="nf"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-
-&lt;span class="k"&gt;impl&lt;/span&gt; &lt;span class="nn"&gt;std&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;Debug&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;BlockId&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt; &lt;span class="nn"&gt;std&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;Formatter&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nv"&gt;'_&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nn"&gt;std&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nb"&gt;Result&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="nd"&gt;write!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"B{}"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;self&lt;/span&gt;&lt;span class="na"&gt;.0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="p"&gt;}&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-
-&lt;span class="nd"&gt;#[derive(Clone,&lt;/span&gt; &lt;span class="nd"&gt;PartialEq,&lt;/span&gt; &lt;span class="nd"&gt;Eq,&lt;/span&gt; &lt;span class="nd"&gt;Hash,&lt;/span&gt; &lt;span class="nd"&gt;Copy)]&lt;/span&gt;
-&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-
-&lt;span class="k"&gt;impl&lt;/span&gt; &lt;span class="nn"&gt;std&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;Debug&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;VarId&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt; &lt;span class="nn"&gt;std&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;Formatter&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nv"&gt;'_&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nn"&gt;std&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nb"&gt;Result&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="nd"&gt;write!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"R{}"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="k"&gt;self&lt;/span&gt;&lt;span class="na"&gt;.0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="p"&gt;}&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-
-&lt;span class="nd"&gt;ascent!&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="n"&gt;relation&lt;/span&gt; &lt;span class="nf"&gt;block_use&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="n"&gt;relation&lt;/span&gt; &lt;span class="nf"&gt;block_def&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="n"&gt;relation&lt;/span&gt; &lt;span class="nf"&gt;block_succ&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;  &lt;span class="c1"&gt;// (succ, pred)&lt;/span&gt;
-    &lt;span class="n"&gt;relation&lt;/span&gt; &lt;span class="nf"&gt;live_out&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="n"&gt;relation&lt;/span&gt; &lt;span class="nf"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="nf"&gt;live_out&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;--&lt;/span&gt; &lt;span class="nf"&gt;block_succ&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="nf"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="nf"&gt;live_in&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;--&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nf"&gt;live_out&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;|&lt;/span&gt; &lt;span class="nf"&gt;block_use&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)),&lt;/span&gt; &lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="nf"&gt;block_def&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="c1"&gt;// ...&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Notice how we don’t have an &lt;code class="language-plaintext highlighter-rouge"&gt;input&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;output&lt;/code&gt; annotation like we did in
-Datalog. That’s because this is designed to be embedded in an existing program,
-which probably doesn’t to deal with the disk (or at least wants to read/write
-in its own format).&lt;/p&gt;
-
-&lt;p&gt;Ascent lets us give it some vectors of data and then at the end lets us read
-some vectors of data too.&lt;/p&gt;
-
-&lt;div class="language-rust highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
-&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="k"&gt;mut&lt;/span&gt; &lt;span class="n"&gt;prog&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nn"&gt;AscentProgram&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;default&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;b1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;b2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;b3&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;b4&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;r10&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;r11&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;11&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;r12&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;12&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;r13&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;13&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;r14&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;14&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;r15&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;15&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;r16&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nf"&gt;VarId&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;16&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="n"&gt;prog&lt;/span&gt;&lt;span class="py"&gt;.block_def&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nd"&gt;vec!&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r10&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r11&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r12&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r13&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r14&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r15&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b4&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r16&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-    &lt;span class="p"&gt;];&lt;/span&gt;
-    &lt;span class="n"&gt;prog&lt;/span&gt;&lt;span class="py"&gt;.block_succ&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nd"&gt;vec!&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;b1&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;b2&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b4&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;b2&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-    &lt;span class="p"&gt;];&lt;/span&gt;
-    &lt;span class="n"&gt;prog&lt;/span&gt;&lt;span class="py"&gt;.block_use&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nd"&gt;vec!&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r11&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r13&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r12&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r13&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r14&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r15&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b4&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r10&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b4&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r12&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b4&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r16&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-    &lt;span class="p"&gt;];&lt;/span&gt;
-    &lt;span class="n"&gt;prog&lt;/span&gt;&lt;span class="nf"&gt;.run&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
-    &lt;span class="nd"&gt;println!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"live out: {:?}"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;prog&lt;/span&gt;&lt;span class="py"&gt;.live_out&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="nd"&gt;println!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"live in: {:?}"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;prog&lt;/span&gt;&lt;span class="py"&gt;.live_in&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Then we need only run &lt;code class="language-plaintext highlighter-rouge"&gt;cargo add ascent&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;cargo run&lt;/code&gt;—both of which worked
-with zero issues—and see the results.&lt;/p&gt;
-
-&lt;div class="language-console highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;cargo run
-&lt;span class="go"&gt;    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
-     Running `target/debug/liveness`
-live out: [(B2, R12), (B2, R13), (B2, R10), (B1, R10), (B3, R10)]
-live in: [(B3, R12), (B3, R13), (B4, R10), (B4, R12), (B2, R10), (B3, R10)]
-&lt;/span&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt;
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;It’s not a fancy looking table, but it’s very close to my program, which is
-neat.&lt;/p&gt;
-
-&lt;p&gt;This is similar to embedding Souffle in C++ and then calling the C++. One
-difference, though, is the Souffle process has two steps. It’s a slight build
-system complication. But this isn’t meant to be a Datalog comparison post!&lt;/p&gt;
-
-&lt;h2 id="more"&gt;More?&lt;/h2&gt;
-
-&lt;p&gt;Can we model all of linear scan this way? Maybe. I’m new to all this stuff.&lt;/p&gt;
-
-&lt;p&gt;Ascent also seems to support lattices, which means we can use it to do abstract
-interpretation on some cool domains.&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="https://pointersgonewild.com/"&gt;Maxime Chevalier-Boisvert&lt;/a&gt; and I prototyped
-&lt;a href="https://github.com/shopify/loupe"&gt;loupe&lt;/a&gt;, an interprocedural type analysis in
-Rust. We had to build our own iterate-to-fixpoint engine, which was
-non-trivial. I wonder how it would look to build something similar on top of
-Ascent.&lt;/p&gt;
-
-&lt;p&gt;I kind of want to check out &lt;a href="https://github.com/frankmcsherry/"&gt;Frank
-McSherry&lt;/a&gt;’s
-&lt;a href="https://github.com/frankmcsherry/blog/blob/master/posts/2025-06-03.md"&gt;datatoad&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
-
-&lt;p&gt;That’s all for now, folks. Just a couple Datalog snippets. Happy hacking.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/liveness-datalog/</guid>
-      <pubDate>Wed, 13 Aug 2025 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
