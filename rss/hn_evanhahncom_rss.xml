@@ -5,7 +5,62 @@
     <link>https://evanhahn.com/blog/</link>
     <description>I'm Evan Hahn, a programmer.</description>
     <language>en</language>
-    <lastBuildDate>Thu, 26 Feb 2026 21:37:29 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 26 Feb 2026 23:35:47 +0000</lastBuildDate>
+    <item>
+      <title>Introducing gzpeek, a tool to parse gzip metadata</title>
+      <link>https://evanhahn.com/introducing-gzpeek/</link>
+      <description>&lt;p&gt;&lt;em&gt;In short: gzip streams contain metadata, like the operating system that did the compression. I built &lt;a href="https://codeberg.org/EvanHahn/gzpeek"&gt;a tool&lt;/a&gt; to read this metadata.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;I love reading specifications for file formats. They always have little surprises.&lt;/p&gt;
+&lt;p&gt;I had assumed that the gzip format was strictly used for compression. My guess was: a few bytes of bookkeeping, the compressed data, and maybe a checksum.&lt;/p&gt;
+&lt;p&gt;But then I read &lt;a href="https://www.rfc-editor.org/rfc/rfc1952"&gt;the spec&lt;/a&gt;. The gzip header holds more than I expected!&lt;/p&gt;
+&lt;h2 id="whats-in-gzip-metadata"&gt;What&amp;rsquo;s in gzip metadata?&lt;/h2&gt;
+&lt;p&gt;In addition to two bytes identifying the data as gzip, there&amp;rsquo;s also:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;The &lt;strong&gt;operating system&lt;/strong&gt; that did the compression. This was super surprising to me! There&amp;rsquo;s a single byte that identifies the compressor&amp;rsquo;s OS: &lt;code&gt;0&lt;/code&gt; for Windows, &lt;code&gt;1&lt;/code&gt; for the Amiga, &lt;code&gt;3&lt;/code&gt; for Unix, and many others I&amp;rsquo;d never heard of. Compressors can also set &lt;code&gt;255&lt;/code&gt; for an &amp;ldquo;unknown&amp;rdquo; OS.&lt;/p&gt;
+&lt;p&gt;Different tools set this value differently. zlib, the most popular gzip library, &lt;a href="https://github.com/madler/zlib/blob/09a1572aa624e5ddb6c075dc013880de70b1b9b9/zutil.h#L100-L189"&gt;changes the flag based on the operating system&lt;/a&gt;. (It even defines some OSes that aren&amp;rsquo;t in the spec, like &lt;code&gt;18&lt;/code&gt; for BeOS.) Many other libraries build atop zlib and inherit this behavior, such as .NET&amp;rsquo;s &lt;code&gt;GZipStream&lt;/code&gt;, Ruby&amp;rsquo;s &lt;code&gt;GzipWriter&lt;/code&gt;, and PHP&amp;rsquo;s &lt;code&gt;gzencode&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Java&amp;rsquo;s &lt;code&gt;GZIPOutputStream&lt;/code&gt;, JavaScript&amp;rsquo;s &lt;code&gt;CompressionStream&lt;/code&gt;, and Go&amp;rsquo;s &lt;code&gt;compress/gzip&lt;/code&gt; set the OS to &amp;ldquo;unknown&amp;rdquo; regardless of operating system. Some, like Zopfli and Apache&amp;rsquo;s &lt;code&gt;mod_deflate&lt;/code&gt;, hard-code it to &amp;ldquo;Unix&amp;rdquo; no matter what.&lt;/p&gt;
+&lt;p&gt;All that to say: in practice, you can&amp;rsquo;t rely on this flag to determine the source OS, but it can give you a hint.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Modification time&lt;/strong&gt; for the data. This can be the time that compression started or the modification time of the file. It can also be set to &lt;code&gt;0&lt;/code&gt; if you don&amp;rsquo;t want to communicate a time.&lt;/p&gt;
+&lt;p&gt;This is represented as an unsigned 32-bit integer in the Unix format. That means it can represent any moment between January 1, 1970 and February 7, 2106. I hope we devise a better compression format in the next ~80 years, because we can only represent dates in that range.&lt;/p&gt;
+&lt;p&gt;In my testing, many implementations set this to &lt;code&gt;0&lt;/code&gt;. A few set it to the current time or the file&amp;rsquo;s modification time—the &lt;code&gt;gzip&lt;/code&gt; command is one of these.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;FTEXT&lt;/strong&gt;, a boolean flag vaguely indicating that the data is &amp;ldquo;probably ASCII text&amp;rdquo;. When I say vaguely, I mean it: the spec &amp;ldquo;deliberately [does] not specify the algorithm used to set this&amp;rdquo;. This is apparently for systems which have different storage formats for ASCII and binary data.&lt;/p&gt;
+&lt;p&gt;In all my testing, nobody sets this flag to anything but &lt;code&gt;0&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;An extra flag&lt;/strong&gt; indicating how hard the compressor worked. &lt;code&gt;2&lt;/code&gt; signals that it was compressed with max compression (e.g., &lt;code&gt;gzip -9&lt;/code&gt;), &lt;code&gt;4&lt;/code&gt; for the fastest algorithm, and &lt;code&gt;0&lt;/code&gt; for everything else.&lt;/p&gt;
+&lt;p&gt;In practice, zlib and many others set this correctly per the spec, but some tools hard-code it to &lt;code&gt;0&lt;/code&gt;. And as far as I can tell, this byte is not used during decompression, so it doesn&amp;rsquo;t really matter.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;The &lt;strong&gt;original file name&lt;/strong&gt;. For example, when I run &lt;code&gt;gzip my_file.txt&lt;/code&gt;, the name is set to &lt;code&gt;my_file.txt&lt;/code&gt;. This field is optional, so many tools don&amp;rsquo;t set it, but the &lt;code&gt;gzip&lt;/code&gt; command line tool does. You can disable that with &lt;code&gt;gzip --no-name&lt;/code&gt;.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;A &lt;strong&gt;comment&lt;/strong&gt;. This optional field is seldom used, and many decompressors ignore it. But you could add a little comment if you want.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Extra arbitrary data&lt;/strong&gt;. If the other metadata wasn&amp;rsquo;t enough, you can stuff whatever you want into arbitrary subfields. Each subfield has a two-byte identifier and then 0 or more bytes of additional info.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;That&amp;rsquo;s way more info than I expected!&lt;/p&gt;
+&lt;h2 id="gzpeek-a-metadata-explorer-tool"&gt;gzpeek, a metadata explorer tool&lt;/h2&gt;
+&lt;p&gt;I was intrigued by this metadata and I&amp;rsquo;ve been wanting to learn &lt;a href="https://ziglang.org/"&gt;Zig&lt;/a&gt;, so I wrote &lt;a href="https://codeberg.org/EvanHahn/gzpeek"&gt;&lt;strong&gt;gzpeek&lt;/strong&gt;&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;gzpeek is a command-line tool that lets you inspect the metadata of gzip streams. Here&amp;rsquo;s how to read metadata from a gzipped file:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;gzpeek my_file.gz
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;# FTEXT: 0&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;# MTIME: 1591676406&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;# XFL: 2&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;# OS: 3 (Unix)&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;# NAME: my_file.txt&lt;/span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;It extracts everything I listed above: the operating system, original file name, modification time, and more. I used it a bunch when surveying different gzip implementations.&lt;/p&gt;
+&lt;p&gt;Give it a try, and &lt;a href="https://evanhahn.com/contact/"&gt;let me know&lt;/a&gt; what gzip metadata you find.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://evanhahn.com/introducing-gzpeek/</guid>
+      <pubDate>Thu, 26 Feb 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Track Zelda release anniversaries in your calendar</title>
       <link>https://evanhahn.com/zelda-anniversary-calendar/</link>
@@ -353,43 +408,6 @@
 </description>
       <guid isPermaLink="true">https://evanhahn.com/bad-company-book-notes/</guid>
       <pubDate>Mon, 29 Dec 2025 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>How I implemented relative imports with Pyodide</title>
-      <link>https://evanhahn.com/pyodide-relative-imports/</link>
-      <description>&lt;p&gt;I was recently playing with &lt;a href="https://pyodide.org/"&gt;Pyodide&lt;/a&gt;, the WebAssembly Python runtime. I wanted to have my main code import a utility file. Something like this:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-python" data-lang="python"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;# in main code&lt;/span&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;import&lt;/span&gt; util
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;print(util.triple(&lt;span style="color:#f60"&gt;5&lt;/span&gt;))
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;# in util.py&lt;/span&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;def&lt;/span&gt; &lt;span style="color:#ff0"&gt;triple&lt;/span&gt;(n):
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;    &lt;span style="color:#f00"&gt;return&lt;/span&gt; n * &lt;span style="color:#f60"&gt;3&lt;/span&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;This took me awhile to figure out! &lt;em&gt;I&amp;rsquo;m not convinced I have the best solution&lt;/em&gt;, but here&amp;rsquo;s what I did:&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;Fetch &lt;code&gt;util.py&lt;/code&gt; with &lt;code&gt;fetch&lt;/code&gt;.&lt;/li&gt;
-&lt;li&gt;Save it to Pyodide&amp;rsquo;s virtual file system.&lt;/li&gt;
-&lt;li&gt;Run the main code!&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;Here&amp;rsquo;s what my JavaScript loader code looked like:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-javascript" data-lang="javascript"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;// Fetch `util.py` source
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;const&lt;/span&gt; response = &lt;span style="color:#f00"&gt;await&lt;/span&gt; fetch(&lt;span style="color:#87ceeb"&gt;&amp;#34;util.py&amp;#34;&lt;/span&gt;);
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;if&lt;/span&gt; (!response.ok) &lt;span style="color:#f00"&gt;throw&lt;/span&gt; &lt;span style="color:#f00"&gt;new&lt;/span&gt; Error(&lt;span style="color:#87ceeb"&gt;&amp;#34;Failed to load util.py&amp;#34;&lt;/span&gt;);
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;const&lt;/span&gt; utilSource = &lt;span style="color:#f00"&gt;await&lt;/span&gt; response.text();
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;// Save it to Pyodide&amp;#39;s virtual file system.
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;// Pyodide can import modules in `/home/pyodide`.
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;pyodide.FS.writeFile(&lt;span style="color:#87ceeb"&gt;&amp;#34;/home/pyodide/util.py&amp;#34;&lt;/span&gt;, utilSource);
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;// Run the main code!
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;pyodide.runPython(&lt;span style="color:#87ceeb"&gt;`
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#87ceeb"&gt;import util
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#87ceeb"&gt;print(util.triple(5))
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#87ceeb"&gt;`&lt;/span&gt;);
-&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;This worked for me, but I wish there were a cleaner solution. Maybe Pyodide has a way to hook into &lt;code&gt;import&lt;/code&gt;? If you have a better solution, &lt;a href="https://evanhahn.com/contact/"&gt;please reach out&lt;/a&gt;!&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">https://evanhahn.com/pyodide-relative-imports/</guid>
-      <pubDate>Thu, 11 Dec 2025 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
