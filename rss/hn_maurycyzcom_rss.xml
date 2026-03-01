@@ -5,7 +5,121 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Sun, 01 Mar 2026 02:43:47 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 01 Mar 2026 04:58:21 +0000</lastBuildDate>
+    <item>
+      <title>Why does C have the best file API?</title>
+      <link>https://maurycyz.com/misc/c_files/</link>
+      <description>&lt;!-- mksite: start of content --&gt;
+&lt;p&gt;
+
+There are a lot of nice programming languages, but files always seem like an afterthought. 
+You usually only get read(), write() and some kind of serialization library.
+&lt;/p&gt;&lt;p&gt;
+In C, you can access files exactly the same as data in memory:
+&lt;!-- snip --&gt;
+&lt;/p&gt;
+&lt;p&gt;
+&lt;/p&gt;
+&lt;style&gt;
+/* HTML tags, keywords, commands */
+h-n {color: #F27;}
+/* Values */
+h-v {color: #B8F;}
+/* CSS selectors, attribute/varable names, file names */
+h-s {color: #AEE;}
+/* Comments */
+h-c {color: #777;}
+h-e {color: #F6F;}
+&lt;/style&gt;
+&lt;pre&gt;
+&lt;h-c&gt;#include &amp;lt;sys/mman.h&amp;gt;
+#include &amp;lt;stdio.h&amp;gt;
+#include &amp;lt;stdint.h&amp;gt;
+#include &amp;lt;fcntl.h&amp;gt;
+#include &amp;lt;unistd.h&amp;gt;&lt;/h-c&gt;
+
+&lt;h-n&gt;void&lt;/h-n&gt; &lt;h-s&gt;main&lt;/h-s&gt;() {
+	&lt;h-c&gt;// Create/open a file containing 1000 unsigned integers&lt;/h-c&gt;
+	&lt;h-c&gt;// Initialized to all zeros.&lt;/h-c&gt;
+	&lt;h-n&gt;int&lt;/h-n&gt; &lt;h-s&gt;len&lt;/h-s&gt; = &lt;h-v&gt;1000&lt;/h-v&gt; * &lt;h-n&gt;sizeof&lt;/h-n&gt;(&lt;h-v&gt;uint32_t&lt;/h-v&gt;);
+	&lt;h-n&gt;int&lt;/h-n&gt; &lt;h-s&gt;file&lt;/h-s&gt; = &lt;h-n&gt;open&lt;/h-n&gt;(&lt;h-v&gt;"numbers.u32"&lt;/h-v&gt;, &lt;h-v&gt;O_RDWR&lt;/h-v&gt; | &lt;h-v&gt;O_CREAT&lt;/h-v&gt;, &lt;h-v&gt;0600&lt;/h-v&gt;);
+	&lt;h-n&gt;ftruncate&lt;/h-n&gt;(&lt;h-s&gt;file&lt;/h-s&gt;, &lt;h-s&gt;len&lt;/h-s&gt;);
+
+	&lt;h-c&gt;// Map it into memory.&lt;/h-c&gt;
+	&lt;h-n&gt;uint32_t&lt;/h-n&gt;* &lt;h-s&gt;numbers&lt;/h-s&gt; = &lt;h-n&gt;mmap&lt;/h-n&gt;(&lt;h-v&gt;NULL&lt;/h-v&gt;, &lt;h-s&gt;len&lt;/h-s&gt;, 
+		&lt;h-v&gt;PROT_READ&lt;/h-v&gt; | &lt;h-v&gt;PROT_WRITE&lt;/h-v&gt;, &lt;h-v&gt;MAP_SHARED&lt;/h-v&gt;,
+		&lt;h-s&gt;file&lt;/h-s&gt;, &lt;h-v&gt;0&lt;/h-v&gt;);
+
+	&lt;h-c&gt;// Do something:&lt;/h-c&gt;
+	&lt;h-n&gt;printf&lt;/h-n&gt;(&lt;h-v&gt;"%d\n"&lt;/h-v&gt;, &lt;h-s&gt;numbers&lt;/h-s&gt;[&lt;h-v&gt;42&lt;/h-v&gt;]);
+	&lt;h-s&gt;numbers&lt;/h-s&gt;[&lt;h-v&gt;42&lt;/h-v&gt;] = &lt;h-s&gt;numbers&lt;/h-s&gt;[&lt;h-v&gt;42&lt;/h-v&gt;] + &lt;h-v&gt;1&lt;/h-v&gt;;
+
+	&lt;h-c&gt;// Clean up&lt;/h-c&gt;
+	&lt;h-n&gt;munmap&lt;/h-n&gt;(&lt;h-s&gt;numbers&lt;/h-s&gt;, &lt;h-s&gt;len&lt;/h-s&gt;);
+	&lt;h-n&gt;close&lt;/h-n&gt;(&lt;h-s&gt;file&lt;/h-s&gt;);
+}
+&lt;/pre&gt;
+&lt;p&gt;
+Memory mapping isn't the same as loading a file into memory:
+It still works if the file doesn't fit in RAM.
+Data is loaded as needed, so it won't take all day to open a terabyte file.
+&lt;/p&gt;&lt;p&gt;
+It works with all datatypes and is automatically cached.
+This cache is cleared automatically if the system needs memory for something else.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;However, in other most languages&lt;/em&gt;,
+you have to read() in tiny chunks, parse, process, serialize and finally write() it back to the disk.
+This works, but is slow and needlessly limited to sequential access:
+Computers haven't used tape for decades.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;If you're lucky enough to have memory mapping&lt;/em&gt;, it will be limited to byte arrays,
+which still require explicit parsing/serialization.
+It ends up as just a nicer way to call read() and write()
+&lt;/p&gt;&lt;p&gt;
+Considering that most languages already support custom allocators, adding a better way to access files seems very doable...
+but, as far as I'm aware, C is the only language that lets you specify a binary format and just use it.
+&lt;/p&gt;&lt;p&gt;
+C's implemenation isn't even very good:
+Memory mapping comes some overhead (page faults, TLB flushes) and C does nothing to handle endianness &amp;mdash;
+but it doesn't take much to beat nothing. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Sure, you might want to do some parsing and validation&lt;/em&gt;, but this shouldn't be required every time data leaves the disk. 
+When working with larger data, it's very common to run out of memory, making it impossible to just parse everything into RAM.
+Being able to just offload data without complicating the code is very useful.
+&lt;/p&gt;&lt;p&gt;
+Just look at Python's pickle:
+it's a completely insecure serialization format.
+Loading a file can cause code execution even if you just wanted some numbers...
+but still very widely used because it fits with the mix-code-and-data model of python.
+&lt;/p&gt;&lt;p&gt;
+A lot of files are not untrusted. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;File manipulation&lt;/em&gt; is similarly neglected. 
+The filesystem is the original NoSQL database, but you seldom get more then a wrapper around C's readdir().
+&lt;/p&gt;&lt;p&gt;
+This usually results in people running another database, such as SQLite, on top of the filesystem,
+but relational databases never quite fit your program. 
+&lt;/p&gt;&lt;p&gt;
+... and SQL integrates even worse than files:
+On top of having to serialize all your data, you have to write code in a whole separate language just to access it!
+&lt;/p&gt;&lt;p&gt;
+Most programmers just use it as a key-value store, and implement their own metadata handling:
+creating a bizarre triple nested database.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;So to answer the title,&lt;/em&gt;
+I think it's a result of a bad assumption:
+That data being read from a file is coming from somewhere else and needs to be parsed...
+and that data being written to disk is being sent somewhere and needs to be serialized into a standard format. 
+&lt;/p&gt;&lt;p&gt;
+This simply isn't true on memory constrained systems &amp;mdash;
+and with 100 GB files &amp;mdash; 
+every system is memory constrained.
+&lt;/p&gt;
+&lt;!-- mksite: end of content --&gt;
+				</description>
+      <guid isPermaLink="true">http://maurycyz.com/misc/c_files/</guid>
+      <pubDate>Sat, 28 Feb 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Be careful with LLM "Agents"</title>
       <link>https://maurycyz.com/misc/sandbox_llms/</link>
@@ -575,671 +689,6 @@ blog@maurycyz.com
 				</description>
       <guid isPermaLink="true">http://maurycyz.com/misc/new_ssg/</guid>
       <pubDate>Fri, 16 Jan 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>How to write your own website</title>
-      <link>https://maurycyz.com/tutorials/website/</link>
-      <description>&lt;!-- mksite: start of content --&gt;
-&lt;p&gt;
-
-&lt;i&gt;I recently wrote &lt;a href=/misc/starting_a_blog/&gt;about why&lt;/a&gt; you should set up a personal website rather then using social media. 
-In sort, doing so lets you own your space on the internet, customize it and frees your readers from constant advertising and algorithmic feeds.
-&lt;/i&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Despite how much time we spend using it&lt;/em&gt;, creating something for the intenet is arcane wizardy to most people.
-This is a fairly accessable guide to getting started.
-&lt;/p&gt;&lt;p&gt;
-You'll need a text editor (any will do) and a browser (you already have one).
-&lt;/p&gt;&lt;p&gt;
-&lt;div style="display: none"&gt;
-This post has some fancy formatting, so if you are reading this in RSS, you'll want to switch over to the web version.
-&lt;/div&gt;
-&lt;!-- snip --&gt;
-&lt;/p&gt;
-&lt;p&gt;
-
-&lt;style&gt;
-fake-frame {
-	display: block;
-	min-height: 10em;
-	/*width: calc(100% - 4px);*/
-
-	/* Browsers usually default to this */
-	font-family: serif;
-
-	/* Style up to look like a window */
-	border: 2px inset;
-	background-color: #FFF;
-	border-color: #EEE;
-	color: #000;
-
-	/* Same as a blank document in chrome */
-	padding: 8px;
-	margin-bottom: 1em;
-}
-
-a.default {
-	&amp;:visited {color: #551A8B;}
-	&amp;:link {color: #0000EE;}
-	text-decoration: underline;
-}
-
-h-n {color: #F27;}
-h-v {color: #B8F;}
-h-s {color: #AEE;}
-h-c {color: #777;}
-h-e {color: #F6F;}
-&lt;/style&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;All sites are written in HTML&lt;/em&gt;, which is a simple text-based format.
-This is a perfectly valid HTML document:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-Check out my epic site!
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-To try it, just create a text file with a ".html" extension, and open it in your favorite browser. 
-Do this now: experimenting is the best way to learn how it works.
-&lt;/p&gt;&lt;p&gt;
-This is what the page should look like:
-&lt;/p&gt;&lt;p&gt;
-&lt;fake-frame&gt;
-Check out my epic site!
-&lt;/fake-frame&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Plain text is boring&lt;/em&gt;, so let's add some formatting:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-Check out my &amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;epic&amp;lt;/&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt; site!
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;fake-frame&gt;
-Check out my &lt;b&gt;epic&lt;/b&gt; site!
-&lt;/fake-frame&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;note-box&gt;
-If your browser shows angle brackets on the page, it's likely you accidentally created a file with double extentions.
-You can check for this by looking at the URL bar: It should look something like this "file://&lt;gray-text&gt;...&lt;/gray-text&gt;/site.html".
-If it ends with ".html.txt" or similar, will will need to fix the file name. 
-&lt;br/&gt;
-&lt;br/&gt;
-Windows will hide the real file extention by default:
-If you are using it, ensure that "Show file extentions" is enabled in the file explorer's settings. 
-&lt;/note-box&gt;
-&lt;/p&gt;&lt;p&gt;
-The angle bracket things are tags: "&amp;lt;b&amp;gt;" is an opening tag, and "&amp;lt;/b&amp;gt;" is the matching closing tag.
-The word surrounded by brackets ("b") is the tag name, which tells the browser what to do:
-In this case, &lt;b&gt;b&lt;/b&gt;olding the enclosed text. 
-&lt;/p&gt;&lt;p&gt;
-The other formatting tags are &amp;lt;em&amp;gt; &lt;b&gt;em&lt;/b&gt;&lt;i&gt;phasis&lt;/i&gt;,
-&amp;lt;u&amp;gt; &lt;u&gt;&lt;b&gt;u&lt;/b&gt;nderline&lt;/u&gt;,
-&amp;lt;sub&amp;gt; &lt;sub&gt;&lt;b&gt;sub&lt;/b&gt;scipt&lt;/sub&gt;,
-&amp;lt;sup&amp;gt; &lt;sup&gt;&lt;b&gt;sup&lt;/b&gt;erscript&lt;/sup&gt;,
-&amp;lt;small&amp;gt; &lt;small&gt;&lt;b&gt;small&lt;/b&gt; text&lt;/small&gt;, 
-&amp;lt;mark&amp;gt; &lt;mark&gt;highlight&lt;/mark&gt; and &amp;lt;del&amp;gt;
-&lt;del&gt;&lt;b&gt;del&lt;/b&gt;eted&lt;/del&gt;. 
-&lt;/p&gt;&lt;p&gt;
-You don't have to memorize this list, but go and try a few out.
-&lt;/p&gt;&lt;p&gt;
-There's also &amp;lt;br/&amp;gt; (&lt;b&gt;br&lt;/b&gt;eak), which adds a line break. 
-It's special because there's no closing tag:
-It's always closed immediately and can't contain any text.
-I like to add a slash after the tag name to indicate this, but it's not required.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;A big wall of text can get quite ugly&lt;/em&gt;, so it's good to break it up with &amp;lt;p&amp;gt; (&lt;b&gt;p&lt;/b&gt;aragraph) tags.
-Each paragraph will be visually separated from other content on the page:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-Check out my &amp;lt;&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt;new&amp;lt;/&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt; site
-&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-I have many &amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;epic&amp;lt;/&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt; things here.
-&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-&lt;/p&gt;
-&lt;fake-frame&gt;
-&lt;p&gt;
-Check out my &lt;i&gt;new&lt;/i&gt; site:
-&lt;/p&gt;
-&lt;p&gt;
-I have many &lt;b&gt;epic&lt;/b&gt; things here.
-&lt;/p&gt;
-&lt;/fake-frame&gt;
-&lt;p&gt;
-Together, the maching tags and their contents form an an &lt;b&gt;element&lt;/b&gt;.
-Elements can contain other elements, but it's important that they are closed in the correct order:
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;This is wrong&lt;/em&gt;:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt;Some &amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;random&amp;lt;/&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt; text&amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;
-&lt;h-c&gt;&amp;lt;!-- &amp;lt;em&amp;gt; (parent) is closed *before* &amp;lt;b&amp;gt; (child) --&amp;gt;&lt;/h-c&gt;
-&lt;h-c&gt;&amp;lt;!-- Don't do this! --&amp;gt;&lt;/h-c&gt;
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-... but this is fine:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt;Some &amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;random&amp;lt;/&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt; text&amp;lt;&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt;
-&lt;h-c&gt;&amp;lt;!-- &amp;lt;em&amp;gt; (parent) is closed *after* &amp;lt;b&amp;gt; (child) --&amp;gt;&lt;/h-c&gt;
-&lt;h-c&gt;&amp;lt;!-- Perfectly fine. --&amp;gt;&lt;/h-c&gt;
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-Browsers will attempt to render invalid HTML, but the results may not be what you intended:
-It's best to make it easy for them.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;On that topic, it's good practice&lt;/em&gt; to put all your content inside a &amp;lt;body&amp;gt; element which is itself inside a &amp;lt;html&amp;gt; element:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;Check out my new site:&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;I have many &amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;epic&amp;lt;/&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt; things here.&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-	&amp;lt;/&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;
-&amp;lt;/&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-&lt;/p&gt;
-&lt;fake-frame&gt;
-&lt;p&gt;Check out my new site:&lt;/p&gt;
-&lt;p&gt;I have many &lt;b&gt;epic&lt;/b&gt; things here.&lt;/p&gt;
-&lt;/fake-frame&gt;
-&lt;p&gt;
-This isn't mandatory, but it helps browsers render your page correctly:
-You don't want metadata (we'll add some later) getting confused for page content. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Back to text-wall-avoidance:&lt;/em&gt;
-the &amp;lt;ul&amp;gt; and &amp;lt;ol&amp;gt; (&lt;b&gt;u&lt;/b&gt;nordered/&lt;b&gt;o&lt;/b&gt;rdered &lt;b&gt;l&lt;/b&gt;ist) tags create, well, lists.
-Each item should be wraped in &amp;lt;li&amp;gt; tags (&lt;b&gt;l&lt;/b&gt;ist &lt;b&gt;i&lt;/b&gt;tem)
-&lt;/p&gt;
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;&amp;lt;&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;About this site (unordered):
-	&amp;lt;&lt;h-n&gt;ul&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;This site has &amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;epic&amp;lt;/&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt; things&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;... and I wrote it myself&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-	&amp;lt;/&lt;h-n&gt;ul&lt;/h-n&gt;&amp;gt;
-&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-	It uses these tags: (ordered)
-	&amp;lt;&lt;h-n&gt;ol&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;&lt;h-e&gt;&amp;amp;lt;&lt;/h-e&gt;html&lt;h-e&gt;&amp;amp;gt;&lt;/h-e&gt;&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;&lt;h-e&gt;&amp;amp;lt;&lt;/h-e&gt;body&lt;h-e&gt;&amp;amp;gt;&lt;/h-e&gt;&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;&lt;h-e&gt;&amp;amp;lt;&lt;/h-e&gt;p&lt;h-e&gt;&amp;amp;gt;&lt;/h-e&gt;&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;&lt;h-e&gt;&amp;amp;lt;&lt;/h-e&gt;ul&lt;h-e&gt;&amp;amp;gt;&lt;/h-e&gt; and &lt;h-e&gt;&amp;amp;lt;&lt;/h-e&gt;ol&lt;h-e&gt;&amp;amp;gt;&lt;/h-e&gt;&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;&lt;h-e&gt;&amp;amp;lt;&lt;/h-e&gt;li&lt;h-e&gt;&amp;amp;gt;&lt;/h-e&gt;&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-	&amp;lt;/&lt;h-n&gt;ol&lt;/h-n&gt;&amp;gt;
-&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;/&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;&amp;lt;/&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-&lt;fake-frame&gt;
-&lt;p&gt;About this site (unordered):
-	&lt;ul&gt;
-		&lt;li&gt;It has &lt;b&gt;epic&lt;/b&gt; things&lt;/li&gt;
-		&lt;li&gt;... and is handwritten HTML&lt;/li&gt;
-	&lt;/ul&gt;
-&lt;/p&gt;
-
-&lt;p&gt;
-	It uses these tags: (ordered)
-	&lt;ol&gt;
-		&lt;li&gt;&amp;lt;html&amp;gt;&lt;/li&gt;
-		&lt;li&gt;&amp;lt;body&amp;gt;&lt;/li&gt;
-		&lt;li&gt;&amp;lt;p&amp;gt;&lt;/li&gt;
-		&lt;li&gt;&amp;lt;ul&amp;gt; and &amp;lt;ol&amp;gt;&lt;/li&gt;
-		&lt;li&gt;&amp;lt;li&amp;gt;&lt;/li&gt;
-	&lt;/ol&gt;
-&lt;/p&gt;
-&lt;/fake-frame&gt;
-&lt;p&gt;
-
-&lt;em&gt;You can add angle brackets&lt;/em&gt; to a page with &amp;amp;gt; (&amp;gt;), &amp;amp;lt; (&amp;lt;) and &amp;amp;amp; (&amp;amp;).
-These entities will render as the corresponding charater, but won't form tags.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Headings use&lt;/em&gt; &amp;lt;h1&amp;gt; (&lt;b&gt;h&lt;/b&gt;eading &lt;b&gt;1&lt;/b&gt;) through &amp;lt;h5&amp;gt; (&lt;b&gt;h&lt;/b&gt;eading &lt;b&gt;5&lt;/b&gt;), with larger numbers using smaller font sizes:
-
-&lt;/p&gt;
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;&amp;lt;&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;&lt;h-n&gt;h1&lt;/h-n&gt;&amp;gt;My cool site:&amp;lt;/&lt;h-n&gt;h1&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;This site has &amp;lt;&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt;epic&amp;lt;/&lt;h-n&gt;b&lt;/h-n&gt;&amp;gt; things and I wrote it myself.&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;&lt;h-n&gt;h3&lt;/h-n&gt;&amp;gt;Other cool places:&amp;lt;/&lt;h-n&gt;h3&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;To do: Figure out how to add links.&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;/&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;&amp;lt;/&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-&lt;fake-frame&gt;
-&lt;h1&gt;My cool site:&lt;/h1&gt;
-
-&lt;p&gt;This site has &lt;b&gt;epic&lt;/b&gt; things and I wrote it myself.&lt;/p&gt;
-
-&lt;h3&gt;Other cool places:&lt;/h3&gt;
-
-&lt;p&gt;To do: Figure out how to add links.&lt;/p&gt;
-&lt;/fake-frame&gt;
-
-&lt;p&gt;
-&lt;em&gt;About that. Links are just &amp;lt;a&amp;gt; (&lt;b&gt;a&lt;/b&gt;nchor) tags&lt;/em&gt;, but they have something new:
-an attribute after the tag name but before the bracket.
-&lt;/p&gt;
-
-&lt;pre&gt;
-I found this &amp;lt;&lt;h-n&gt;a&lt;/h-n&gt; &lt;h-s&gt;href&lt;/h-s&gt;=&lt;h-v&gt;https://www.righto.com/&lt;/h-v&gt;&amp;gt;cool blog&amp;lt;/&lt;h-n&gt;a&lt;/h-n&gt;&amp;gt; about electronics. 
-&lt;/pre&gt;
-
-&lt;fake-frame&gt;
-I found this &lt;a class=default href=https://www.righto.com/&gt;cool blog&lt;/a&gt; about electronics.
-&lt;/fake-frame&gt;
-
-&lt;p&gt;
-The "href= " attribute sets where the link points to.
-A lot of other tags can also have attributes: For example, ordered lists with "reverse=true" count backwards.
-&lt;/p&gt;&lt;p&gt;
-The URL in "href=" can be relative:
-If linking up multiple pages on the same site, instead of this:
-&lt;/p&gt;
-
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;a&lt;/h-n&gt; &lt;h-s&gt;href&lt;/h-s&gt;=&lt;h-v&gt;https://example.com/some/page&lt;/h-v&gt;&amp;gt;Some page&amp;lt;/&lt;h-n&gt;a&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-
-&lt;p&gt;
-... just write this: 
-&lt;/p&gt;
-
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;a&lt;/h-n&gt; &lt;h-s&gt;href&lt;/h-s&gt;=&lt;h-v&gt;/some/page&lt;/h-v&gt;&amp;gt;Some page&amp;lt;/&lt;h-n&gt;a&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-
-&lt;p&gt;
-&lt;em&gt;Images work similarly to links&lt;/em&gt;, except that they are self-closing elements like &amp;lt;br/&amp;gt;:
-&lt;/p&gt;
-
-&lt;style&gt;
-/* Keep images inside of &lt;fake-frame&gt;s */
-img.narrow {
-	max-width: 100%;
-}
-&lt;/style&gt;
-
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;Check out this &amp;lt;&lt;h-n&gt;a&lt;/h-n&gt; &lt;h-s&gt;href&lt;/h-s&gt;=&lt;h-v&gt;/astro/m27&lt;/h-v&gt;&amp;gt;picture&amp;lt;/&lt;h-n&gt;a&lt;/h-n&gt;&amp;gt; of a nebula I took!&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-
-&amp;lt;&lt;h-n&gt;img&lt;/h-n&gt; &lt;h-s&gt;src&lt;/h-s&gt;=&lt;h-v&gt;/astro/m27/small.jpg&lt;/h-v&gt; /&amp;gt;
-&lt;/pre&gt;
-&lt;/p&gt;
-&lt;fake-frame&gt;
-&lt;p&gt;
-Check out this &lt;a class=default href=/astro/m27&gt;picture&lt;/a&gt; of a nebula I took!
-&lt;/p&gt;
-&lt;img class=narrow src=/astro/m27/small.jpg /&gt;
-&lt;/fake-frame&gt;
-&lt;p&gt;
-&lt;/p&gt;&lt;p&gt;
-(If you don't have a URL for your image, skip to the &lt;a href=#hosting&gt;hosting&lt;/a&gt; section to set one up)
-&lt;/p&gt;&lt;p&gt;
-That's all the essentials, but there's a lot of other useful tags.
-For example &amp;lt;details&amp;gt; creates a dropdown that works with ctrl-f:
-&lt;/p&gt;
-&lt;fake-frame&gt;
-&lt;details&gt;
-&lt;summary&gt;Awsome dropdown (click me!)&lt;/summary&gt;
-&lt;p&gt;
-This is a dropdown with just HTML. It works well with browser features like ctrl-f, fragment identifiers and screen readers.
-&lt;/p&gt;
-&lt;p&gt;
-(better usability than 99% of commercial sites!)
-&lt;/details&gt;
-&lt;/fake-frame&gt;
-&lt;p&gt;
-...but I can't cover everything without writing a book. 
-(The &lt;a href=https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements&gt;Mozilla Docs&lt;/a&gt; are a fantastic reference)
-&lt;/p&gt;&lt;p&gt;
-&lt;h1&gt;Making it look nice:&lt;/h1&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;At this point&lt;/em&gt;, you should have something like this:
-&lt;/p&gt;
-
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-&amp;lt;&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;h1&lt;/h-n&gt;&amp;gt;Check out my cool site:&amp;lt;/&lt;h-n&gt;h1&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-		I made this site to write about things I do.
-		More updates &amp;lt;&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt;soon™&amp;lt;/&lt;h-n&gt;em&lt;/h-n&gt;&amp;gt;.
-	&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-
-	&amp;lt;&lt;h-n&gt;h2&lt;/h-n&gt;&amp;gt;Other cool places:&amp;lt;/&lt;h-n&gt;h2&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;ul&lt;/h-n&gt;&amp;gt;
-		&amp;lt;&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;&amp;lt;&lt;h-n&gt;a&lt;/h-n&gt; &lt;h-s&gt;href&lt;/h-s&gt;=&lt;h-v&gt;https://www.righto.com/&lt;/h-v&gt;&amp;gt;Ken Shirriff's blog&amp;lt;/&lt;h-n&gt;a&lt;/h-n&gt;&amp;gt;&amp;lt;/&lt;h-n&gt;li&lt;/h-n&gt;&amp;gt;
-	&amp;lt;/&lt;h-n&gt;ul&lt;/h-n&gt;&amp;gt;
-
-	&amp;lt;&lt;h-n&gt;h2&lt;/h-n&gt;&amp;gt;Photography:&amp;lt;/&lt;h-n&gt;h2&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;Here's my &amp;lt;&lt;h-n&gt;a&lt;/h-n&gt; &lt;h-s&gt;href&lt;/h-s&gt;=&lt;h-v&gt;/astro/m27&lt;/h-v&gt;&amp;gt;picture&amp;lt;/&lt;h-n&gt;a&lt;/h-n&gt;&amp;gt; of the Dumbbell Nebula:&amp;lt;/&lt;h-n&gt;p&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;img&lt;/h-n&gt; &lt;h-s&gt;src&lt;/h-s&gt;=&lt;h-v&gt;/astro/m27/small.jpg&lt;/h-v&gt; /&amp;gt;
-&amp;lt;/&lt;h-n&gt;body&lt;/h-n&gt;&amp;gt;
-&amp;lt;/&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-
-&lt;fake-frame&gt;
-&lt;h1&gt;Check out my cool site:&lt;/h1&gt;
-&lt;p&gt;
-I made this site to write about things I do.
-More updates &lt;i&gt;soon™&lt;/i&gt;.
-&lt;/p&gt;
-&lt;h2&gt;Other cool places:&lt;/h2&gt;
-&lt;ul&gt;
-	&lt;li&gt;&lt;a class=default href=https://www.righto.com/&gt;Ken Shirriff's blog&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2&gt;Photography:&lt;/h2&gt;
-&lt;p&gt;Here's my &lt;a class=default href=/astro/m27&gt;picture&lt;/a&gt; of the Dumbbell Nebula:&lt;/p&gt;
-&lt;img class=narrow src=/astro/m27/small.jpg /&gt;
-&lt;/fake-frame&gt;
-&lt;p&gt;
-
-&lt;p&gt;
-Let's start by giving the page a machine-readable title:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-&amp;lt;&lt;h-n&gt;head&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;title&lt;/h-n&gt;&amp;gt;My epic site&amp;lt;/&lt;h-n&gt;title&lt;/h-n&gt;&amp;gt;
-&amp;lt;/&lt;h-n&gt;head&lt;/h-n&gt;&amp;gt;
-&lt;h-c&gt;&amp;lt;!-- snip --&amp;gt;&lt;/h-c&gt;
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-Like with &amp;lt;body&amp;gt;, the &amp;lt;head&amp;gt; tag isn't required, but it's good to include it:
-Otherwise, any metadata that the browser doesn't understand might be mistaken for content.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The page still looks kinda bad&lt;/em&gt;: 
-Text extending the edges of the page isn't exactly easy to read.
-It's not too bad when crammed into my blog's column, but longer paragraphs will look terrible on large monitors. 
-&lt;/p&gt;&lt;p&gt;
-(You may have to switch to landscape to see this problem on mobile)
-&lt;/p&gt;&lt;p&gt;
-To fix this, we need to add some style and layout information using the &amp;lt;style&amp;gt; tag:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-&lt;h-c&gt;&amp;lt;!-- snip --&amp;gt;&lt;/h-c&gt;
-	&amp;lt;&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-		&lt;h-s&gt;body&lt;/h-s&gt; {
-			&lt;h-v&gt;max-width&lt;/h-v&gt;: &lt;h-v&gt;30em&lt;/h-v&gt;;
-		}
-
-		&lt;h-s&gt;img&lt;/h-s&gt; {
-			&lt;h-v&gt;width&lt;/h-v&gt;: &lt;h-v&gt;100%&lt;/h-v&gt;;
-		}
-	&amp;lt;/&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-&amp;lt;/&lt;h-n&gt;head&lt;/h-n&gt;&amp;gt;
-&lt;h-c&gt;&amp;lt;!-- snip --&amp;gt;&lt;/h-c&gt;
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Unlike other tags, the contents of &amp;lt;style&amp;gt; isn't HTML&lt;/em&gt;, it's CSS: a whole other langauge embedded within the file.
-CSS is compoosed of blocks, each begining with a selector that controls what is affected.
-Here, these are just tag names: "head" and "img"
-&lt;/p&gt;&lt;p&gt;
-The selector is followed by a series of declarations wraped in curly braces.
-The first block only has one: "max-width: 30em;"
-This limits the width of the &amp;lt;body&amp;gt; element to 30 times the font size (em units):
-&lt;/p&gt;
-
-&lt;style&gt;
-fake-body1 {
-	display: block;
-	max-width: 30em;
-}
-
-&lt;/style&gt;
-
-&lt;fake-frame&gt;
-&lt;fake-body1&gt;
-&lt;h1&gt;Check out my cool site:&lt;/h1&gt;
-&lt;p&gt;
-I made this site to write about things I do.
-More updates &lt;i&gt;soon™&lt;/i&gt;.
-&lt;/p&gt;
-&lt;h2&gt;Other cool places:&lt;/h2&gt;
-&lt;ul&gt;
-	&lt;li&gt;&lt;a class=default href=https://www.righto.com/&gt;Ken Shirriff's blog&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2&gt;Photography:&lt;/h2&gt;
-&lt;p&gt;Here's my &lt;a class=default href=/astro/m27&gt;picture&lt;/a&gt; of the Dumbbell Nebula:&lt;/p&gt;
-&lt;img class=narrow src=/astro/m27/small.jpg /&gt;
-&lt;/fake-body1&gt;
-&lt;/fake-frame&gt;
-
-&lt;p&gt;
-The second block...
-&lt;/p&gt;
-&lt;pre&gt;
-&lt;h-s&gt;img&lt;/h-s&gt; {
-	&lt;h-v&gt;width&lt;/h-v&gt;: &lt;h-v&gt;100%&lt;/h-v&gt;;
-}
-&lt;/pre&gt;
-&lt;p&gt;
-... sets the width of images to (100%) the size of their container.
-This ensures that they are properly sized for the column regardless of resolution:
-Otherwise, particularly big images can overflow the column, and low-res ones will be tiny.
-&lt;/p&gt;
-
-&lt;p&gt;
-&lt;em&gt;The page is looking rather asymetrical&lt;/em&gt;, so lets center the column.
-For fixed-width elements, this can be done using the "margin" property:
-&lt;/p&gt;
-
-&lt;pre&gt;
-&lt;h-c&gt;&amp;lt;!-- snip --&amp;gt;&lt;/h-c&gt;
-	&amp;lt;&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-		&lt;h-s&gt;body&lt;/h-s&gt; {
-			&lt;h-v&gt;max-width&lt;/h-v&gt;: &lt;h-v&gt;30&lt;/h-v&gt;em;
-			&lt;h-v&gt;margin&lt;/h-v&gt;: &lt;h-v&gt;auto&lt;/h-v&gt;;
-		}
-
-		&lt;h-s&gt;img&lt;/h-s&gt; {
-			&lt;h-v&gt;width&lt;/h-v&gt;: &lt;h-v&gt;100%&lt;/h-v&gt;;
-		}
-	&amp;lt;/&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-&lt;h-c&gt;&amp;lt;!-- snip --&amp;gt;&lt;/h-c&gt;
-&lt;/pre&gt;
-
-&lt;style&gt;
-fake-body2 {
-	display: block;
-	max-width: 30em;
-	margin: auto;
-}
-&lt;/style&gt;
-&lt;/p&gt;
-&lt;fake-frame&gt;
-&lt;fake-body2&gt;
-&lt;h1&gt;Check out my cool site:&lt;/h1&gt;
-&lt;p&gt;
-I made this site to write about things I do.
-More updates &lt;i&gt;soon™&lt;/i&gt;.
-&lt;/p&gt;
-&lt;h2&gt;Other cool places:&lt;/h2&gt;
-&lt;ul&gt;
-	&lt;li&gt;&lt;a class=default href=https://www.righto.com/&gt;Ken Shirriff's blog&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2&gt;Photography:&lt;/h2&gt;
-&lt;p&gt;Here's my &lt;a class=default href=/astro/m27&gt;picture&lt;/a&gt; of the Dumbbell Nebula:&lt;/p&gt;
-&lt;img src=/astro/m27/small.jpg class=narrow /&gt;
-&lt;/fake-body1&gt;
-&lt;/fake-frame&gt;
-
-&lt;p&gt;
-(For varable width elements, use flexbox for centering and other fancy layouts.
-A single line of text can be centered with "text-align=center")
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Personally, I like dark themed sites&lt;/em&gt;, so lets change some of the colors:
-&lt;/p&gt;
-
-&lt;pre&gt;
-&lt;h-c&gt;&amp;lt;!-- snip --&amp;gt;&lt;/h-c&gt;
-	&amp;lt;&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-		&lt;h-s&gt;html&lt;/h-s&gt; {
-			&lt;h-v&gt;background-color&lt;/h-v&gt;: &lt;h-v&gt;black&lt;/h-v&gt;;
-		}
-
-		&lt;h-s&gt;html&lt;/h-s&gt; {
-			&lt;h-v&gt;max-width&lt;/h-v&gt;: &lt;h-v&gt;30&lt;/h-v&gt;em;
-			&lt;h-v&gt;margin&lt;/h-v&gt;: &lt;h-v&gt;auto&lt;/h-v&gt;;
-			&lt;h-v&gt;color&lt;/h-v&gt;: &lt;h-v&gt;white&lt;/h-v&gt;;
-		}
-
-		&lt;h-s&gt;img&lt;/h-s&gt; {
-			&lt;h-v&gt;width&lt;/h-v&gt;: &lt;h-v&gt;100%&lt;/h-v&gt;;
-		}
-
-		&lt;h-c&gt;/* Fancy selectors to make visited and unvisited links different colors */&lt;/h-c&gt;
-		&lt;h-s&gt;a&lt;/h-s&gt;:&lt;h-s&gt;link&lt;/h-s&gt; {&lt;h-v&gt;color&lt;/h-v&gt;: &lt;h-v&gt;#4ee&lt;/h-v&gt;;}
-		&lt;h-s&gt;a&lt;/h-s&gt;:&lt;h-s&gt;visited&lt;/h-s&gt; {&lt;h-v&gt;color&lt;/h-v&gt;: &lt;h-v&gt;#399&lt;/h-v&gt;;}
-	&amp;lt;/&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-&amp;lt;/&lt;h-n&gt;head&lt;/h-n&gt;&amp;gt;
-&lt;h-c&gt;&amp;lt;!-- snip --&amp;gt;&lt;/h-c&gt;
-&lt;/pre&gt;
-
-&lt;style&gt;
-.dark {
-	background-color: black;
-	color: white;
-}
-
-fake-body3 {
-	display: block;
-
-	max-width: 30em;
-	margin: auto;
-	color: white;
-}
-
-.darklink {
-	color: #4ee;
-	text-decoration: underline;
-}
-
-&lt;/style&gt;
-
-&lt;fake-frame class=dark&gt;
-&lt;fake-body3&gt;
-&lt;h1&gt;Check out my cool site:&lt;/h1&gt;
-&lt;p&gt;
-I made this site to write about things I do.
-More updates &lt;i&gt;soon™&lt;/i&gt;.
-&lt;/p&gt;
-&lt;h2&gt;Other cool places:&lt;/h2&gt;
-&lt;ul&gt;
-	&lt;li&gt;&lt;a class=darklink href=https://www.righto.com/&gt;Ken Shirriff's blog&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2&gt;Photography:&lt;/h2&gt;
-&lt;p&gt;Here's my &lt;a class=darklink href=/astro/m27&gt;picture&lt;/a&gt; of the Dumbbell Nebula:&lt;/p&gt;
-&lt;img src=/astro/m27/small.jpg class=narrow /&gt;
-&lt;/fake-body1&gt;
-&lt;/fake-frame&gt;
-
-&lt;p&gt;
-The "color" style will carry over to every element inside of the styled tag, so there's no need to individually change the text-color of every element.
-However, the links do need to be changed because they override the color by default.
-&lt;/p&gt;&lt;p&gt;
-CSS supports both named colors (like black), and RGB hex colors.
-Hex colors can be shortened by dropping every other digit, at the cost of color accuracy. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;That's it:&lt;/em&gt;
-Everything needed to replicate my blog, minus a few small bits like the sans-serif font, nagivation box, etc.
-Of course, your website can and should be different: It's yours.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;I highly recomend you read &lt;a href=https://developer.mozilla.org/en-US/docs/Web/CSS&gt;some documentation&lt;/a&gt;&lt;/em&gt; and play around with CSS.
-There's also way more to it then I can possbly cover here.
-Every fancy design on the internet was created with it, and it even supports animations and &lt;a href=https://lyra.horse/blog/2025/08/you-dont-need-js/&gt;some interactivity&lt;/a&gt;
-&lt;/p&gt;&lt;p&gt;
-... also, check out your browser's devtools (ctrl-shift-i):
-It will have a nice GUI which lets you mess around in real time and shows you what's going on under the hood.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;If you ever run out of tags&lt;/em&gt;, you can just &lt;a href=/misc/make-up-tags/&gt;make up your own&lt;/a&gt; and style them as needed.
-As long as the name includes a hypen, it's guaranteed not to be included in any future version of HTML.
-The specification even lists &amp;lt;math-α&amp;gt; and &amp;lt;emotion-😍&amp;gt; as allowed custom element names. 
-&lt;/p&gt;&lt;p&gt;
-I've used this heavily on this page: 
-All the example websites aren't screenshots, they are &amp;lt;fake-frame&amp;gt; elements styled up to look like a browser window.
-Custom tags are also very handy for styling text:
-&lt;/p&gt;
-
-&lt;pre&gt;
-&amp;lt;&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-	&amp;lt;&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-		&lt;h-s&gt;html&lt;/h-s&gt; {
-			&lt;h-v&gt;color&lt;/h-v&gt;: &lt;h-v&gt;white&lt;/h-v&gt;;
-			&lt;h-v&gt;background-color&lt;/h-v&gt;: &lt;h-v&gt;black&lt;/h-v&gt;;
-		}
-		&lt;h-s&gt;green-text&lt;/h-s&gt; {
-			&lt;h-v&gt;color&lt;/h-v&gt;: &lt;h-v&gt;green&lt;/h-v&gt;;
-		}
-	&amp;lt;/&lt;h-n&gt;style&lt;/h-n&gt;&amp;gt;
-
-	It &amp;lt;&lt;h-n&gt;green-text&lt;/h-n&gt;&amp;gt;works&amp;lt;/&lt;h-n&gt;green-text&lt;/h-n&gt;&amp;gt;!
-&amp;lt;/&lt;h-n&gt;html&lt;/h-n&gt;&amp;gt;
-&lt;/pre&gt;
-
-&lt;style&gt;
-green-text {
-	color: green;
-}
-&lt;/style&gt;
-
-&lt;fake-frame class=dark&gt;
-&lt;fake-html&gt;
-It &lt;green-text&gt;works&lt;/green-text&gt;!
-&lt;/fake-html&gt;
-&lt;/fake-frame&gt;
-
-&lt;p&gt;
-&lt;h1 id=hosting&gt;Sharing it:&lt;/h1&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;You should now have a reasonably nice page&lt;/em&gt; ready to put up on the internet. 
-The easiest way is to use a static file hosting service like &lt;a href=https://docs.github.com/en/pages&gt;Github pages&lt;/a&gt; or &lt;a href=https://pages.cloudflare.com/&gt;Cloudflare pages&lt;/a&gt;. 
-Both of these have generous free tiers that should last a very long time. 
-&lt;/p&gt;&lt;p&gt;
-If you don't like big companies, there are plenty of similar, smaller services. 
-These can be more limited: The popular &lt;a href=https://neocities.org/&gt;Neocities&lt;/a&gt; charges $5/mo to use a custom domain. 
-&lt;/p&gt;&lt;p&gt;
-Another option is to rent a server (~$5/mo) or, if you have good internet, run one yourself. 
-This is by far the most fiddly option: I would not recommend it unless you like playing with computers. 
-&lt;/p&gt;&lt;p&gt;
-All off these (except a server) will give you a subdomain by default.
-For example, Github Pages will give you &lt;b&gt;your-username&lt;/b&gt;.github.io 
-However, I do recommend setting up a custom domain:
-That lets you switch providers seamlessly should anything happen.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;They all work in a similar way:&lt;/em&gt;
-Upload a file with some name, and it will given a URL with that same name.
-The one exception is that files called "index.html" will be viewable at the root of the folder they are in.
-&lt;/p&gt;
-&lt;pre&gt;
-Filename          URL
-
-root/
-+- my_cats.html   https://example.com/my_cats.html
-+- cat_photos/    
-|   +- cat1.jpg   https://example.com/cat_photos/cat1.jpg
-|   +- cat2.jpg   https://example.com/cat_photos/cat2.jpg
-|   +- index.html https://example.com/cat_photos/
-|
-+- index.html     https://example.com/ 
-&lt;/pre&gt;
-&lt;p&gt;
-You should put an index.html in the root of your site to serve as the homepage, but apart from that, the organization is up to you.
-&lt;/p&gt;
-&lt;!-- mksite: end of content --&gt;
-				</description>
-      <guid isPermaLink="true">http://maurycyz.com/tutorials/website/</guid>
-      <pubDate>Wed, 14 Jan 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>

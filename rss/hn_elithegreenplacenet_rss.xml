@@ -7,113 +7,7 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Sun, 01 Mar 2026 02:44:16 +0000</lastBuildDate>
-    <item>
-      <title>Plugins case study: mdBook preprocessors</title>
-      <link>https://eli.thegreenplace.net/2025/plugins-case-study-mdbook-preprocessors/</link>
-      <description>&lt;p&gt;&lt;a class="reference external" href="https://rust-lang.github.io/mdBook/index.html"&gt;mdBook&lt;/a&gt; is a tool for easily
-creating books out of Markdown files. It's very popular in the Rust ecosystem,
-where it's used (among other things) to publish &lt;a class="reference external" href="https://doc.rust-lang.org/book/"&gt;the official Rust book&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;mdBook has a simple yet effective plugin mechanism that can be used to modify
-the book output in arbitrary ways, using any programming language or tool. This
-post describes the mechanism and how it aligns with the
-&lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;fundamental concepts of plugin infrastructures&lt;/a&gt;.&lt;/p&gt;
-&lt;div class="section" id="mdbook-preprocessors"&gt;
-&lt;h2&gt;mdBook preprocessors&lt;/h2&gt;
-&lt;p&gt;mdBook's architecture is pretty simple: your contents go into a directory tree
-of Markdown files. mdBook then renders these into a book, with one file per
-chapter. The book's output is HTML by default, but mdBook supports other
-outputs like PDF.&lt;/p&gt;
-&lt;p&gt;The &lt;a class="reference external" href="https://rust-lang.github.io/mdBook/for_developers/preprocessors.html"&gt;preprocessor mechanism&lt;/a&gt;
-lets us register an arbitrary program that runs on the book's source after
-it's loaded from Markdown files; this program can modify the book's contents in
-any way it wishes before it all gets sent to the renderer for generating output.&lt;/p&gt;
-&lt;img alt="Preprocessor flow for mdbook" class="align-center" src="https://eli.thegreenplace.net/images/2025/mdbook-preprocessor.png" /&gt;
-&lt;p&gt;The official documentation &lt;a class="reference external" href="https://rust-lang.github.io/mdBook/for_developers/preprocessors.html#hooking-into-mdbook"&gt;explains this process very well&lt;/a&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="sample-plugin"&gt;
-&lt;h2&gt;Sample plugin&lt;/h2&gt;
-&lt;p&gt;I rewrote &lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;my classical &amp;quot;nacrissist&amp;quot; plugin&lt;/a&gt;
-for mdBook; the code is &lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2025/plugin-mdbook"&gt;available here&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;In fact, there are two renditions of the same plugin there:&lt;/p&gt;
-&lt;ol class="arabic simple"&gt;
-&lt;li&gt;One in Python, to demonstrate how mdBook can invoke preprocessors written in
-any programming language.&lt;/li&gt;
-&lt;li&gt;One in Rust, to demonstrate how mdBook exposes an application API to plugins
-written in Rust (since mdBook is itself written in Rust).&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-&lt;div class="section" id="fundamental-plugin-concepts-in-this-case-study"&gt;
-&lt;h2&gt;Fundamental plugin concepts in this case study&lt;/h2&gt;
-&lt;p&gt;Let's see how this case study of mdBook preprocessors measures against the
-&lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;Fundamental plugin concepts&lt;/a&gt;
-that were covered &lt;a class="reference external" href="https://eli.thegreenplace.net/tag/plugins"&gt;several times on this blog&lt;/a&gt;.&lt;/p&gt;
-&lt;div class="section" id="discovery"&gt;
-&lt;h3&gt;Discovery&lt;/h3&gt;
-&lt;p&gt;Discovery in mdBook is very explicit. For every plugin we want mdBook to use,
-it has to be listed in the project's &lt;tt class="docutils literal"&gt;book.toml&lt;/tt&gt; configuration file. For
-example, in &lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2025/plugin-mdbook"&gt;the code sample for this post&lt;/a&gt;, the Python narcissist plugin
-is noted in &lt;tt class="docutils literal"&gt;book.toml&lt;/tt&gt; as follows:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;[preprocessor.narcissistpy]
-command = &amp;quot;python3 ../preprocessor-python-narcissist/narcissist.py&amp;quot;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Each preprocessor is a command for &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; to execute in a sub-process.
-Here it uses Python, but it can be anything else that can be validly executed.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="registration"&gt;
-&lt;h3&gt;Registration&lt;/h3&gt;
-&lt;p&gt;For the purpose of registration, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; actually invokes the plugin command
-&lt;em&gt;twice&lt;/em&gt;. The first time, it passes the arguments &lt;tt class="docutils literal"&gt;supports &amp;lt;renderer&amp;gt;&lt;/tt&gt; where
-&lt;tt class="docutils literal"&gt;&amp;lt;renderer&amp;gt;&lt;/tt&gt; is the name of the renderer (e.g. &lt;tt class="docutils literal"&gt;html&lt;/tt&gt;). If the command
-returns 0, it means the preprocessor supports this renderer; otherwise, it
-doesn't.&lt;/p&gt;
-&lt;p&gt;In the second invocation, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; passes some metadata plus the entire book
-in JSON format to the preprocessor through stdin, and expects the preprocessor
-to return the modified book as JSON to stdout (using the same schema).&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="hooks"&gt;
-&lt;h3&gt;Hooks&lt;/h3&gt;
-&lt;p&gt;In terms of hooks, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; takes a very coarse-grained approach. The
-preprocessor gets the &lt;em&gt;entire book&lt;/em&gt; in a single JSON object (along with a
-context object that contains metadata), and is expected to emit the entire
-modified book in a single JSON object.
-It's up to the preprocessor to figure out which parts of the book to read and
-which parts to modify.&lt;/p&gt;
-&lt;p&gt;Given that books and other documentation typically have limited sizes, this
-is a reasonable design choice. Even tens of MiB of JSON-encoded data are very
-quick to pass between sub-processes via stdout and marshal/unmarshal. But we
-wouldn't be able to implement Wikipedia using this design.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="exposing-an-application-api-to-plugins"&gt;
-&lt;h3&gt;Exposing an application API to plugins&lt;/h3&gt;
-&lt;p&gt;This is tricky, given that the preprocessor mechanism is language-agnostic.
-Here, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; offers some additional utilities to preprocessors implemented
-in Rust, however. These get access to &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt;'s API to unmarshal the JSON
-representing the context metadata and book's contents. &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; offers the
-&lt;a class="reference external" href="https://docs.rs/mdbook-preprocessor/latest/mdbook_preprocessor/trait.Preprocessor.html"&gt;Preprocessor trait&lt;/a&gt;
-Rust preprocessors can implement, which makes it easier to wrangle the book's
-contents. See &lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2025/plugin-mdbook/preprocessor-rust-narcissist"&gt;my Rust version of the narcissist preprocessor&lt;/a&gt;
-for a basic example of this.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class="section" id="renderers-backends"&gt;
-&lt;h2&gt;Renderers / backends&lt;/h2&gt;
-&lt;p&gt;Actually, &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt; has &lt;em&gt;another&lt;/em&gt; plugin mechanism, but it's very similar
-conceptually to preprocessors. A &lt;em&gt;renderer&lt;/em&gt; (also called a &lt;em&gt;backend&lt;/em&gt; in some
-of &lt;tt class="docutils literal"&gt;mdBook&lt;/tt&gt;'s own doc pages) takes the same input as a preprocessor, but is
-free to do whatever it wants with it. The default renderer emits the HTML
-for the book; &lt;a class="reference external" href="https://github.com/rust-lang/mdBook/wiki/Third-party-plugins#backends"&gt;other renderers&lt;/a&gt;
-can do other things.&lt;/p&gt;
-&lt;p&gt;The idea is that the book can go through multiple preprocessors, but at the
-end a &lt;em&gt;single&lt;/em&gt; renderer.&lt;/p&gt;
-&lt;p&gt;The data a renderer receives is exactly the same as a preprocessor - JSON
-encoded book contents. Due to this similarity, there's no real point getting
-deeper into renderers in this post.&lt;/p&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:eli.thegreenplace.net,2025-12-17:/2025/plugins-case-study-mdbook-preprocessors/</guid>
-      <pubDate>Wed, 17 Dec 2025 18:11:00 -0800</pubDate>
-    </item>
+    <lastBuildDate>Sun, 01 Mar 2026 04:58:50 +0000</lastBuildDate>
     <item>
       <title>Summary of reading: October - December 2025</title>
       <link>https://eli.thegreenplace.net/2025/summary-of-reading-october-december-2025/</link>
@@ -920,6 +814,355 @@ monomials are orthogonal.&lt;/td&gt;&lt;/tr&gt;
 </description>
       <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-25:/2026/notes-on-linear-algebra-for-polynomials/</guid>
       <pubDate>Wed, 25 Feb 2026 18:34:00 -0800</pubDate>
+    </item>
+    <item>
+      <title>Notes on Lagrange Interpolating Polynomials</title>
+      <link>https://eli.thegreenplace.net/2026/notes-on-lagrange-interpolating-polynomials/</link>
+      <description>&lt;p&gt;&lt;em&gt;Polynomial interpolation&lt;/em&gt; is a method of finding a polynomial function
+that fits a given set of data perfectly. More concretely, suppose we
+have a set of &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; distinct points &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/e3ee741ff781bf26237c69b505322eb378075e89.svg" style="height: 19px;" type="image/svg+xml"&gt;\[(x_0,y_0), (x_1, y_1), (x_2, y_2)\cdots(x_n, y_n)\]&lt;/object&gt;
+&lt;p&gt;And we want to find the polynomial coefficients &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/3cb777352d19998f6099864dfe85849e46fd0d8c.svg" style="height: 11px;" type="image/svg+xml"&gt;{a_0\cdots a_n}&lt;/object&gt;
+such that:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/4aff81770a1cc10239926be6d6676eb37fba719d.svg" style="height: 22px;" type="image/svg+xml"&gt;\[p(x)=a_0 + a_1 x + a_2 x^2 + \cdots + a_n x^n\]&lt;/object&gt;
+&lt;p&gt;Fits all our points; that is &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/9bee0b2482233e55d638019ff5324f45ce5c0134.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x_0)=y_0&lt;/object&gt;, &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/1066a27080e8f4f98e1e837c563063ce09929300.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x_1)=y_1&lt;/object&gt; etc.&lt;/p&gt;
+&lt;p&gt;This post discusses a common approach to solving this problem, and also
+shows why such a polynomial exists and is unique.&lt;/p&gt;
+&lt;div class="section" id="showing-existence-using-linear-algebra"&gt;
+&lt;h2&gt;Showing existence using linear algebra&lt;/h2&gt;
+&lt;p&gt;When we assign all points &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/fac14e12be52903f4008e439178230b3eefb437a.svg" style="height: 19px;" type="image/svg+xml"&gt;(x_i, y_i)&lt;/object&gt; into the generic polynomial
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt;, we get:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/708bd02c5cc4f2ddb0dbc93967053e55853683d3.svg" style="height: 134px;" type="image/svg+xml"&gt;\[\begin{aligned}
+p(x_0)&amp;amp;=a_0 + a_1 x_0 + a_2 x_0^2 + \cdots a_n x_0^n = y_0\\
+p(x_1)&amp;amp;=a_0 + a_1 x_1 + a_2 x_1^2 + \cdots a_n x_1^n = y_1\\
+p(x_2)&amp;amp;=a_0 + a_1 x_2 + a_2 x_2^2 + \cdots a_n x_2^n = y_2\\
+\cdots \\
+p(x_n)&amp;amp;=a_0 + a_1 x_n + a_2 x_n^2 + \cdots a_n x_n^n = y_n\\
+\end{aligned}\]&lt;/object&gt;
+&lt;p&gt;We want to solve for the coefficients &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/1ba9b59bdee92f38c1698c784b67ba70f803331d.svg" style="height: 11px;" type="image/svg+xml"&gt;a_i&lt;/object&gt;. This is a linear
+system of equations that can be represented by the following matrix
+equation:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/4352a3b8e07b33cc419089f1c48e0b360c9200e5.svg" style="height: 159px;" type="image/svg+xml"&gt;\[{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+     1 &amp;amp; x_0 &amp;amp; x_0^2 &amp;amp; \dots &amp;amp; x_0^n\\
+     1 &amp;amp; x_1 &amp;amp; x_1^2 &amp;amp; \dots &amp;amp; x_1^n\\
+     1 &amp;amp; x_2 &amp;amp; x_2^2 &amp;amp; \dots &amp;amp; x_2^n\\
+     \vdots &amp;amp; \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+     1 &amp;amp; x_n &amp;amp; x_n^2 &amp;amp; \dots &amp;amp; x_n^n
+ \end{bmatrix}
+ \begin{bmatrix}
+     a_0\\
+     a_1\\
+     a_2\\
+     \vdots\\
+     a_n\\
+ \end{bmatrix}=
+ \begin{bmatrix}
+     y_0\\
+     y_1\\
+     y_2\\
+     \vdots\\
+     y_n\\
+ \end{bmatrix}
+ }\]&lt;/object&gt;
+&lt;p&gt;The matrix on the left is called the &lt;em&gt;Vandermonde matrix&lt;/em&gt;. This matrix
+is known to be invertible (see Appendix for a proof); therefore, this
+system of equations has a single solution that can be calculated by
+inverting the matrix.&lt;/p&gt;
+&lt;p&gt;In practice, however, the Vandermonde matrix is often numerically
+ill-conditioned, so inverting it isn’t the best way to calculate exact
+polynomial coefficients. Several better methods exist.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="lagrange-polynomial"&gt;
+&lt;h2&gt;Lagrange Polynomial&lt;/h2&gt;
+&lt;p&gt;Lagrange interpolation polynomials emerge from a simple, yet powerful
+idea. Let’s define the &lt;em&gt;Lagrange basis&lt;/em&gt; functions &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt;
+(&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/71047ffb369f30ea7df6aad7d69de2edc1eca912.svg" style="height: 18px;" type="image/svg+xml"&gt;i \in [0, n]&lt;/object&gt;) as follows, given our points &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/fac14e12be52903f4008e439178230b3eefb437a.svg" style="height: 19px;" type="image/svg+xml"&gt;(x_i, y_i)&lt;/object&gt;:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/5e4d0981c95e59436de02cb6fc85dcdcf4537f1b.svg" style="height: 54px;" type="image/svg+xml"&gt;\[l_i(x) =
+\begin{cases}
+    1      &amp;amp; x = x_i \\
+    0      &amp;amp; x = x_j \quad \forall j \neq i
+\end{cases}\]&lt;/object&gt;
+&lt;p&gt;In words, &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt; is constrained to 1 at &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt; and to 0 at
+all other &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/73058e43db0f4edc791b10f27f913cbc5d361ab6.svg" style="height: 14px;" type="image/svg+xml"&gt;x_j&lt;/object&gt;. We don’t care about its value at any other point.&lt;/p&gt;
+&lt;p&gt;The linear combination:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/9e02d7ad79abe9dd4e108d6e33e02bd6b2cece5e.svg" style="height: 49px;" type="image/svg+xml"&gt;\[p(x)=\sum_{i=0}^{n}y_i l_i(x)\]&lt;/object&gt;
+&lt;p&gt;is then a valid interpolating polynomial for our set of &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt;
+points, because it’s equal to &lt;img alt="y_i" class="valign-m4" src="https://eli.thegreenplace.net/images/math/35c2ac2f82d0ff8f9011b596ed7e54bfcc55f471.png" style="height: 12px;" /&gt; at each &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt; (take a
+moment to convince yourself this is true).&lt;/p&gt;
+&lt;p&gt;How do we find &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt;? The key insight comes from studying the
+following function:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/ab2f106bd0be79644b4f08e7241d53541fde914c.svg" style="height: 54px;" type="image/svg+xml"&gt;\[l&amp;#x27;_i(x)=(x-x_0)\cdot (x-x_1)\cdots (x-x_{i-1}) \cdot (x-x_{i+1})\cdots (x-x_n)=
+\prod_{\substack{0\leq j \leq n \\ j \neq i}}(x-x_j)\]&lt;/object&gt;
+&lt;p&gt;This function has &lt;img alt="n" class="valign-0" src="https://eli.thegreenplace.net/images/math/d1854cae891ec7b29161ccaf79a24b00c274bdaa.png" style="height: 8px;" /&gt; terms &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/ee95074369b77b297d18a5d2500b53463aaf275a.svg" style="height: 20px;" type="image/svg+xml"&gt;(x-x_j)&lt;/object&gt; for all
+&lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/6e1be82fe5bc74efdbe2bd9234f5da2cec90f954.svg" style="height: 17px;" type="image/svg+xml"&gt;j\neq i&lt;/object&gt;. It should be easy to see that &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/f2445af2b56e69160a5ee45a30d1a96a97ea8496.svg" style="height: 19px;" type="image/svg+xml"&gt;l&amp;#x27;_i(x)&lt;/object&gt; is 0 at
+all &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/73058e43db0f4edc791b10f27f913cbc5d361ab6.svg" style="height: 14px;" type="image/svg+xml"&gt;x_j&lt;/object&gt; when &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/6e1be82fe5bc74efdbe2bd9234f5da2cec90f954.svg" style="height: 17px;" type="image/svg+xml"&gt;j\neq i&lt;/object&gt;.&lt;/p&gt;
+&lt;p&gt;What about its value at &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt;, though? We can just assign
+&lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt; into &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/f2445af2b56e69160a5ee45a30d1a96a97ea8496.svg" style="height: 19px;" type="image/svg+xml"&gt;l&amp;#x27;_i(x)&lt;/object&gt; to get:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/c4a71af1b8a616db5347164e5abc488dc888da60.svg" style="height: 54px;" type="image/svg+xml"&gt;\[l&amp;#x27;_i(x_i)=\prod_{\substack{0\leq j \leq n \\ j \neq i}}(x_i-x_j)\]&lt;/object&gt;
+&lt;p&gt;And then normalize &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/f2445af2b56e69160a5ee45a30d1a96a97ea8496.svg" style="height: 19px;" type="image/svg+xml"&gt;l&amp;#x27;_i(x)&lt;/object&gt;, dividing it by this (constant) value. We get
+the Lagrange basis function &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt;:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/9556fe744ec99f27b47d421edd5e625e072145b5.svg" style="height: 64px;" type="image/svg+xml"&gt;\[l_i(x)=\frac{l&amp;#x27;_i(x)}{l&amp;#x27;_i(x_i)}=\prod_{\substack{0\leq j \leq n \\ j \neq i}}\frac{x-x_j}{x_i-x_j}\]&lt;/object&gt;
+&lt;p&gt;Let’s use a concrete example to visualize this. Suppose we have the
+following set of points we want to interpolate:
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/eb71287f6f652c4e2753483486714619516e0822.svg" style="height: 19px;" type="image/svg+xml"&gt;(1,4), (2,2), (3,3)&lt;/object&gt;. We can calculate &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/efa94b9705d7324c446e2fd3a0f87163cf4a09aa.svg" style="height: 19px;" type="image/svg+xml"&gt;l&amp;#x27;_0(x)&lt;/object&gt;,
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/35fec30e61d70678416c62035d3dce29fd3ffc5a.svg" style="height: 19px;" type="image/svg+xml"&gt;l&amp;#x27;_1(x)&lt;/object&gt; and &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/5d4342750343edd5a8607e54a1f6dac771110497.svg" style="height: 19px;" type="image/svg+xml"&gt;l&amp;#x27;_2(x)&lt;/object&gt;, and get the following:&lt;/p&gt;
+&lt;img alt="Un-normalized lagrange basis functions for our sample" class="align-center" src="https://eli.thegreenplace.net/images/2026/lagrange-basis.png" /&gt;
+&lt;p&gt;Note where each &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/f2445af2b56e69160a5ee45a30d1a96a97ea8496.svg" style="height: 19px;" type="image/svg+xml"&gt;l&amp;#x27;_i(x)&lt;/object&gt; intersects the &lt;img alt="x" class="valign-0" src="https://eli.thegreenplace.net/images/math/11f6ad8ec52a2984abaafd7c3b516503785c2072.png" style="height: 8px;" /&gt; axis. These
+functions have the right values at all &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/3430b1a7366e85d75a89e8ef95fffaa8e0fd36f2.svg" style="height: 14px;" type="image/svg+xml"&gt;x_{j\neq i}&lt;/object&gt;. If we
+normalize them to obtain &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt;, we get these functions:&lt;/p&gt;
+&lt;img alt="Normalized lagrange basis functions for our sample" class="align-center" src="https://eli.thegreenplace.net/images/2026/lagrange-basis-normalized.png" /&gt;
+&lt;p&gt;Note that each polynomial is 1 at the appropriate &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt; and 0 at
+all the other &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/3430b1a7366e85d75a89e8ef95fffaa8e0fd36f2.svg" style="height: 14px;" type="image/svg+xml"&gt;x_{j\neq i}&lt;/object&gt;, as required.&lt;/p&gt;
+&lt;p&gt;With these &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt;, we can now plot the interpolating polynomial
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/bc2c6fb1897affc253cf6db77c4f7d4a41a5be32.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)=\sum_{i=0}^{n}y_i l_i(x)&lt;/object&gt;, which fits our set of input points:&lt;/p&gt;
+&lt;img alt="Interpolation polynomial" class="align-center" src="https://eli.thegreenplace.net/images/2026/lagrange-inter-poly.png" /&gt;
+&lt;/div&gt;
+&lt;div class="section" id="polynomial-degree-and-uniqueness"&gt;
+&lt;h2&gt;Polynomial degree and uniqueness&lt;/h2&gt;
+&lt;p&gt;We’ve just seen that the linear combination of Lagrange basis functions:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/9e02d7ad79abe9dd4e108d6e33e02bd6b2cece5e.svg" style="height: 49px;" type="image/svg+xml"&gt;\[p(x)=\sum_{i=0}^{n}y_i l_i(x)\]&lt;/object&gt;
+&lt;p&gt;is a valid interpolating polynomial for a set of &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; distinct
+points &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/fac14e12be52903f4008e439178230b3eefb437a.svg" style="height: 19px;" type="image/svg+xml"&gt;(x_i, y_i)&lt;/object&gt;. What is its degree?&lt;/p&gt;
+&lt;p&gt;Since the degree of each &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt; is &lt;img alt="n" class="valign-0" src="https://eli.thegreenplace.net/images/math/d1854cae891ec7b29161ccaf79a24b00c274bdaa.png" style="height: 8px;" /&gt;, then the degree of
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt; is &lt;em&gt;at most&lt;/em&gt; &lt;img alt="n" class="valign-0" src="https://eli.thegreenplace.net/images/math/d1854cae891ec7b29161ccaf79a24b00c274bdaa.png" style="height: 8px;" /&gt;. We’ve just derived the first part
+of the &lt;em&gt;Polynomial interpolation theorem&lt;/em&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Polynomial interpolation theorem&lt;/strong&gt;: for any &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; data points
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/3e2e9500dcfffb808ec380f67db20f6f0804211e.svg" style="height: 20px;" type="image/svg+xml"&gt;(x_0,y_0), (x_1, y_1)\cdots(x_n, y_n) \in \mathbb{R}^2&lt;/object&gt; where no
+two &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/73058e43db0f4edc791b10f27f913cbc5d361ab6.svg" style="height: 14px;" type="image/svg+xml"&gt;x_j&lt;/object&gt; are the same, there exists a unique polynomial
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt; of degree at most &lt;img alt="n" class="valign-0" src="https://eli.thegreenplace.net/images/math/d1854cae891ec7b29161ccaf79a24b00c274bdaa.png" style="height: 8px;" /&gt; that interpolates these points.&lt;/p&gt;
+&lt;p&gt;We’ve demonstrated existence and degree, but not yet &lt;em&gt;uniqueness&lt;/em&gt;. So
+let’s turn to that.&lt;/p&gt;
+&lt;p&gt;We know that &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt; interpolates all &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; points, and its
+degree is &lt;img alt="n" class="valign-0" src="https://eli.thegreenplace.net/images/math/d1854cae891ec7b29161ccaf79a24b00c274bdaa.png" style="height: 8px;" /&gt;. Suppose there’s another such polynomial
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/90425caaec1646540a7a9049146bf2606d9dbd0d.svg" style="height: 19px;" type="image/svg+xml"&gt;q(x)&lt;/object&gt;. Let’s construct:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/b88ab71d9a2c512da829c88eda1adcd5c0191deb.svg" style="height: 19px;" type="image/svg+xml"&gt;\[r(x)=p(x)-r(x)\]&lt;/object&gt;
+&lt;p&gt;That do we know about &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/9468a2656a6201bfa194ec81fb0f78352c9666c9.svg" style="height: 19px;" type="image/svg+xml"&gt;r(x)&lt;/object&gt;? First of all, its value is 0 at all
+our &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt;, so it has &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; &lt;em&gt;roots&lt;/em&gt;. Second, we also know
+that its degree is at most &lt;img alt="n" class="valign-0" src="https://eli.thegreenplace.net/images/math/d1854cae891ec7b29161ccaf79a24b00c274bdaa.png" style="height: 8px;" /&gt; (because it’s the difference of two
+polynomials of such degree). These two facts are a contradiction.
+No non-zero polynomial of degree &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/189de1175926fa11245f32e4d48aa2a7ab2435b4.svg" style="height: 15px;" type="image/svg+xml"&gt;\leq n&lt;/object&gt; can have
+&lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; roots (a basic algebraic fact related to the &lt;em&gt;Fundamental
+theorem of algebra&lt;/em&gt;). So &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/9468a2656a6201bfa194ec81fb0f78352c9666c9.svg" style="height: 19px;" type="image/svg+xml"&gt;r(x)&lt;/object&gt; must be the zero polynomial; in
+other words, our &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt; is unique &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/4a4e9e431da45a27bc880a8a1ca44d8b1b9bc143.svg" style="height: 12px;" type="image/svg+xml"&gt;\blacksquare&lt;/object&gt;.&lt;/p&gt;
+&lt;p&gt;Note the implication of uniqueness here: given our set of &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt;
+distinct points, there’s only one polynomial of degree &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/189de1175926fa11245f32e4d48aa2a7ab2435b4.svg" style="height: 15px;" type="image/svg+xml"&gt;\leq n&lt;/object&gt;
+that interpolates it. We can find its coefficients by inverting the
+Vandermonde matrix, by using Lagrange basis functions, or
+any other method &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="lagrange-polynomials-as-a-basis-for-p-n-mathbb-r"&gt;
+&lt;h2&gt;Lagrange polynomials as a basis for &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;&lt;/h2&gt;
+&lt;p&gt;The set &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt; consists of all real polynomials of
+degree &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/189de1175926fa11245f32e4d48aa2a7ab2435b4.svg" style="height: 15px;" type="image/svg+xml"&gt;\leq n&lt;/object&gt;. This set - along with addition of polynomials and
+scalar multiplication - &lt;a class="reference external" href="https://eli.thegreenplace.net/2026/notes-on-linear-algebra-for-polynomials/"&gt;forms a vector
+space&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;We called &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt; the &amp;quot;Lagrange basis&amp;quot; previously, and they do -
+in fact - form an actual linear algebra basis for this vector space. To
+prove this claim, we need to show that Lagrange polynomials are linearly
+independent and that they span the space.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Linear independence&lt;/strong&gt;: we have to show that&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/3469cc3e26dc0483fb111f3993bf06b1c5336c53.svg" style="height: 49px;" type="image/svg+xml"&gt;\[s(x)=\sum_{i=0}^{n}a_i l_i(x)=0\]&lt;/object&gt;
+&lt;p&gt;implies &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/936812b8cbbba06fa5948bf8f9393e0bd9abc223.svg" style="height: 15px;" type="image/svg+xml"&gt;a_i=0 \quad \forall i&lt;/object&gt;. Recall that &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt; is 1
+at &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt;, while all other &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/1695428630aa1a460c0d7eb95749f04017fb8b60.svg" style="height: 20px;" type="image/svg+xml"&gt;l_j(x)&lt;/object&gt; are 0 at that point.
+Therefore, evaluating &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/68cee1190d7058555e058756fed1d6527ab89855.svg" style="height: 19px;" type="image/svg+xml"&gt;s(x)&lt;/object&gt; at &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt;, we get:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/eda879b68c484c7e88db094e5d4b63e38738503e.svg" style="height: 19px;" type="image/svg+xml"&gt;\[s(x_i)=a_i = 0\]&lt;/object&gt;
+&lt;p&gt;Similarly, we can show that &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/1ba9b59bdee92f38c1698c784b67ba70f803331d.svg" style="height: 11px;" type="image/svg+xml"&gt;a_i&lt;/object&gt; is 0, for all &lt;img alt="i" class="valign-0" src="https://eli.thegreenplace.net/images/math/042dc4512fa3d391c5170cf3aa61e6a638f84342.png" style="height: 12px;" /&gt;
+&lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/4a4e9e431da45a27bc880a8a1ca44d8b1b9bc143.svg" style="height: 12px;" type="image/svg+xml"&gt;\blacksquare&lt;/object&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Span&lt;/strong&gt;: we’ve already demonstrated that the linear combination of
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt;:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/9e02d7ad79abe9dd4e108d6e33e02bd6b2cece5e.svg" style="height: 49px;" type="image/svg+xml"&gt;\[p(x)=\sum_{i=0}^{n}y_i l_i(x)\]&lt;/object&gt;
+&lt;p&gt;is a valid interpolating polynomial for any set of &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; distinct
+points. Using the &lt;em&gt;polynomial interpolation theorem&lt;/em&gt;, this is the unique
+polynomial interpolating this set of points. In other words, for every
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/ca8eba083582be9ac48f889214d2f74248955c2f.svg" style="height: 19px;" type="image/svg+xml"&gt;q(x)\in P_n(\mathbb{R})&lt;/object&gt;, we can identify any set of &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; distinct points it passes
+through, and then use the technique described in this post to find the coefficients of &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/90425caaec1646540a7a9049146bf2606d9dbd0d.svg" style="height: 19px;" type="image/svg+xml"&gt;q(x)&lt;/object&gt; in the
+Lagrange basis. Therefore, the set &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/266681d17d2dc06fe4a139a6c0daa4c5c163b300.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x)&lt;/object&gt; spans
+the vector space &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/4a4e9e431da45a27bc880a8a1ca44d8b1b9bc143.svg" style="height: 12px;" type="image/svg+xml"&gt;\blacksquare&lt;/object&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="interpolation-matrix-in-the-lagrange-basis"&gt;
+&lt;h2&gt;Interpolation matrix in the Lagrange basis&lt;/h2&gt;
+&lt;p&gt;Previously we’ve seen how to use the &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/dd30851f93c58a2397e24da06afb6c865f1fd4d6.svg" style="height: 20px;" type="image/svg+xml"&gt;\{1, x, x^2, \dots x^n\}&lt;/object&gt;
+basis to write down a system of linear equations that helps us find the
+interpolating polynomial. This results in the &lt;em&gt;Vandermonde matrix&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;Using the Lagrange basis, we can get a much nicer matrix representation
+of the interpolation equations.&lt;/p&gt;
+&lt;p&gt;Recall that our general polynomial using the Lagrange basis is:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/e27577760eb802468c6135d93fa6b761cadd55ea.svg" style="height: 49px;" type="image/svg+xml"&gt;\[p(x)=\sum_{i=0}^{n}a_i l_i(x)\]&lt;/object&gt;
+&lt;p&gt;Let’s build a system of equations for each of the &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; points
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/224e78a167ad90c8d6434766a835f152b7adcd44.svg" style="height: 19px;" type="image/svg+xml"&gt;(x_i,y_i)&lt;/object&gt;. For &lt;img alt="x_0" class="valign-m3" src="https://eli.thegreenplace.net/images/math/efbda784ad565c1c5201fdc948a570d0426bc6e6.png" style="height: 11px;" /&gt;:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/7a62a190b24f3e630c1d267c707dd96329efa545.svg" style="height: 49px;" type="image/svg+xml"&gt;\[p(x_0)=\sum_{i=0}^{n}a_i l_i(x_0)\]&lt;/object&gt;
+&lt;p&gt;By definition of the Lagrange basis functions, all &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/dd57195bcdd0b0c2e0f836ee74730425bfd21726.svg" style="height: 19px;" type="image/svg+xml"&gt;l_i(x_0)&lt;/object&gt;
+where &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/5722358d633306016b737900981a909e904098bd.svg" style="height: 17px;" type="image/svg+xml"&gt;i\neq 0&lt;/object&gt; are 0, while &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/e45ce17273faa377fac587c644355c089905f5f8.svg" style="height: 19px;" type="image/svg+xml"&gt;l_0(x_0)&lt;/object&gt; is 1. So this
+simplifies to:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/c0536313cb1338dd7071c085f52ea51dcb72d79d.svg" style="height: 19px;" type="image/svg+xml"&gt;\[p(x_0)=a_0\]&lt;/object&gt;
+&lt;p&gt;But the value at node &lt;img alt="x_0" class="valign-m3" src="https://eli.thegreenplace.net/images/math/efbda784ad565c1c5201fdc948a570d0426bc6e6.png" style="height: 11px;" /&gt; is &lt;img alt="y_0" class="valign-m4" src="https://eli.thegreenplace.net/images/math/2bb5817d0f3bf8490a8c7b1343f84f9635e683a3.png" style="height: 12px;" /&gt;, so we’ve just found
+that &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/6df7c1c7fdab6f76ef16a230d6c0b3744017acfd.svg" style="height: 12px;" type="image/svg+xml"&gt;a_0=y_0&lt;/object&gt;. We can produce similar equations for the other
+nodes as well, &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7d5f400d37852b1b57adaf0e21efabada38c8363.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x_1)=a_1&lt;/object&gt;, etc. In matrix form:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/7c432b10332759eba03394449c6f7adf0ef3a996.svg" style="height: 159px;" type="image/svg+xml"&gt;\[{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+     1 &amp;amp; 0 &amp;amp; 0 &amp;amp; \dots &amp;amp; 0\\
+     1 &amp;amp; 0 &amp;amp; 0 &amp;amp; \dots &amp;amp; 0\\
+     1 &amp;amp; 0 &amp;amp; 0 &amp;amp; \dots &amp;amp; 0\\
+     \vdots &amp;amp; \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+     1 &amp;amp; 0 &amp;amp; 0 &amp;amp; \dots &amp;amp; 1
+ \end{bmatrix}
+ \begin{bmatrix}
+     a_0\\
+     a_1\\
+     a_2\\
+     \vdots\\
+     a_n\\
+ \end{bmatrix}=
+ \begin{bmatrix}
+     y_0\\
+     y_1\\
+     y_2\\
+     \vdots\\
+     y_n\\
+ \end{bmatrix}
+ }\]&lt;/object&gt;
+&lt;p&gt;We get the identity matrix; this is another way to trivially show that
+&lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/6df7c1c7fdab6f76ef16a230d6c0b3744017acfd.svg" style="height: 12px;" type="image/svg+xml"&gt;a_0=y_0&lt;/object&gt;, &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/8491dd4445d9d585827151312ba90e75fc4859fb.svg" style="height: 12px;" type="image/svg+xml"&gt;a_1=y_1&lt;/object&gt; and so on.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="appendix-vandermonde-matrix"&gt;
+&lt;h2&gt;Appendix: Vandermonde matrix&lt;/h2&gt;
+&lt;p&gt;Given some numbers &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/0f80294ca0e3cea0ce687973ea5aa7202c1c6f44.svg" style="height: 19px;" type="image/svg+xml"&gt;\{x_0 \dots x_n\}&lt;/object&gt; a matrix of this form:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/a1b91b44ffad5324694b37ed4ed07f5de048d55b.svg" style="height: 159px;" type="image/svg+xml"&gt;\[V=
+{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+1 &amp;amp; x_0 &amp;amp; x_0^2 &amp;amp; \dots &amp;amp; x_0^n\\
+1 &amp;amp; x_1 &amp;amp; x_1^2 &amp;amp; \dots &amp;amp; x_1^n\\
+1 &amp;amp; x_2 &amp;amp; x_2^2 &amp;amp; \dots &amp;amp; x_2^n\\
+\vdots &amp;amp; \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+1 &amp;amp; x_n &amp;amp; x_n^2 &amp;amp; \dots &amp;amp; x_n^n
+\end{bmatrix}
+}\]&lt;/object&gt;
+&lt;p&gt;Is called the &lt;em&gt;Vandermonde&lt;/em&gt; matrix. What’s special about a Vandermonde
+matrix is that we know it’s invertible when &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt; are distinct.
+This is &lt;a class="reference external" href="https://mathworld.wolfram.com/InvertibleMatrixTheorem.html"&gt;because its determinant is known to be
+non-zero&lt;/a&gt;.
+Moreover, its determinant is &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt;:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/aeef2af004a7aeeccdad775b2eaec44543643e90.svg" style="height: 41px;" type="image/svg+xml"&gt;\[\det(V) = \prod_{0 \le i &amp;lt; j \le n} (x_j - x_i)\]&lt;/object&gt;
+&lt;p&gt;Here’s why.&lt;/p&gt;
+&lt;p&gt;To get some intuition, let’s consider some small-rank Vandermonde
+matrices. Starting with a 2-by-2:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/409bf1caaf2ceab8e097d007aacd2e7031185732.svg" style="height: 42px;" type="image/svg+xml"&gt;\[\det(V)=\det\begin{bmatrix}
+1 &amp;amp; x_0 \\
+1 &amp;amp; x_1 \\
+\end{bmatrix}=x_1-x_0\]&lt;/object&gt;
+&lt;p&gt;Let’s try 3-by-3 now:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/fa1e9fd7d521588ed1f13cd1ea96c43b56aef604.svg" style="height: 96px;" type="image/svg+xml"&gt;\[\det(V)=\det
+{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+    1 &amp;amp; x_0 &amp;amp; x_0^2 \\
+    1 &amp;amp; x_1 &amp;amp; x_1^2 \\
+    1 &amp;amp; x_2 &amp;amp; x_2^2 \\
+\end{bmatrix}
+}\]&lt;/object&gt;
+&lt;p&gt;We can use the standard way of calculating determinants to expand from
+the first row:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/39f0107408e77d8492349b40106253d18487e48e.svg" style="height: 49px;" type="image/svg+xml"&gt;\[\begin{aligned}
+\det(V)&amp;amp;=1\cdot(x_1 x_2^2 - x_2 x_1^2)-x_0(x_2^2-x_1^2)+x_0^2(x_2 - x_1)\\
+&amp;amp;=x_1 x_2^2 - x_2 x_1^2 - x_0 x_2^2+x_0 x_1^2+x_0^2 x_2 - x_0^2 x_1\\
+\end{aligned}\]&lt;/object&gt;
+&lt;p&gt;Using some algebraic manipulation, it’s easy to show this is equivalent
+to:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/1cfe17009b539affb81c76120ef3960119bf1a8d.svg" style="height: 19px;" type="image/svg+xml"&gt;\[\det(V)=(x_2-x_1)(x_2-x_0)(x_1-x_0)\]&lt;/object&gt;
+&lt;p&gt;For the full proof, let’s look at the generalized
+&lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt;-by-&lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; matrix again:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/d93183948364818eeb51b48056262a016e345ef9.svg" style="height: 159px;" type="image/svg+xml"&gt;\[V=
+{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+        1 &amp;amp; x_0 &amp;amp; x_0^2 &amp;amp; \dots &amp;amp; x_0^n\\
+        1 &amp;amp; x_1 &amp;amp; x_1^2 &amp;amp; \dots &amp;amp; x_1^n\\
+        1 &amp;amp; x_2 &amp;amp; x_2^2 &amp;amp; \dots &amp;amp; x_2^n\\
+        \vdots &amp;amp; \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+        1 &amp;amp; x_n &amp;amp; x_n^2 &amp;amp; \dots &amp;amp; x_n^n
+    \end{bmatrix}
+ }\]&lt;/object&gt;
+&lt;p&gt;Recall that subtracting a multiple of one column from another doesn’t
+change a matrix’s determinant. For each column &lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/1ce658ba27a5ceb614d1279b5e24989689505dcd.svg" style="height: 14px;" type="image/svg+xml"&gt;k&amp;gt;1&lt;/object&gt;, we’ll
+subtract the value of column &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/4136a771b69c092ff42aa6115afbc9160e5353c9.svg" style="height: 12px;" type="image/svg+xml"&gt;k-1&lt;/object&gt; multiplied by &lt;img alt="x_0" class="valign-m3" src="https://eli.thegreenplace.net/images/math/efbda784ad565c1c5201fdc948a570d0426bc6e6.png" style="height: 11px;" /&gt; from
+it (this is done on all columns simultaneously). The idea is to make the
+first row all zeros after the very first element:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/7b17cf508ed83e3f00a056891c02d58bc85df72c.svg" style="height: 159px;" type="image/svg+xml"&gt;\[V=
+{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+        1 &amp;amp; 0 &amp;amp; 0 &amp;amp; \dots &amp;amp; 0\\
+        1 &amp;amp; x_1 - x_0 &amp;amp; x_1^2 - x_1 x_0&amp;amp; \dots &amp;amp; x_1^n - x_1^{n-1} x_0\\
+        1 &amp;amp; x_2 - x_0 &amp;amp; x_2^2 - x_2 x_0&amp;amp; \dots &amp;amp; x_2^n - x_2^{n-1} x_0\\
+        \vdots &amp;amp; \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+        1 &amp;amp; x_n - x_0 &amp;amp; x_n^2 - x_n x_0&amp;amp; \dots &amp;amp; x_n^n - x_n^{n-1} x_0\\
+    \end{bmatrix}
+}\]&lt;/object&gt;
+&lt;p&gt;Now we factor out &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/89cce2d73854c97e220aa9b7232bb408e5d1b0d6.svg" style="height: 11px;" type="image/svg+xml"&gt;x_1-x_0&lt;/object&gt; from the second row (after the first
+element), &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/9f4f5293a3d0b243932a97c1c52109c3bba378c7.svg" style="height: 11px;" type="image/svg+xml"&gt;x_2-x_0&lt;/object&gt; from the third row and so on, to get:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/0f35e4bc0e43ffcebb6b8ca326dacba9c10549b6.svg" style="height: 159px;" type="image/svg+xml"&gt;\[V=
+{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+        1 &amp;amp; 0 &amp;amp; 0 &amp;amp; \dots &amp;amp; 0\\
+        1 &amp;amp; x_1 - x_0 &amp;amp; x_1(x_1 - x_0)&amp;amp; \dots &amp;amp; x_1^{n-1}(x_1 - x_0)\\
+        1 &amp;amp; x_2 - x_0 &amp;amp; x_2(x_2 - x_0)&amp;amp; \dots &amp;amp; x_2^{n-1}(x_2 - x_0)\\
+        \vdots &amp;amp; \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+        1 &amp;amp; x_n - x_0 &amp;amp; x_n(x_n - x_0)&amp;amp; \dots &amp;amp; x_n^{n-1}(x_n - x_0)\\
+    \end{bmatrix}
+}\]&lt;/object&gt;
+&lt;p&gt;Imagine we erase the first row and first column of &lt;img alt="V" class="valign-0" src="https://eli.thegreenplace.net/images/math/c9ee5681d3c59f7541c27a38b67edf46259e187b.png" style="height: 12px;" /&gt;. We’ll call
+the resulting matrix &lt;img alt="W" class="valign-0" src="https://eli.thegreenplace.net/images/math/e2415cb7f63df0c9de23362326ad3c37a9adfc96.png" style="height: 12px;" /&gt;.&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/bd6c93bd0a0454bce81c7565870e59033bffd317.svg" style="height: 128px;" type="image/svg+xml"&gt;\[W=
+{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+        x_1 - x_0 &amp;amp; x_1(x_1 - x_0)&amp;amp; \dots &amp;amp; x_1^{n-1}(x_1 - x_0)\\
+        x_2 - x_0 &amp;amp; x_2(x_2 - x_0)&amp;amp; \dots &amp;amp; x_2^{n-1}(x_2 - x_0)\\
+        \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+        x_n - x_0 &amp;amp; x_n(x_n - x_0)&amp;amp; \dots &amp;amp; x_n^{n-1}(x_n - x_0)\\
+    \end{bmatrix}
+}\]&lt;/object&gt;
+&lt;p&gt;Because the first row of &lt;img alt="V" class="valign-0" src="https://eli.thegreenplace.net/images/math/c9ee5681d3c59f7541c27a38b67edf46259e187b.png" style="height: 12px;" /&gt; is all zeros except the first
+element, we have:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/c112a75142ecd4bc97e681cf01e4a734a67e9c5d.svg" style="height: 19px;" type="image/svg+xml"&gt;\[\det(V)=\det(W)\]&lt;/object&gt;
+&lt;p&gt;Note that the first row of &lt;img alt="W" class="valign-0" src="https://eli.thegreenplace.net/images/math/e2415cb7f63df0c9de23362326ad3c37a9adfc96.png" style="height: 12px;" /&gt; has a common factor of
+&lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/89cce2d73854c97e220aa9b7232bb408e5d1b0d6.svg" style="height: 11px;" type="image/svg+xml"&gt;x_1-x_0&lt;/object&gt;, so when calculating &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/3845b3a938b1cd6b8667c495a8caa9957a8ee224.svg" style="height: 19px;" type="image/svg+xml"&gt;\det(W)&lt;/object&gt;, we can move this
+common factor out. Same for the common factor &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/9f4f5293a3d0b243932a97c1c52109c3bba378c7.svg" style="height: 11px;" type="image/svg+xml"&gt;x_2-x_0&lt;/object&gt; of the
+second row, and so on. Overall, we can write:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/e444fd8f617e7e5ce3752d3c356d18040c31371d.svg" style="height: 160px;" type="image/svg+xml"&gt;\[\det(W)=(x_1-x_0)(x_2-x_0)\cdots(x_n-x_0)\cdot \det
+{\renewcommand{\arraystretch}{1.5}\begin{bmatrix}
+        1 &amp;amp; x_0 &amp;amp; x_0^2 &amp;amp; \dots &amp;amp; x_0^{n-1}\\
+        1 &amp;amp; x_1 &amp;amp; x_1^2 &amp;amp; \dots &amp;amp; x_1^{n-1}\\
+        1 &amp;amp; x_2 &amp;amp; x_2^2 &amp;amp; \dots &amp;amp; x_2^{n-1}\\
+        \vdots &amp;amp; \vdots &amp;amp; \vdots &amp;amp; \ddots &amp;amp;\vdots \\
+        1 &amp;amp; x_n &amp;amp; x_n^2 &amp;amp; \dots &amp;amp; x_n^{n-1}
+    \end{bmatrix}
+}\]&lt;/object&gt;
+&lt;p&gt;But the smaller matrix is just the Vandermonde matrix for
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/4c41722db7edcf3779cdd6d5664ccfb838e2dfc8.svg" style="height: 19px;" type="image/svg+xml"&gt;\{x_0 \dots x_{n-1}\}&lt;/object&gt;. If we continue this process by induction,
+we’ll get:&lt;/p&gt;
+&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/aeef2af004a7aeeccdad775b2eaec44543643e90.svg" style="height: 41px;" type="image/svg+xml"&gt;\[\det(V) = \prod_{0 \le i &amp;lt; j \le n} (x_j - x_i)\]&lt;/object&gt;
+&lt;p&gt;If you’re interested, the &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Vandermonde_matrix"&gt;Wikipedia page for the Vandermonde matrix&lt;/a&gt; has a couple of additional
+proofs.&lt;/p&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The &lt;img alt="x" class="valign-0" src="https://eli.thegreenplace.net/images/math/11f6ad8ec52a2984abaafd7c3b516503785c2072.png" style="height: 8px;" /&gt;-es here are called &lt;em&gt;nodes&lt;/em&gt; and the &lt;img alt="y" class="valign-m4" src="https://eli.thegreenplace.net/images/math/95cb0bfd2977c761298d9624e4b4d4c72a39974a.png" style="height: 12px;" /&gt;-s are
+called &lt;em&gt;values&lt;/em&gt;.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;a class="reference external" href="https://eli.thegreenplace.net/2024/method-of-differences-and-newton-polynomials/"&gt;Newton
+polynomials&lt;/a&gt;
+is also an option, and there are many other approaches.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;Note that this means the product of all differences between
+&lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/73058e43db0f4edc791b10f27f913cbc5d361ab6.svg" style="height: 14px;" type="image/svg+xml"&gt;x_j&lt;/object&gt; and &lt;img alt="x_i" class="valign-m3" src="https://eli.thegreenplace.net/images/math/34e03e6559b14df9fe5a97bbd2ed10109dfebbd3.png" style="height: 11px;" /&gt; where &lt;img alt="i" class="valign-0" src="https://eli.thegreenplace.net/images/math/042dc4512fa3d391c5170cf3aa61e6a638f84342.png" style="height: 12px;" /&gt; is strictly smaller than
+&lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/5c2dd944dde9e08881bef0894fe7b22a5c9c4b06.svg" style="height: 16px;" type="image/svg+xml"&gt;j&lt;/object&gt;. That is, for &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/2091fb295870e9f79b6d8a10d0f6046b091e6fe5.svg" style="height: 12px;" type="image/svg+xml"&gt;n=2&lt;/object&gt;, the full product is
+&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/c42a249f6023c731a0d670240a66413cd79aee91.svg" style="height: 19px;" type="image/svg+xml"&gt;(x_2-x_1)(x_2-x_0)(x_1-x_0)&lt;/object&gt;. For an arbitrary &lt;img alt="n" class="valign-0" src="https://eli.thegreenplace.net/images/math/d1854cae891ec7b29161ccaf79a24b00c274bdaa.png" style="height: 8px;" /&gt;,
+there are &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/66a19249b26d808e85ea349b8b84dee8a2090e0c.svg" style="height: 25px;" type="image/svg+xml"&gt;\frac{n(n-1)}{2}&lt;/object&gt; factors in total.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-28:/2026/notes-on-lagrange-interpolating-polynomials/</guid>
+      <pubDate>Sat, 28 Feb 2026 18:58:00 -0800</pubDate>
     </item>
   </channel>
 </rss>
