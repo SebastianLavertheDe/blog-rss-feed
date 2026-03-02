@@ -5,7 +5,7 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Mon, 02 Mar 2026 02:32:44 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 02 Mar 2026 04:52:18 +0000</lastBuildDate>
     <item>
       <title>Why does C have the best file API?</title>
       <link>https://maurycyz.com/misc/c_files/</link>
@@ -13,10 +13,11 @@
 &lt;p&gt;
 
 Ok, the title is a bit tongue-in-cheek, but there's very little thought put into files in most languages. 
-What you get is usually the same, or often worse, than C:
-just read(), write() and some kind of serialization library.
+It always feels a bit out of place... except in C.
+In fact, what you get is usually a worse version of C.
 &lt;/p&gt;&lt;p&gt;
-What you don't usually get is accessing files the same as memory:
+In C, files can be accessed in the same way as memory:
+&lt;/p&gt;&lt;p&gt;
 &lt;!-- snip --&gt;
 &lt;/p&gt;
 &lt;p&gt;
@@ -68,32 +69,36 @@ Data is loaded as needed, so it won't take all day to open a terabyte file.
 It works with all datatypes and is automatically cached.
 This cache is cleared if the system needs memory for something else.
 &lt;/p&gt;&lt;p&gt;
-&lt;em&gt;However, in other most languages&lt;/em&gt;,
-you have to read() in tiny chunks, parse, process, serialize and finally write() back to the disk.
-This works, but is verbose and needlessly limited to sequential access:
-Computers haven't used tape for decades.
+&lt;em&gt;mmap() is actually a OS feature&lt;/em&gt;, so many other languages have it.
+However, it's almost always limited to byte arrays:
+You have to grab a chunk of data, parse, process and finally serialize it before writing back to the disk.
+It's nicer then manually calling read() and write(), but not by much.
 &lt;/p&gt;&lt;p&gt;
-&lt;em&gt;If you're lucky enough to have memory mapping&lt;/em&gt;, it will be limited to byte arrays,
-which still require explicit parsing/serialization.
-It ends up being just a nicer way to call read() and write()
+These languages have all these nice features for manipulating data in memory, but nothing for manipulating data on disk. 
+In memory, you get dynamically sized strings and vectors, enumerated types, objects, etc, etc.
+On disk, you get... a bunch of bytes. 
 &lt;/p&gt;&lt;p&gt;
-Considering that most languages already support custom allocators, getter functions and the such, adding a better way to access files seems very doable...
+Considering that most already support custom allocators and the such, adding a better way to access files seems very doable &amp;mdash;
 but (as far as I'm aware) C is the only language that lets you specify a binary format and just use it.
 &lt;/p&gt;&lt;p&gt;
 C's implementation isn't even very good:
-Memory mapping comes some overhead (page faults, TLB flushes) and C does nothing to handle endianness or errors &amp;mdash;
+Memory mapping comes some overhead (page faults, TLB flushes) and C does nothing to handle endianness or errors...
 but it doesn't take much to beat nothing. 
 &lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Sure, you might want to do some parsing and validation&lt;/em&gt;, but this shouldn't be required every time data leaves the disk. 
-It's very common to run out of memory, which makes it impossible to just parse everything into RAM.
-Being able to offload data without complicating the code is very useful.
+&lt;em&gt;Sure, you might want to do some parsing and validation&lt;/em&gt;, but it shouldn't be required every time data leaves the disk. 
+RAM is much smaller then the disk, so it's often impossible to just parse everything into memory.
+Being able to easily offload data without complicating the code is very useful.
 &lt;/p&gt;&lt;p&gt;
 Just look at Python's pickle:
 it's a completely insecure serialization format.
 Loading a file can cause code execution even if you just wanted some numbers...
-but still very widely used because it fits with the mix-code-and-data model of python.
+but still very widely used because it fits the mix-code-and-data model of python.
 &lt;/p&gt;&lt;p&gt;
-A lot of files are not untrusted. 
+A lot of files are not untrusted data. 
+&lt;/p&gt;&lt;p&gt;
+In the case of binary files, parsing is usually redundant. 
+There's no reason code can't directly manipulate the on-disk representation, and for "scratchpad" temporary files, save the data as it exists in RAM.
+Sure, you wouldn't want to directly manipulate JSON, but there's no reason to do a bunch of work to save some integers.
 &lt;/p&gt;&lt;p&gt;
 &lt;em&gt;File manipulation&lt;/em&gt; is similarly neglected. 
 The filesystem is the original NoSQL database, but you seldom get more then a wrapper around C's readdir().
