@@ -5,7 +5,122 @@
     <link>https://buttondown.com/hillelwayne</link>
     <description>&lt;!-- buttondown-editor-mode: fancy --&gt;&lt;p&gt;Hi, I'm Hillel. This is the newsletter version of &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://www.hillelwayne.com"&gt;my website&lt;/a&gt;. I post all website updates here. I also post weekly content just for the newsletter, on topics like&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;p&gt;Formal Methods&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Software History and Culture&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Fringetech and exotic tooling&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;The philosophy and theory of software engineering&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;You can see the archive of all public essays &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://buttondown.email/hillelwayne/archive/"&gt;here&lt;/a&gt;.&lt;/p&gt;</description>
     <language>en</language>
-    <lastBuildDate>Tue, 10 Mar 2026 16:04:47 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 10 Mar 2026 17:51:37 +0000</lastBuildDate>
+    <item>
+      <title>LLMs are bad at vibing specifications</title>
+      <link>https://buttondown.com/hillelwayne/archive/llms-are-bad-at-vibing-specifications/</link>
+      <description>
+&lt;h3&gt;No newsletter next week&lt;/h3&gt;
+&lt;p&gt;I'll be speaking at &lt;a href="https://qconlondon.com/" target="_blank"&gt;InfoQ London&lt;/a&gt;. But see below for a book giveaway!&lt;/p&gt;
+&lt;hr /&gt;
+&lt;h1&gt;LLMs are bad at vibing specifications&lt;/h1&gt;
+&lt;p&gt;About a year ago I wrote &lt;a href="https://buttondown.com/hillelwayne/archive/ai-is-a-gamechanger-for-tla-users/" target="_blank"&gt;AI is a gamechanger for TLA+ users&lt;/a&gt;, which argued that AI are a "specification force multiplier". That was written from the perspective an TLA+ expert using these tools. A full &lt;a href="https://github.com/search?q=path%3A*.tla+NOT+is%3Afork+claude&amp;amp;type=code" target="_blank"&gt;4% of Github TLA+ specs&lt;/a&gt; now have the word "Claude" somewhere in them. This is interesting to me, because it suggests there was always an interest in formal methods, people just lacked the skills to do it.  &lt;/p&gt;
+&lt;p&gt;It's also interesting because it gives me a sense of what happens when beginners use AI to write formal specs. It's not good.&lt;/p&gt;
+&lt;p&gt;As a case study, we'll use &lt;a href="https://github.com/myProjectsRavi/sentinel-protocol/tree/main/docs/formal/specs" target="_blank"&gt;this project&lt;/a&gt;, which is kind of enough to have vibed out TLA+ and Alloy specs.&lt;/p&gt;
+&lt;h3&gt;Looking at a project&lt;/h3&gt;
+&lt;p&gt;&lt;a href="https://github.com/myProjectsRavi/sentinel-protocol/blob/main/docs/formal/specs/threat-intel-mesh.als" target="_blank"&gt;Starting with the Alloy spec&lt;/a&gt;. Here it is in its entirety:&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;module ThreatIntelMesh
+
+sig Node {}
+
+one sig LocalNode extends Node {}
+
+sig Snapshot {
+  owner: one Node,
+  signed: one Bool,
+  signatures: set Signature
+}
+
+sig Signature {}
+
+sig Policy {
+  allowUnsignedImport: one Bool
+}
+
+pred canImport[p: Policy, s: Snapshot] {
+  (p.allowUnsignedImport = True) or (s.signed = True)
+}
+
+assert UnsignedImportMustBeDenied {
+  all p: Policy, s: Snapshot |
+    p.allowUnsignedImport = False and s.signed = False implies not canImport[p, s]
+}
+
+assert SignedImportMayBeAccepted {
+  all p: Policy, s: Snapshot |
+    s.signed = True implies canImport[p, s]
+}
+
+check UnsignedImportMustBeDenied for 5
+check SignedImportMayBeAccepted for 5
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p class="empty-line" style="height:16px; margin:0px !important;"&gt;&lt;/p&gt;
+&lt;p&gt;Couple of things to note here: first of all, this doesn't actually compile. It's using the &lt;a href="https://alloy.readthedocs.io/en/latest/modules/boolean.html" target="_blank"&gt;Boolean&lt;/a&gt; standard module so needs &lt;code&gt;open util/boolean&lt;/code&gt; to function. Second, Boolean is the wrong approach here; you're supposed to use subtyping. &lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;sig Snapshot {
+&lt;span class="w"&gt; &lt;/span&gt; owner: one Node,
+&lt;span class="gd"&gt;- signed: one Bool,&lt;/span&gt;
+&lt;span class="w"&gt; &lt;/span&gt; signatures: set Signature
+}
+
+&lt;span class="gi"&gt;+ sig SignedSnapshot in Snapshot {}&lt;/span&gt;
+
+
+pred canImport[p: Policy, s: Snapshot] {
+&lt;span class="gd"&gt;- s.signed = True&lt;/span&gt;
+&lt;span class="gi"&gt;+ s in SignedSnapshot&lt;/span&gt;
+}
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;So we know the person did not actually run these specs. This is &lt;em&gt;somewhat&lt;/em&gt; less of a problem in TLA+, which has an official MCP server that lets the agent run model checking. Even so, I regularly see specs that I'm pretty sure won't model check, with things like using &lt;code&gt;Reals&lt;/code&gt; or assuming &lt;code&gt;NULL&lt;/code&gt; is a built-in and not a user-defined constant.&lt;/p&gt;
+&lt;p&gt;The bigger problem with the spec is that &lt;code&gt;UnsignedImportMustBeDenied&lt;/code&gt; and &lt;code&gt;SignedImportMayBeAccepted&lt;/code&gt; &lt;em&gt;don't actually do anything&lt;/em&gt;. &lt;code&gt;canImport&lt;/code&gt; is defined as &lt;code&gt;P || Q&lt;/code&gt;. &lt;code&gt;UnsignedImportMustBeDenied&lt;/code&gt; checks that &lt;code&gt;!P &amp;amp;&amp;amp; !Q =&amp;gt; !canImport&lt;/code&gt;. &lt;code&gt;SignedImportMayBeAccepted&lt;/code&gt; checks that &lt;code&gt;P =&amp;gt; canImport&lt;/code&gt;. These are tautologically true! If they do anything at all, it is only checking that &lt;code&gt;canImport&lt;/code&gt; was defined correctly. &lt;/p&gt;
+&lt;p&gt;You see the same thing in the &lt;a href="https://github.com/myProjectsRavi/sentinel-protocol/blob/main/docs/formal/specs/serialization-firewall.tla" target="_blank"&gt;TLA+ specs&lt;/a&gt;, too:&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;GadgetPayload ==
+  /\ gadgetDetected&amp;#39; = TRUE
+  /\ depth&amp;#39; \in 0..(MaxDepth + 5)
+  /\ UNCHANGED allowlistedFormat
+  /\ decision&amp;#39; = &amp;quot;block&amp;quot;
+
+NoExploitAllowed == gadgetDetected =&amp;gt; decision = &amp;quot;block&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p class="empty-line" style="height:16px; margin:0px !important;"&gt;&lt;/p&gt;
+&lt;p&gt;The AI is only writing "obvious properties", which fail for reasons like "we missed a guard clause" or "we forgot to update a variable". It does not seem to be good at writing "subtle" properties that fail due to concurrency, nondeterminism, or bad behavior separated by several steps. Obvious properties are useful for orienting yourself and ensuring the system behaves like you expect, but the actual value in using formal methods comes from the subtle properties. &lt;/p&gt;
+&lt;p&gt;(This ties into &lt;a href="https://buttondown.com/hillelwayne/archive/some-tests-are-stronger-than-others/" target="_blank"&gt;Strong and Weak Properties&lt;/a&gt;. LLM properties are weak, intended properties need to be strong.)&lt;/p&gt;
+&lt;p&gt;This is a problem I see in almost every FM spec written by AI. LLMs aren't doing one of the core features of a spec. Articles like &lt;a href="https://martin.kleppmann.com/2025/12/08/ai-formal-verification.html" target="_blank"&gt;Prediction: AI will make formal verification go mainstream&lt;/a&gt; and &lt;a href="https://leodemoura.github.io/blog/2026/02/28/when-ai-writes-the-worlds-software.html" target="_blank"&gt;When AI Writes the World's Software, Who Verifies It?&lt;/a&gt; argue that LLMs will make formal methods go mainstream, but being easily able to write specifications doesn't help with correctness if the specs don't actually verify anything.&lt;/p&gt;
+&lt;h3&gt;Is this a user error?&lt;/h3&gt;
+&lt;div class="subscribe-form"&gt;&lt;/div&gt;
+&lt;p&gt;I first got interested in LLMs and TLA+ from &lt;a href="https://zfhuang99.github.io/github%20copilot/formal%20verification/tla+/2025/05/24/ai-revolution-in-distributed-systems.html" target="_blank"&gt;The Coming AI Revolution in Distributed Systems&lt;/a&gt;. The author of that later &lt;a href="https://github.com/zfhuang99/lamport-agent/blob/main/spec/CRAQ/CRAQ.tla" target="_blank"&gt;vibecoded a spec&lt;/a&gt; with a considerably more complex property:&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;NoStaleStrictRead ==
+  \A i \in 1..Len(eventLog) :
+    LET ev == eventLog[i] IN
+      ev.type = &amp;quot;read&amp;quot; =&amp;gt;
+        LET c == ev.chunk IN
+        LET v == ev.version IN
+        /\ \A j \in 1..i :
+             LET evC == eventLog[j] IN
+               evC.type = &amp;quot;commit&amp;quot; /\ evC.chunk = c =&amp;gt; evC.version &amp;lt;= v
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This is a lot more complicated than the &lt;code&gt;(P =&amp;gt; Q &amp;amp;&amp;amp; P) =&amp;gt; Q&lt;/code&gt; properties I've seen! It could be because &lt;a href="https://github.com/deepseek-ai/3FS/tree/main/specs/DataStorage" target="_blank"&gt;the corresponding system already had a complete spec written in P&lt;/a&gt;. But it could also be that Cheng Huang is already an expert specifier, meaning he can get more out of an LLM than an ordinary developer can. I've also noticed that I can usually coax an LLM to do more interesting things than most of my clients can. Which is good for my current livelihood, but bad for the hope of LLMs making formal methods mainstream. If you need to know formal methods to get the LLM to do formal methods, is that really helping?&lt;/p&gt;
+&lt;p&gt;(Yes, if it lowers the skill threshold-- means you can apply FM with 20 hours of practice instead of 80. But the jury's still out on how &lt;em&gt;much&lt;/em&gt; it lowers the threshold. What if it only lowers it from 80 to 75?) &lt;/p&gt;
+&lt;p&gt;On the other hand, there also seem to be some properties that AI struggles with, even with explicit instructions. Last week a client and I tried to get Claude to generate a good &lt;a href="https://www.hillelwayne.com/post/safety-and-liveness/" target="_blank"&gt;liveness&lt;/a&gt; or &lt;a href="https://www.hillelwayne.com/post/action-properties/" target="_blank"&gt;action&lt;/a&gt; property instead of a standard obvious invariant, and it just couldn't. Training data issue? Something in the innate complexity of liveness? It's not clear yet. These properties are even more "subtle" than most invariants, so maybe that's it.&lt;/p&gt;
+&lt;p&gt;On the other other hand, this is all as of March 2026. Maybe this whole article will be laughably obsolete by June. &lt;/p&gt;
+&lt;hr /&gt;
+&lt;h3&gt;&lt;a href="https://logicforprogrammers.com" target="_blank"&gt;Logic for Programmers&lt;/a&gt; Giveaway&lt;/h3&gt;
+&lt;p&gt;Last week's giveaway raised a few issues. First, the New World copies were all taken before all of the emails went out, so a lot of people did not even get a chance to try for a book. Second, due to a Leanpub bug the Europe coupon scheduled for 10 AM UTC actually activated at 10 AM my time, which was early evening for Europe. Third, everybody in the APAC region got left out.&lt;/p&gt;
+&lt;p&gt;So, since I'm not doing a newsletter next week, let's have another giveaway:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="https://leanpub.com/logic/c/E5A55F7B482C3" target="_blank"&gt;This coupon&lt;/a&gt; will go up 2026-03-16 at 11:00 UTC, which should be noon Central European Time, and be good for ten books (five for this giveaway, five to account for last week's bug).&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://leanpub.com/logic/c/ADC664C95B6D1" target="_blank"&gt;This coupon&lt;/a&gt; will go up 2026-03-17 at 04:00 UTC, which should be noon Beijing Time, and be good for five books.&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://leanpub.com/logic/c/U1250212A9070" target="_blank"&gt;This coupon&lt;/a&gt; will go up 2026-03-17 at 17:00 UTC, which should be noon Central US Time, and also be good for five books.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;I think that gives the best chance of everybody getting at least a chance of a book, while being resilient to timezone shenanigans due to travel / Leanpub dropping bugfixes / daylight savings / whatever. &lt;/p&gt;
+&lt;p&gt;(No guarantees that later "no newsletter" weeks will have giveaways! This is a gimmick)&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/llms-are-bad-at-vibing-specifications/</guid>
+      <pubDate>Tue, 10 Mar 2026 17:12:30 +0000</pubDate>
+    </item>
     <item>
       <title>Free Books</title>
       <link>https://buttondown.com/hillelwayne/archive/free-books/</link>
@@ -1608,116 +1723,6 @@ Encountered "NotThree" at line 6, column 1
 </description>
       <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/ai-is-a-gamechanger-for-tla-users/</guid>
       <pubDate>Thu, 05 Jun 2025 14:59:11 +0000</pubDate>
-    </item>
-    <item>
-      <title>What does "Undecidable" mean, anyway</title>
-      <link>https://buttondown.com/hillelwayne/archive/what-does-undecidable-mean-anyway/</link>
-      <description>
-&lt;h3&gt;Systems Distributed&lt;/h3&gt;
-&lt;p&gt;I'll be speaking at &lt;a href="https://systemsdistributed.com/" target="_blank"&gt;Systems Distributed&lt;/a&gt; next month! The talk is brand new and will aim to showcase some of the formal methods mental models that would be useful in mainstream software development. It has added some extra stress on my schedule, though, so expect the next two monthly releases of &lt;em&gt;Logic for Programmers&lt;/em&gt; to be mostly minor changes.&lt;/p&gt;
-&lt;h2&gt;What does "Undecidable" mean, anyway&lt;/h2&gt;
-&lt;p&gt;Last week I read &lt;a href="https://liamoc.net/forest/loc-000S/index.xml" target="_blank"&gt;Against Curry-Howard Mysticism&lt;/a&gt;, which is a solid article I recommend reading. But this newsletter is actually about &lt;a href="https://lobste.rs/s/n0whur/against_curry_howard_mysticism#c_lbts57" target="_blank"&gt;one comment&lt;/a&gt;:&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;I like to see posts like this because I often feel like I can’t tell the difference between BS and a point I’m missing. Can we get one for questions like “Isn’t XYZ (Undecidable|NP-Complete|PSPACE-Complete)?” &lt;/p&gt;
-&lt;/blockquote&gt;
-&lt;p&gt;I've already written one of these for &lt;a href="https://www.hillelwayne.com/post/np-hard/" target="_blank"&gt;NP-complete&lt;/a&gt;, so let's do one for "undecidable". Step one is to pull a technical definition from the book &lt;a href="https://link.springer.com/book/10.1007/978-1-4612-1844-9" target="_blank"&gt;&lt;em&gt;Automata and Computability&lt;/em&gt;&lt;/a&gt;:&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;A property P of strings is said to be decidable if ... there is a total Turing machine that accepts input strings that have property P and rejects those that do not. (pg 220)&lt;/p&gt;
-&lt;/blockquote&gt;
-&lt;p&gt;Step two is to translate the technical computer science definition into more conventional programmer terms. Warning, because this is a newsletter and not a blog post, I might be a little sloppy with terms.&lt;/p&gt;
-&lt;h3&gt;Machines and Decision Problems&lt;/h3&gt;
-&lt;p&gt;In automata theory, all inputs to a "program" are strings of characters, and all outputs are "true" or "false". A program "accepts" a string if it outputs "true", and "rejects" if it outputs "false". You can think of this as automata studying all pure functions of type &lt;code&gt;f :: string -&amp;gt; boolean&lt;/code&gt;. Problems solvable by finding such an &lt;code&gt;f&lt;/code&gt; are called "decision problems".&lt;/p&gt;
-&lt;p&gt;This covers more than you'd think, because we can bootstrap more powerful functions from these. First, as anyone who's programmed in bash knows, strings can represent any other data. Second, we can fake non-boolean outputs by instead checking if a certain computation gives a certain result. For example, I can reframe the function &lt;code&gt;add(x, y) = x + y&lt;/code&gt; as a decision problem like this:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;IS_SUM(str) {
-    x, y, z = split(str, "#")
-    return x + y == z
-}
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Then because &lt;code&gt;IS_SUM("2#3#5")&lt;/code&gt; returns true, we know &lt;code&gt;2 + 3 == 5&lt;/code&gt;, while &lt;code&gt;IS_SUM("2#3#6")&lt;/code&gt; is false. Since we can bootstrap parameters out of strings, I'll just say it's &lt;code&gt;IS_SUM(x, y, z)&lt;/code&gt; going forward.&lt;/p&gt;
-&lt;p&gt;A big part of automata theory is studying different models of computation with different strengths. One of the weakest is called &lt;a href="https://en.wikipedia.org/wiki/Deterministic_finite_automaton" target="_blank"&gt;"DFA"&lt;/a&gt;. I won't go into any details about what DFA actually can do, but the important thing is that it &lt;em&gt;can't&lt;/em&gt; solve &lt;code&gt;IS_SUM&lt;/code&gt;. That is, if you give me a DFA that takes inputs of form &lt;code&gt;x#y#z&lt;/code&gt;, I can always find an input where the DFA returns true when &lt;code&gt;x + y != z&lt;/code&gt;, &lt;em&gt;or&lt;/em&gt; an input which returns false when &lt;code&gt;x + y == z&lt;/code&gt;.&lt;/p&gt;
-&lt;p&gt;It's really important to keep this model of "solve" in mind: a program solves a problem if it correctly returns true on all true inputs and correctly returns false on all false inputs.&lt;/p&gt;
-&lt;h3&gt;(total) Turing Machines&lt;/h3&gt;
-&lt;p&gt;A Turing Machine (TM) is a particular type of computation model. It's important for two reasons: &lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;
-&lt;p&gt;By the &lt;a href="https://en.wikipedia.org/wiki/Church%E2%80%93Turing_thesis" target="_blank"&gt;Church-Turing thesis&lt;/a&gt;, a Turing Machine is the "upper bound" of how powerful (physically realizable) computational models can get. This means that if an actual real-world programming language can solve a particular decision problem, so can a TM. Conversely, if the TM &lt;em&gt;can't&lt;/em&gt; solve it, neither can the programming language.&lt;sup id="fnref:caveat"&gt;&lt;a class="footnote-ref" href="#fn:caveat"&gt;1&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;It's possible to write a Turing machine that takes &lt;em&gt;a textual representation of another Turing machine&lt;/em&gt; as input, and then simulates that Turing machine as part of its computations. &lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;Property (1) means that we can move between different computational models of equal strength, proving things about one to learn things about another. That's why I'm able to write &lt;code&gt;IS_SUM&lt;/code&gt; in a pseudocode instead of writing it in terms of the TM computational model (and why I was able to use &lt;code&gt;split&lt;/code&gt; for convenience). &lt;/p&gt;
-&lt;p&gt;Property (2) does several interesting things. First of all, it makes it possible to compose Turing machines. Here's how I can roughly ask if a given number is the sum of two primes, with "just" addition and boolean functions:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;IS_SUM_TWO_PRIMES(z):
-    x := 1
-    y := 1
-    loop {
-        if x &amp;gt; z {return false}
-        if IS_PRIME(x) {
-            if IS_PRIME(y) {
-                if IS_SUM(x, y, z) {
-                    return true;
-                }
-            }
-        }
-        y := y + 1
-        if y &amp;gt; x {
-            x := x + 1
-            y := 0
-        }
-    }
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Notice that without the &lt;code&gt;if x &amp;gt; z {return false}&lt;/code&gt;, the program would loop forever on &lt;code&gt;z=2&lt;/code&gt;. A TM that always halts for all inputs is called &lt;strong&gt;total&lt;/strong&gt;.&lt;/p&gt;
-&lt;p&gt;Property (2) also makes "Turing machines" a possible input to functions, meaning that we can now make decision problems about the behavior of Turing machines. For example, "does the TM &lt;code&gt;M&lt;/code&gt; either accept or reject &lt;code&gt;x&lt;/code&gt; within ten steps?"&lt;sup id="fnref:backticks"&gt;&lt;a class="footnote-ref" href="#fn:backticks"&gt;2&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;IS_DONE_IN_TEN_STEPS(M, x) {
-    for (i = 0; i &amp;lt; 10; i++) {
-        `simulate M(x) for one step`
-        if(`M accepted or rejected`) {
-            return true
-        }
-    }
-    return false
-}
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;h3&gt;Decidability and Undecidability&lt;/h3&gt;
-&lt;p&gt;Now we have all of the pieces to understand our original definition:&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;A property P of strings is said to be decidable if ... there is a total Turing machine that accepts input strings that have property P and rejects those that do not. (220)&lt;/p&gt;
-&lt;/blockquote&gt;
-&lt;p&gt;Let &lt;code&gt;IS_P&lt;/code&gt; be the decision problem "Does the input satisfy P"? Then &lt;code&gt;IS_P&lt;/code&gt; is decidable if it can be solved by a Turing machine, ie, I can provide some &lt;code&gt;IS_P(x)&lt;/code&gt; machine that &lt;em&gt;always&lt;/em&gt; accepts if &lt;code&gt;x&lt;/code&gt; has property P, and always rejects if &lt;code&gt;x&lt;/code&gt; doesn't have property P. If I can't do that, then &lt;code&gt;IS_P&lt;/code&gt; is undecidable. &lt;/p&gt;
-&lt;p&gt;&lt;code&gt;IS_SUM(x, y, z)&lt;/code&gt; and &lt;code&gt;IS_DONE_IN_TEN_STEPS(M, x)&lt;/code&gt; are decidable properties. Is &lt;code&gt;IS_SUM_TWO_PRIMES(z)&lt;/code&gt; decidable? Some analysis shows that our corresponding program will either find a solution, or have &lt;code&gt;x&amp;gt;z&lt;/code&gt; and return false. So yes, it is decidable.&lt;/p&gt;
-&lt;p&gt;Notice there's an asymmetry here. To prove some property is decidable, I need just to need to find &lt;em&gt;one&lt;/em&gt; program that correctly solves it. To prove some property is undecidable, I need to show that any possible program, no matter what it is, doesn't solve it.&lt;/p&gt;
-&lt;p&gt;So with that asymmetry in mind, do are there &lt;em&gt;any&lt;/em&gt; undecidable problems? Yes, quite a lot. Recall that Turing machines can accept encodings of other TMs as input, meaning we can write a TM that checks &lt;em&gt;properties of Turing machines&lt;/em&gt;. And, by &lt;a href="https://en.wikipedia.org/wiki/Rice%27s_theorem" target="_blank"&gt;Rice's Theorem&lt;/a&gt;, almost every nontrivial semantic&lt;sup id="fnref:nontrivial"&gt;&lt;a class="footnote-ref" href="#fn:nontrivial"&gt;3&lt;/a&gt;&lt;/sup&gt; property of Turing machines is undecidable. The conventional way to prove this is to first find a single undecidable property &lt;code&gt;H&lt;/code&gt;, and then use that to bootstrap undecidability of other properties.&lt;/p&gt;
-&lt;p&gt;The canonical and most famous example of an undecidable problem is the &lt;a href="https://en.wikipedia.org/wiki/Halting_problem" target="_blank"&gt;Halting problem&lt;/a&gt;: "does machine M halt on input i?" It's pretty easy to prove undecidable, and easy to use it to bootstrap other undecidability properties. But again, &lt;em&gt;any&lt;/em&gt; nontrivial property is undecidable. Checking a TM is total is undecidable. Checking a TM accepts &lt;em&gt;any&lt;/em&gt; inputs is undecidable. Checking a TM solves &lt;code&gt;IS_SUM&lt;/code&gt; is undecidable. Etc etc etc.&lt;/p&gt;
-&lt;h3&gt;What this doesn't mean in practice&lt;/h3&gt;
-&lt;p&gt;I often see the halting problem misconstrued as "it's impossible to tell if a program will halt before running it." &lt;strong&gt;This is wrong&lt;/strong&gt;. The halting problem says that we cannot create an algorithm that, when applied to an arbitrary program, tells us whether the program will halt or not. It is absolutely possible to tell if many programs will halt or not. It's possible to find entire subcategories of programs that are guaranteed to halt. It's possible to say "a program constructed following constraints XYZ is guaranteed to halt." &lt;/p&gt;
-&lt;p&gt;The actual consequence of undecidability is more subtle. If we want to know if a program has property P, undecidability tells us&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;We will have to spend time and mental effort to determine if it has P&lt;/li&gt;
-&lt;li&gt;We may not be successful.&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;This is subtle because we're so used to living in a world where everything's undecidable that we don't really consider what the counterfactual would be like. In such a world there might be no need for Rust, because "does this C program guarantee memory-safety" is a decidable property. The entire field of formal verification could be unnecessary, as we could just check properties of arbitrary programs directly. We could automatically check if a change in a program preserves all existing behavior. Lots of famous math problems could be solved overnight. &lt;/p&gt;
-&lt;p&gt;(This to me is a strong "intuitive" argument for why the halting problem is undecidable: a halt detector can be trivially repurposed as a program optimizer / theorem-prover / bcrypt cracker / chess engine. It's &lt;em&gt;too powerful&lt;/em&gt;, so we should expect it to be impossible.)&lt;/p&gt;
-&lt;p&gt;But because we don't live in that world, all of those things are hard problems that take effort and ingenuity to solve, and even then we often fail.&lt;/p&gt;
-&lt;h3&gt;Update for the Internet&lt;/h3&gt;
-&lt;p&gt;This was sent as a weekly newsletter, which is usually on topics like &lt;a href="https://buttondown.com/hillelwayne/archive/why-do-we-call-it-boilerplate-code" target="_blank"&gt;software history&lt;/a&gt;, &lt;a href="https://buttondown.com/hillelwayne/archive/the-seven-specification-ur-languages/" target="_blank"&gt;formal methods&lt;/a&gt;, &lt;a href="https://buttondown.com/hillelwayne/archive/i-formally-modeled-dreidel-for-no-good-reason/" target="_blank"&gt;unusual technologies&lt;/a&gt;, and the &lt;a href="https://buttondown.com/hillelwayne/archive/be-suspicious-of-success/" target="_blank"&gt;theory of software engineering&lt;/a&gt;. You &lt;a href="https://buttondown.email/hillelwayne/" target="_blank"&gt;can subscribe here&lt;/a&gt;.&lt;/p&gt;
-&lt;div class="footnote"&gt;
-&lt;hr/&gt;
-&lt;ol&gt;
-&lt;li id="fn:caveat"&gt;
-&lt;p&gt;To be pendantic, a TM can't do things like "scrape a webpage" or "render a bitmap", but we're only talking about computational decision problems here. &lt;a class="footnote-backref" href="#fnref:caveat" title="Jump back to footnote 1 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:backticks"&gt;
-&lt;p&gt;One notation I've adopted in &lt;em&gt;Logic for Programmers&lt;/em&gt; is marking abstract sections of pseudocode with backticks. It's really handy! &lt;a class="footnote-backref" href="#fnref:backticks" title="Jump back to footnote 2 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:nontrivial"&gt;
-&lt;p&gt;Nontrivial meaning "at least one TM has this property and at least one TM doesn't have this property". Semantic meaning "related to whether the TM accepts, rejects, or runs forever on a class of inputs". &lt;code&gt;IS_DONE_IN_TEN_STEPS&lt;/code&gt; is &lt;em&gt;not&lt;/em&gt; a semantic property, as it doesn't tell us anything about inputs that take longer than ten steps. &lt;a class="footnote-backref" href="#fnref:nontrivial" title="Jump back to footnote 3 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/what-does-undecidable-mean-anyway/</guid>
-      <pubDate>Wed, 28 May 2025 19:34:02 +0000</pubDate>
     </item>
   </channel>
 </rss>
