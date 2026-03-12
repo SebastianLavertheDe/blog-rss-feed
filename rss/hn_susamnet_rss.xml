@@ -5,9 +5,250 @@
     <link>https://susam.net/</link>
     <description>Susam's Feed</description>
     <language>en</language>
-    <lastBuildDate>Thu, 12 Mar 2026 02:33:04 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 12 Mar 2026 04:51:35 +0000</lastBuildDate>
     <item>
-      <title>HN Skins 0.4.0 - Black Bar Updates</title>
+      <title>Git Checkout, Reset and Restore</title>
+      <link>https://susam.net/git-checkout-reset-restore.html</link>
+      <description>
+
+&lt;p&gt;
+  I have always used the &lt;code&gt;git checkout&lt;/code&gt; and &lt;code&gt;git
+  reset&lt;/code&gt; commands to reset my working tree or index but since
+  Git 2.23 there has been a &lt;code&gt;git restore&lt;/code&gt; command available
+  for these purposes.  In this post, I record how some of the 'older'
+  commands I use map to the new ones.  Well, the new commands aren't
+  exactly new since Git 2.23 was released in 2019, so this post is
+  perhaps six years too late.  Even so, I want to write this down for
+  future reference.  It is worth noting that the old and new commands
+  are not always equivalent.  I'll talk more about this briefly as we
+  discuss the commands.  However, they can be used to perform similar
+  tasks.  Some of these tasks are discussed below.
+&lt;/p&gt;
+&lt;h2 id="contents"&gt;Contents&lt;a href="#contents"&gt;&lt;/a&gt;&lt;/h2&gt;
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href="#experimental-setup"&gt;Experimental Setup&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href="#reset-working-directory"&gt;Reset the Working Tree&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href="#reset-index"&gt;Reset the Index&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href="#reset-working-directory-and-index"&gt;Reset the Working Tree and Index&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href="#summary"&gt;Summary&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id="experimental-setup"&gt;Experimental Setup&lt;a href="#experimental-setup"&gt;&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;
+  To experiment quickly, we first create an example Git repository.
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;mkdir foo/; cd foo/; touch a b c
+git init; git add a b c; git commit -m hello&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  Now we make changes to the files and stage some of the changes.  We
+  then add more unstaged changes to one of the staged files.
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;echo x | tee -a a b c; touch d; git add a b d; echo x | tee -a b&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  At this point, the working tree and index look like this:
+&lt;/p&gt;
+&lt;pre&gt;&lt;samp&gt;$ &lt;kbd&gt;git status&lt;/kbd&gt;
+On branch main
+Changes to be committed:
+  (use "git restore --staged &amp;lt;file&amp;gt;..." to unstage)
+        &lt;span class="c2"&gt;modified:   a
+        modified:   b
+        new file:   d&lt;/span&gt;
+
+Changes not staged for commit:
+  (use "git add &amp;lt;file&amp;gt;..." to update what will be committed)
+  (use "git restore &amp;lt;file&amp;gt;..." to discard changes in working directory)
+        &lt;span class="c4"&gt;modified:   b
+        modified:   c&lt;/span&gt;&lt;/samp&gt;&lt;/pre&gt;
+&lt;p&gt;
+  File &lt;code&gt;a&lt;/code&gt; has staged changes.  File &lt;code&gt;b&lt;/code&gt; has
+  both staged and unstaged changes.  File &lt;code&gt;c&lt;/code&gt; has only
+  unstaged changes.  File &lt;code&gt;d&lt;/code&gt; is a new staged file.  In
+  each experiment below, we will work with this setup.
+&lt;/p&gt;
+&lt;p&gt;
+  All results discussed in this post were obtained using Git 2.47.3 on
+  Debian 13.2 (Trixie).
+&lt;/p&gt;
+&lt;h2 id="reset-working-directory"&gt;Reset the Working Tree&lt;a href="#reset-working-directory"&gt;&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;
+  As a reminder, we will always use the following command between
+  experiments to ensure that we restore the experimental setup each
+  time:
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;echo x | tee -a a b c; touch d; git add a b d; echo x | tee -a b&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  To discard the changes in the working tree and reset the files in
+  the working tree from the index, I typically run:
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;git checkout .&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  However, the modern way to do this is to use the following command:
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;git restore .&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  Both commands leave the working tree and the index in the following
+  state:
+&lt;/p&gt;
+&lt;pre&gt;&lt;samp&gt;$ &lt;kbd&gt;git status&lt;/kbd&gt;
+On branch main
+Changes to be committed:
+  (use "git restore --staged &amp;lt;file&amp;gt;..." to unstage)
+        &lt;span class="c2"&gt;modified:   a
+        modified:   b
+        new file:   d&lt;/span&gt;&lt;/samp&gt;&lt;/pre&gt;
+&lt;p&gt;
+  Both commands operate only on the working tree.  They do not alter
+  the index.  Therefore the staged changes remain intact in the index.
+&lt;/p&gt;
+&lt;h2 id="reset-index"&gt;Reset the Index&lt;a href="#reset-index"&gt;&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;
+  Another common situation is when we have staged some changes but
+  want to unstage them.  First, we restore the experimental setup:
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;echo x | tee -a a b c; touch d; git add a b d; echo x | tee -a b&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  I normally run the following command to do so:
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;git reset&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  The modern way to do this is:
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;git restore -S .&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  Both commands leave the working tree and the index in the following
+  state:
+&lt;/p&gt;
+&lt;pre&gt;&lt;samp&gt;$ &lt;kbd&gt;git status&lt;/kbd&gt;
+On branch main
+Changes not staged for commit:
+  (use "git add &amp;lt;file&amp;gt;..." to update what will be committed)
+  (use "git restore &amp;lt;file&amp;gt;..." to discard changes in working directory)
+        &lt;span class="c4"&gt;modified:   a
+        modified:   b
+        modified:   c&lt;/span&gt;
+
+Untracked files:
+  (use "git add &amp;lt;file&amp;gt;..." to include in what will be committed)
+        &lt;span class="c4"&gt;d&lt;/span&gt;
+
+no changes added to commit (use "git add" and/or "git commit -a")&lt;/samp&gt;&lt;/pre&gt;
+&lt;p&gt;
+  The &lt;code&gt;-S&lt;/code&gt; (&lt;code&gt;--staged&lt;/code&gt;) option tells &lt;code&gt;git
+  restore&lt;/code&gt; to operate on the index (not the working tree) and
+  reset the index entries for the specified files to match the
+  version in &lt;code&gt;HEAD&lt;/code&gt;.  The unstaged changes remain intact as
+  modified files in the working tree.  With the &lt;code&gt;-S&lt;/code&gt;
+  option, no changes are made to the working tree.
+&lt;/p&gt;
+&lt;p&gt;
+  From the arguments we can see that the old and new commands are not
+  exactly equivalent.  Without any arguments, the &lt;code&gt;git
+  reset&lt;/code&gt; command resets the entire index to &lt;code&gt;HEAD&lt;/code&gt;,
+  so all staged changes become unstaged.  Similarly, when we run
+  &lt;code&gt;git restore -S&lt;/code&gt; without specifying a commit, branch or
+  tag using the &lt;code&gt;-s&lt;/code&gt; (&lt;code&gt;--source&lt;/code&gt;) option, it
+  defaults to resetting the index from &lt;code&gt;HEAD&lt;/code&gt;.
+  The &lt;code&gt;.&lt;/code&gt; at the end ensures that all paths under the
+  current directory are affected.  When we run the command at the
+  top-level directory of the repository, all paths are affected and
+  the entire index gets reset.  As a result, both the old and the new
+  commands accomplish the same result.
+&lt;/p&gt;
+&lt;h2 id="reset-working-directory-and-index"&gt;Reset the Working Tree and Index&lt;a href="#reset-working-directory-and-index"&gt;&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;
+  Once again, we restore the experimental setup.
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;echo x | tee -a a b c; touch d; git add a b d; echo x | tee -a b&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  This time we not only want to unstage the changes but also discard
+  the changes in the working tree.  In other words, we want to reset
+  both the working tree and the index from &lt;code&gt;HEAD&lt;/code&gt;.  This is
+  a dangerous operation because any uncommitted changes discarded in
+  this manner cannot be restored using Git.
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;git reset --hard&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  The modern way to do this is:
+&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;git restore -WS .&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;
+  The working tree is now clean:
+&lt;/p&gt;
+&lt;pre&gt;&lt;samp&gt;$ &lt;kbd&gt;git status&lt;/kbd&gt;
+On branch main
+nothing to commit, working tree clean&lt;/samp&gt;&lt;/pre&gt;
+&lt;p&gt;
+  The &lt;code&gt;-W&lt;/code&gt; or &lt;code&gt;--worktree&lt;/code&gt; option makes the
+  command operate on the working tree.  The &lt;code&gt;-S&lt;/code&gt; option
+  resets the index as described in the previous section.  As a
+  result, this command unstages any changes and discards any
+  modifications in the working tree.
+&lt;/p&gt;
+&lt;p&gt;
+  Note that when neither of these options is specified,
+  &lt;code&gt;-W&lt;/code&gt; is implied by default.  That's why the
+  bare &lt;code&gt;git restore .&lt;/code&gt; command in the previous section
+  discards the changes in the working tree.
+&lt;/p&gt;
+&lt;h2 id="summary"&gt;Summary&lt;a href="#summary"&gt;&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;
+  The following table summarises how the three pairs of commands
+  discussed above affect the working tree and the index, assuming the
+  commands are run at the top-level directory of a repository.
+&lt;/p&gt;
+&lt;div style="overflow: auto"&gt;
+  &lt;table class="grid" style="margin: 0"&gt;
+    &lt;thead&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Old&lt;/th&gt;
+        &lt;th&gt;New&lt;/th&gt;
+        &lt;th&gt;Working Tree&lt;/th&gt;
+        &lt;th&gt;Index&lt;/th&gt;
+      &lt;/tr&gt;
+    &lt;/thead&gt;
+    &lt;tbody&gt;
+      &lt;tr&gt;
+        &lt;td class="pre"&gt;&lt;code&gt;git checkout .&lt;/code&gt;&lt;/td&gt;
+        &lt;td class="pre"&gt;&lt;code&gt;git restore .&lt;/code&gt;&lt;/td&gt;
+        &lt;td&gt;Reset to match the index.&lt;/td&gt;
+        &lt;td&gt;No change.&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td class="pre"&gt;&lt;code&gt;git reset&lt;/code&gt;&lt;/td&gt;
+        &lt;td class="pre"&gt;&lt;code&gt;git restore -S .&lt;/code&gt;&lt;/td&gt;
+        &lt;td&gt;No change.&lt;/td&gt;
+        &lt;td&gt;Reset to match &lt;code&gt;HEAD&lt;/code&gt;.&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td class="pre"&gt;&lt;code&gt;git reset --hard&lt;/code&gt;&lt;/td&gt;
+        &lt;td class="pre"&gt;&lt;code&gt;git restore -SW .&lt;/code&gt;&lt;/td&gt;
+        &lt;td&gt;Reset to match &lt;code&gt;HEAD&lt;/code&gt;.&lt;/td&gt;
+        &lt;td&gt;Reset to match &lt;code&gt;HEAD&lt;/code&gt;.&lt;/td&gt;
+      &lt;/tr&gt;
+    &lt;/tbody&gt;
+  &lt;/table&gt;
+&lt;/div&gt;
+&lt;p&gt;
+  The &lt;code&gt;git restore&lt;/code&gt; command is meant to provide a clearer
+  interface for resetting the working tree and the index.  I still use
+  the older commands out of habit.  Perhaps I will adopt the new ones
+  in another six years, but at least I have the mapping written down
+  now.
+&lt;/p&gt;
+&lt;!-- ### --&gt;
+&lt;p&gt;
+  &lt;a href="https://susam.net/git-checkout-reset-restore.html"&gt;Read on website&lt;/a&gt; |
+  &lt;a href="https://susam.net/tag/git.html"&gt;#git&lt;/a&gt; |
+  &lt;a href="https://susam.net/tag/technology.html"&gt;#technology&lt;/a&gt; |
+  &lt;a href="https://susam.net/tag/how-to.html"&gt;#how-to&lt;/a&gt;
+&lt;/p&gt;
+
+</description>
+      <guid isPermaLink="true">gcrrp</guid>
+      <pubDate>Thu, 12 Mar 2026 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>HN Skins 0.4.0</title>
       <link>https://susam.net/code/news/hnskins/0.4.0.html</link>
       <description>
 
@@ -65,20 +306,20 @@
 &lt;p&gt;
   HN Skins 0.3.0 is a minor update to HN Skins, a web browser
   userscript that adds custom themes to Hacker News and allows you to
-  browse HN with a variety of visual styles. This release includes
-  fixes for a few issues that slipped through earlier versions. For
+  browse HN with a variety of visual styles.  This release includes
+  fixes for a few issues that slipped through earlier versions.  For
   example, the comment input textbox now uses the same font face and
-  size as the rest of the active theme. The colour of visited links
+  size as the rest of the active theme.  The colour of visited links
   has also been slightly muted to make it easier to distinguish them
-  from unvisited links. In addition, some skins have been renamed:
+  from unvisited links.  In addition, some skins have been renamed:
   Teletype is now called Courier and Nox is now called Midnight.
 &lt;/p&gt;
 &lt;p&gt;
   Further, the font face of several monospace based themes is now set
-  to &lt;code&gt;monospace&lt;/code&gt; instead of &lt;code&gt;courier&lt;/code&gt;. This
-  allows the browser's preferred monospace font to be used. The font
+  to &lt;code&gt;monospace&lt;/code&gt; instead of &lt;code&gt;courier&lt;/code&gt;.  This
+  allows the browser's preferred monospace font to be used.  The font
   face of the Courier skin (formerly known as Teletype) remains set
-  to &lt;code&gt;courier&lt;/code&gt;. This will never change because the sole
+  to &lt;code&gt;courier&lt;/code&gt;.  This will never change because the sole
   purpose of this skin is to celebrate this legendary font.
 &lt;/p&gt;
 &lt;p&gt;
@@ -1521,7 +1762,8 @@ undefined
 &lt;!-- ### --&gt;
 &lt;p&gt;
   &lt;a href="https://susam.net/attention-media-vs-social-networks.html"&gt;Read on website&lt;/a&gt; |
-  &lt;a href="https://susam.net/tag/miscellaneous.html"&gt;#miscellaneous&lt;/a&gt;
+  &lt;a href="https://susam.net/tag/web.html"&gt;#web&lt;/a&gt; |
+  &lt;a href="https://susam.net/tag/technology.html"&gt;#technology&lt;/a&gt;
 &lt;/p&gt;
 
 </description>
@@ -2683,48 +2925,6 @@ hello, world&lt;/samp&gt;&lt;/pre&gt;
 </description>
       <guid isPermaLink="true">crnax</guid>
       <pubDate>Mon, 05 Jan 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Now</title>
-      <link>https://susam.net/now.html</link>
-      <description>
-
-&lt;h1&gt;Now&lt;/h1&gt;
-&lt;p&gt;
-  Hello!  This is my &lt;a href="https://nownownow.com/about"&gt;now
-  page&lt;/a&gt; where I keep a brief record of what I am up to these days.
-&lt;/p&gt;
-&lt;p&gt;
-  As of 03 Jan 2026, I am:
-&lt;/p&gt;
-&lt;ul&gt;
-  &lt;li&gt;
-    Studying the book &lt;em&gt;Algebraic Graph Theory&lt;/em&gt; by Godsil and
-    Royle.
-  &lt;/li&gt;
-  &lt;li&gt;
-    Learning about the Coxeter graph and Tutte's 8-cage.
-  &lt;/li&gt;
-  &lt;li&gt;
-    Learning about distance-transitive graphs, in general.
-  &lt;/li&gt;
-  &lt;li&gt;
-    Maintaining this website.
-  &lt;/li&gt;
-  &lt;li&gt;
-    Occasionally posting comments to Hacker News
-    (&lt;a href="https://news.ycombinator.com/threads?id=susam"&gt;see here&lt;/a&gt;).
-  &lt;/li&gt;
-&lt;/ul&gt;
-&lt;!-- ### --&gt;
-&lt;p&gt;
-  &lt;a href="https://susam.net/now.html"&gt;Read on website&lt;/a&gt; |
-  &lt;a href="https://susam.net/tag/meta.html"&gt;#meta&lt;/a&gt;
-&lt;/p&gt;
-
-</description>
-      <guid isPermaLink="true">nowpg</guid>
-      <pubDate>Fri, 02 Jan 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
