@@ -5,7 +5,120 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Fri, 20 Mar 2026 02:31:17 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 20 Mar 2026 04:51:15 +0000</lastBuildDate>
+    <item>
+      <title>Life TV: Video with 2 bits to spare</title>
+      <link>https://maurycyz.com/projects/lifetv/</link>
+      <description>&lt;!-- mksite: start of content --&gt;
+&lt;p&gt;
+
+The Sony FD-30A has a very weird display:
+&lt;/p&gt;&lt;p&gt;
+&lt;img alt="Photograph of a pocket TV." src=/projects/lifetv/tv.jpg&gt;
+&lt;/p&gt;&lt;p&gt;
+On the surface, it looks like a normal CRT, except it's impossibly thin:
+the whole device is just under 4 cm thick.
+To do this, the tube is mounted sideways, and the phosphor is viewed from the back.
+&lt;/p&gt;&lt;p&gt;
+&lt;img alt="Diagram of the CRT in said TV" src=/projects/lifetv/crt.png&gt;
+&lt;/p&gt;&lt;p&gt;
+Unfortunately, this rather unique display is completely useless:
+There are no analog TV stations on my continent...
+at least not with that attitude.
+&lt;!-- snip --&gt;
+&lt;/p&gt;
+&lt;p&gt;
+&lt;em&gt;To get started, I grabbed my favorite 8-bit microcontroller&lt;/em&gt;, the &lt;a href=https://ww1.microchip.com/downloads/en/DeviceDoc/AVR128DA28-32-48-64-DataSheet-DS40002183B.pdf&gt;AVR128DA23&lt;/a&gt;.
+(soon to be unaffordable due to it's whooping 16k of onboard RAM)
+&lt;/p&gt;&lt;p&gt;
+The CPU has a maximum clock frequency of 24 MHz, everything else maxes out at 12 MHz.
+An IO pin can only be toggled on a clock edge, so the maximum output frequency is 6 MHz.
+&lt;/p&gt;&lt;p&gt;
+That's... not great.
+The lowest my TV can tune is 45 MHz.
+However, the micro&amp;shy;controller's output is a square wave,
+which contains frequency components at &lt;a href=https://lcamtuf.substack.com/p/square-waves-or-non-elephant-biology&gt;odd multiples&lt;/a&gt; of the nominal frequency.
+&lt;/p&gt;&lt;p&gt;
+These harmonics go quite high:
+a 6 MHz square wave can easily be picked up by a receiver tuned to 198 MHz (33rd multiple) several meters away.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;The microcontroller can create a signal in the (VHF) television band&lt;/em&gt; by toggling a pin.
+Video signals are inverted, so the output should be enabled to draw black, and disabled to draw white.
+&lt;/p&gt;&lt;p&gt;
+... except this doesn't quite work:
+&lt;/p&gt;&lt;p&gt;
+TVs need darker-then-black synchronization pulses to know when to begin each line and frame.
+The amplitude of these pulses must be higher then anything in the image so
+&amp;mdash; even if I only want to display black and white &amp;mdash;
+the signal needs to have at least three levels.
+&lt;/p&gt;&lt;p&gt;
+The easiest way to do this is with two resistors:
+&lt;/p&gt;&lt;p&gt;
+&lt;img src=/projects/lifetv/sch.png alt="Schematic showing a 100 ohm resistor between pin PA1 and the antenna, and a 50 ohm resistor between PA2 and the antenna."&gt;
+&lt;/p&gt;&lt;p&gt;
+Code: &lt;a href=/projects/lifetv/tv.c&gt;source&lt;/a&gt;, &lt;a href=/projects/lifetv/tv.elf&gt;binary&lt;/a&gt;
+&lt;/p&gt;&lt;p&gt;
+By changing which pins have the 6 MHz square wave and which ones are grounded, the MCU can produce 4 RF amplitudes:
+&lt;/p&gt;
+&lt;table style="width: 100%;"&gt;
+&lt;tr&gt;&lt;th&gt;PA1, PA2&lt;/th&gt;&lt;th&gt;Output&lt;/th&gt;&lt;th&gt;Color&lt;/th&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;RF, RF&lt;/td&gt;&lt;td&gt;1 VCC&lt;/td&gt;&lt;td&gt;Sync pulse&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;GND, RF&lt;/td&gt;&lt;td&gt;2/3 VCC&lt;/td&gt;&lt;td&gt;Black&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;RF, GND&lt;/td&gt;&lt;td&gt;1/3 VCC&lt;/td&gt;&lt;td&gt;Gray&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;GND, GND&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;White&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+&lt;p&gt;
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Because analog TVs don't have any storage&lt;/em&gt;, the video signal must have gaps during which the electron beam returns to the start of the image.
+During these gaps, the CPU doesn't have any transmitting to do, so I decided to run Conway's game of life:
+&lt;/p&gt;&lt;p&gt;
+&lt;video width=100% controls&gt;
+  [Video. See web or files directory: life.mp4]
+  &lt;source src=/projects/lifetv/life.mp4 type=video/mp4 /&gt;
+&lt;/video&gt;
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;It isn't really a game in the conventional sense.&lt;/em&gt;
+It's a grid of square cells with two states: "dead" or "alive".
+The "game" progresses by applying a three rules to the grid:
+&lt;/p&gt;&lt;p&gt;
+If a living cell has fewer than 2 or more then 3 living neighbors, it dies. (includes diagonals)
+If a dead cell has exactly 3 neighbors, it comes to life. (magic!)
+&lt;/p&gt;&lt;p&gt;
+Over time, these rules give rise to complex behavior: some patterns don't do anything, but others oscillate, move or even replicate.
+Simulating a random starting grid makes a good "screensaver", but I added some buttons to draw patterns:
+&lt;/p&gt;&lt;p&gt;
+&lt;video width=100% controls&gt;
+  [Video. See web or files directory: glider.mp4]
+  &lt;source src=/projects/lifetv/glider.mp4 type=video/mp4 /&gt;
+&lt;/video&gt;
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;The image is surprisingly good for how hacky the transmitter is&lt;/em&gt;, and can be received several meters away &amp;mdash;
+a testament as to just how noisy digital electronics are.
+&lt;/p&gt;&lt;p&gt;
+The switching frequency doesn't matter: what's important is the signal's rise time.
+Any microcontroller project with long wiring will be spewing junk in the hundreds of MHz or even low GHz.
+&lt;/p&gt;&lt;p&gt;
+The only difference is that my circuit carefully controls the interference to send information...
+but with a specially designed receiver, it's possible to snoop in on almost any circuit.
+&lt;/p&gt;&lt;p&gt;
+&lt;h1&gt;&lt;em&gt;Important considerations:&lt;/em&gt;&lt;/h1&gt;
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;The old TV bands aren't empty&lt;/em&gt;:
+The circuit is unlikely to cause any interference due to it's insignificant output power, but other transmitters can interfere with it.
+Depending on your local conditions, you might not be able to get it working at all.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;My TV hasn't been adjusted in decades,&lt;/em&gt; and microcontrollers don't have super accurate clocks.
+You might have to adjust the timings in the code.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;... it also has continuous tuning&lt;/em&gt;:
+If your doesn't (tuning dial clicks), you will have to mess around with the OSCHFTUNE register to make it work.
+A spectrum analyzer would be very helpful.
+&lt;/p&gt;
+&lt;!-- mksite: end of content --&gt;
+				</description>
+      <guid isPermaLink="true">http://maurycyz.com/projects/lifetv/</guid>
+      <pubDate>Thu, 19 Mar 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>The web in 1000 lines of C</title>
       <link>https://maurycyz.com/projects/tinyweb/</link>
@@ -529,183 +642,6 @@ h-e {color: #F6F;}
 				</description>
       <guid isPermaLink="true">http://maurycyz.com/misc/sandbox_llms/</guid>
       <pubDate>Mon, 23 Feb 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Inside an alpha-beta scintillator:</title>
-      <link>https://maurycyz.com/misc/ah_teardown/</link>
-      <description>&lt;!-- mksite: start of content --&gt;
-
-&lt;p&gt;&lt;/p&gt;
-&lt;note-box&gt;
-Just a heads up: this post is incomplete. 
-However, it may be a while before I am able to finish it.
-I am publishing it early in hopes that you will still find it somewhat interesting. 
-&lt;/note-box&gt;
-&lt;p&gt;
-I've recently acquired this tiny contamination monitor:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/ah.jpg&gt;
-&lt;center&gt;Just 4 cm wide!&lt;/center&gt;
-&lt;!-- snip --&gt;
-&lt;p&gt;
-It's more sensitive then a &lt;a href=https://ludlums.com/products/all-products/product/model-44-9&gt;Ludlum 44-9&lt;/a&gt;
-despite being smaller then it's pancake style G-M tube. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;After removing four hex screws&lt;/em&gt;, the &lt;a href=https://www.radviewdetection.com/abplus&gt;AlphaHound&lt;/a&gt; easily comes apart:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/open.jpg&gt;
-&lt;center&gt;Oooo&lt;/center&gt;
-&lt;p&gt;
-This is very nice: Many similarly sized devices are difficult or impossible to open without damaging them.
-If it ever breaks, it won't be hard to get inside. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The top half&lt;/em&gt; has the buzzer, display and buttons.
-It does have some SMD components, but it's just voltage regulators and decoupling capacitors:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/screen1.jpg&gt;
-&lt;p&gt;
-The display is a &lt;a href=https://www.crystalfontz.com/product/cfal128128a0015w-128x128-square-oled-display&gt;Crystalfontz CFAL128128A0-015W&lt;/a&gt; monochrome OLED:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/screen3.jpg&gt;
-&lt;p&gt;
-Neither the display or the PCB are mounted to anything:
-They are held in place by pressure. 
-Because of this, the back side of the PCB must be blank to avoid breaking the OLED display:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/screen2.jpg&gt;
-&lt;center&gt;Wow, such component density.&lt;/center&gt;
-&lt;p&gt;
-&lt;em&gt;The buttons&lt;/em&gt; live on a tiny daughter board:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/buttons.jpg&gt;
-&lt;p&gt;
-These were a relatively late addition to the design, and are connected to the main PCB with a long ribbon cable.
-Unlike everything else, this board is actually screwed in to the case:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/front_case.jpg&gt;
-&lt;p&gt;
-&lt;em&gt;The case itself&lt;/em&gt; is 3D printed stainless steel, which is a reasonable choice for small volume products.
-However, the resulting metal is porous and hard to clean.
-(it's still an improvement over plastic in my book) 
-&lt;/p&gt;&lt;p&gt;
-The black tape is my doing: 
-This detector was one of the first (of this version) made and it had a loose screen:
-The tape takes up just enough space to keep things tight.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The bottom half&lt;/em&gt; connects to the top with a short ribbon-cable:
-&lt;p&gt;
-&lt;img src=/misc/ah_teardown/riser.jpg&gt;
-&lt;/p&gt;
-Most of the board space is taken up by the battery, which is held in place by an FDM printed bracket glued to the board:
-&lt;p&gt;
-&lt;img src=/misc/ah_teardown/pcb.jpg&gt;
-&lt;/p&gt;
-&lt;em&gt;The battery is the&lt;/em&gt; &lt;a href=https://www.adafruit.com/product/4237&gt;LP552530&lt;/a&gt;, a tiny 350 mA hour lithium polymer cell. 
-This only provides a few hours of runtime, but there's only so much space in this thing.
-&lt;/p&gt;&lt;p&gt;
-There are no components under the battery: 
-all the detector's electronics are contained within the tiny 3x2 cm section above it.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The detector&lt;/em&gt; is hidden underneath the board:
-&lt;p&gt;
-&lt;img src=/misc/ah_teardown/stack.jpg&gt;
-&lt;/p&gt;
-Particles enter through the back, travel through both mylar sheets and hit the white square of scintillator material.
-The square converts the radiation's energy into a flash of light, which is detected by two photodiodes on the back side of the board. 
-&lt;/p&gt;&lt;p&gt;
-To keep out stray light, the scintillator is mounted in a ring of black rubber, which makes contact with black foam glued to the PCB and mylar. 
-When assembled, the foam is compressed and creates a light-proof seal against the rubber.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The scintillator&lt;/em&gt; is a sandwich of two different materials:
-Silver dopped zinc sulfide painted onto polyvinyltoluene mixed with an organic phosphor (EJ-212).
-&lt;/p&gt;&lt;p&gt;
-The zinc sulfide detects alpha particles, and the plastic scintillator detects beta. 
-Alphas will produce a &lt;a href=/projects/spinthariscope/&gt;bright flash with a slow decay&lt;/a&gt;, and betas produce a much faster and dimer flash.
-The detector takes both of these factors into account to tell the difference between the two types of radiation.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The MICROFC-60035-SMT-TR photodiodes&lt;/em&gt; are very special:
-Instead of being a single photodiode, these SiPM's have an array of tiny reverse biased diodes:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/sipm.png&gt;
-&lt;center&gt;In practice, the capacitors are connected to a low-Z output.&lt;/center&gt;
-&lt;p&gt;
-Each diode is run above its usual breakdown voltage, but they don't start conducting immediately.
-However, once a free electron-hole pair is created, the electron is accelerated by the electric field and slams into silicon atoms.
-These collisions are energetic enough to liberate more electrons: causing exponential "avalanche" breakdown.
-&lt;/p&gt;&lt;p&gt;
-&lt;b&gt;A single photon&lt;/b&gt; is enough to make the diode start conducting. 
-&lt;/p&gt;&lt;p&gt;
-It's a similar principle to a G-M tube, just for visible light. 
-Just like a G-M counter, the diode includes a quenching resistor which causes the voltage to drop once the discharge starts. 
-This resets the photodiode so it can continue detecting light.
-&lt;/p&gt;&lt;p&gt;
-These detectors have quantum-limited performance &amp;gt; 1 gigahertz bandwidth: 
-something that's ordinarily &lt;a href=https://lcamtuf.substack.com/p/shining-light-on-photodiodes&gt;super difficult to do&lt;/a&gt;.
-&lt;/p&gt;&lt;p&gt;
-A single avalanche diode isn't able to measure the intensity of a light flash, but the SiPM contains thousands of them:
-The amplitude of the output pulse depends on how many diodes are triggered, which is proportional to the brightness of the light.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;There's also a tiny LED&lt;/em&gt; which is used for a self test:
-If the SiPMs are able to pick up a dim LED flash, they should be able to pick up particle events.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Ok, back to the board:&lt;/em&gt;
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/map.jpg&gt;
-&lt;center&gt;A map of the hound&lt;/center&gt;
-&lt;p&gt;
-&lt;em&gt;The microcontroller is the ATSAMD21G18&lt;/em&gt;, a 32-bit ARM processor capable of running at up to 48 MHz.
-That might sound slow, but it's actually quite powerful for an embedded system:
-It doesn't have to run chrome. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The second largest chip is an ADXL335 accelerometer&lt;/em&gt;. 
-In earlier versions, this was used to control the device, but is being phased out due to it's high cost.
-&lt;/p&gt;&lt;p&gt;
-Most of the other chips are too small to have a full part number printed on, but they are mostly voltage regulators, comparators and opamps. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The top left&lt;/em&gt; has a very standard boost converter: 
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/boost.png&gt;
-&lt;p&gt;
-This converts 3.3 volts into ~30 volts which is used to run the photodiodes. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;I don't currently have a way to strip off the conformal coating&lt;/em&gt; covering it, so I can't trace out the pulse processing circuit. 
-However, I'm quite confident it uses a peak detector circuit to measure the height of the pulse:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/theory1.png&gt;
-&lt;center&gt;Theoretical pulse detection scheme: Don't look too closely.&lt;/center&gt;
-&lt;p&gt;
-This is a safe assumption because the microcontroller simply isn't fast enough to measure the 100 nanosecond scale pulses:
-The ADC is only able to measure a voltage every ~3000 nanoseconds. 
-&lt;/p&gt;&lt;p&gt;
-The pulse shape discrimination is likely done by using an opamp integrator to time how long the pulse stays over a given threshold:
-&lt;/p&gt;
-&lt;img src=/misc/ah_teardown/theory2.png&gt;
-&lt;center&gt;Theoretical PSD scheme: Don't look too closely.&lt;/center&gt;
-&lt;p&gt;
-This method produces similar pulse scatter plots to the real detector &amp;mdash;
-including the distinctive curve of the alpha cluster &amp;mdash;
-and is relatively simple...
-&lt;/p&gt;&lt;p&gt;
-... but I don't know if this is actually how it works. 
-&lt;/p&gt;&lt;p&gt;
-This section will be updated soon™.
-&lt;/p&gt;
-&lt;!--
-&lt;b&gt;TODO: Get scope traces of pulse detector/discriminator circuit. &lt;/b&gt;
-Betting it's using time-over-threshold. 
-&lt;/p&gt;&lt;p&gt;
-# Electronics
-&lt;/p&gt;&lt;p&gt;
-Plastic decay time 2.4 ns, ZnS(Ag) 200 ns.
-&lt;/p&gt;&lt;p&gt;
-G2L: AP2202 voltage reulgator
-&lt;/p&gt;&lt;p&gt;
-ATSAMD21G18
---&gt;
-&lt;!-- mksite: end of content --&gt;
-				</description>
-      <guid isPermaLink="true">http://maurycyz.com/misc/ah_teardown/</guid>
-      <pubDate>Thu, 12 Feb 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
