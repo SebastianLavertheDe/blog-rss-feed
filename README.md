@@ -1,6 +1,6 @@
 # AI & Tech Blog RSS Feed Aggregator
 
-A comprehensive RSS feed generator that aggregates AI and technology content from leading sources. This project automatically generates RSS feeds for 109 active AI/tech blogs and newsletters (114 configured, 5 currently disabled), making it easy to stay updated with the latest developments.
+A comprehensive RSS feed generator that aggregates AI and technology content from leading sources. This project automatically generates RSS feeds for 111 active AI/tech blogs and newsletters (116 configured, 5 currently disabled), making it easy to stay updated with the latest developments.
 
 ## 📡 RSS Sources
 
@@ -24,6 +24,7 @@ A comprehensive RSS feed generator that aggregates AI and technology content fro
 | **The Verge AI** | AI coverage from The Verge | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/verge_ai_rss.xml) |
 | **Import AI** | Jack Clark's Import AI newsletter | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/importai_rss.xml) |
 | **VentureBeat AI** | AI news from VentureBeat | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/venturebeat_ai_rss.xml) |
+| **AI News** | AI industry news and analysis from artificialintelligence-news.com | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/artificial_intelligence_news_rss.xml) |
 | **Ars Technica AI** | In-depth AI coverage and analysis | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/arstechnica_ai_rss.xml) |
 | **雷峰网 AI** | AI news and articles in Chinese | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/leiphone_ai_rss.xml) |
 | **David Heinemeier Hansson** | Web development, design, and technology | [RSS](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/rss/david_heinemeier_hansson_rss.xml) |
@@ -33,7 +34,7 @@ Plus 87 active HN Popular Blogs (curated from Hacker News). For the full list, s
 
 ## 📦 All-in-One OPML Feeds
 
-### Blog Feeds (109 active sources)
+### Blog Feeds (111 active sources)
 
 Subscribe to all blog sources at once:
 ```
@@ -46,7 +47,7 @@ Import this file into your RSS reader to get all feeds in one go.
 
 - **Automated Updates**: GitHub Actions run regularly to keep feeds fresh
 - **OPML Support**: `blog_rss.xml` includes all blog feeds
-- **Multiple Sources**: 109 active RSS feeds (114 configured, 5 disabled)
+- **Multiple Sources**: 111 active RSS feeds (116 configured, 5 disabled)
 - **Standard RSS Format**: Compatible with all RSS readers
 - **Robust Parsing**: Handles various date formats and content types
 
@@ -66,7 +67,7 @@ Copy any of the RSS feed URLs above and paste them into your favorite RSS reader
 
 1. Download the OPML file: [blog_rss.xml](https://raw.githubusercontent.com/SebastianLavertheDe/blog-rss-feed/main/blog_rss.xml)
 2. Import it into your RSS reader
-3. All 109 active feeds will be added automatically
+3. All 111 active feeds will be added automatically
 
 ### Option 3: Run Locally
 
