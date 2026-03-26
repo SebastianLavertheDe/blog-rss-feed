@@ -1,22 +1,33 @@
 import asyncio
+import os
+import re
 from datetime import datetime, timezone
-from feedgen.feed import FeedGenerator
+
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
-import json
-import re
-import os
+from feedgen.feed import FeedGenerator
+
 
 class AnthropicEngineeringRSSGenerator:
     def __init__(self):
         self.base_url = "https://www.anthropic.com/engineering"
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0"
+        })
+        self.date_patterns = [
+            re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b"),
+            re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b"),
+        ]
 
     def parse_date(self, date_text):
-        """Parse date text and return a datetime object with timezone"""
+        """Parse date text and return a datetime object with timezone."""
         try:
-            date_text = date_text.strip()
-            parsed_date = date_parser.parse(date_text, tzinfos={"UT": timezone.utc, "UTC": timezone.utc})
+            parsed_date = date_parser.parse(
+                date_text.strip(),
+                tzinfos={"UT": timezone.utc, "UTC": timezone.utc},
+            )
             if parsed_date.tzinfo is None:
                 parsed_date = parsed_date.replace(tzinfo=timezone.utc)
             return parsed_date
@@ -25,172 +36,188 @@ class AnthropicEngineeringRSSGenerator:
             return datetime.now(timezone.utc)
 
     async def fetch_posts(self):
-        # Fetch the engineering page
-        response = requests.get(self.base_url, headers={'User-Agent': 'Mozilla/5.0'})
+        response = self.session.get(self.base_url, timeout=30)
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        page_html = response.text
+        soup = BeautifulSoup(page_html, "html.parser")
+        fallback_date_text = self._extract_latest_visible_date_text(soup)
 
         articles_data = []
         seen_urls = set()
 
-        # Look for script tags that might contain JSON data (Next.js data)
-        script_tags = soup.find_all('script', type='application/json')
-        for script in script_tags:
-            try:
-                data = json.loads(script.string)
-                # Navigate the JSON structure to find posts
-                if isinstance(data, dict):
-                    # Check for common Next.js data structures
-                    for key, value in data.items():
-                        if isinstance(value, dict):
-                            for k2, v2 in value.items():
-                                if isinstance(v2, list):
-                                    for item in v2:
-                                        if isinstance(item, dict):
-                                            self._extract_from_json(item, articles_data, seen_urls)
-                        elif isinstance(value, list):
-                            for item in value:
-                                if isinstance(item, dict):
-                                    self._extract_from_json(item, articles_data, seen_urls)
-            except:
-                pass
+        for card in soup.find_all("article"):
+            article = self._extract_article_from_card(
+                card,
+                seen_urls,
+                page_html,
+                fallback_date_text,
+            )
+            if article:
+                articles_data.append(article)
+                print(f"Found: {article['title']} ({article['date_text']})")
 
-        # Also try HTML parsing as fallback
-        # Look for links to engineering blog posts
-        for link in soup.find_all('a', href=True):
-            href = link.get('href')
-            if href and '/engineering/' in href and href != '/engineering':
-                # Build full URL if relative
-                if not href.startswith('http'):
-                    href = f"https://www.anthropic.com{href}"
+        articles_data.sort(key=lambda x: x["date"], reverse=True)
+        return articles_data
 
-                # Skip duplicates
-                if href in seen_urls:
-                    continue
-                seen_urls.add(href)
+    def _extract_article_from_card(self, card, seen_urls, page_html, fallback_date_text):
+        article_links = self._find_article_links(card)
+        if len(article_links) != 1:
+            return None
 
-                # Extract title from link text or nearby elements
-                title = link.get_text(strip=True)
-                if not title or len(title) < 10:
-                    continue
+        link = article_links[0]
+        if not link:
+            return None
 
-                # Try to find date near the link
-                date_text = None
-                parent = link.parent
-                if parent:
-                    # Look for date patterns in parent and siblings
-                    for elem in parent.find_all(string=True):
-                        if re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}', elem):
-                            date_text = elem.strip()
-                            break
+        url = link.get("href", "").strip()
+        if url.startswith("/"):
+            url = f"https://www.anthropic.com{url}"
 
-                parsed_date = datetime.now(timezone.utc)
-                if date_text:
-                    parsed_date = self.parse_date(date_text)
-                else:
-                    # Try to extract date from URL or title
-                    date_text = parsed_date.strftime('%b %d, %Y')
+        if (
+            not url
+            or url in seen_urls
+            or "/engineering/" not in url
+            or url.rstrip("/") == self.base_url
+        ):
+            return None
 
-                articles_data.append({
-                    'title': title,
-                    'url': href,
-                    'date': parsed_date,
-                    'date_text': date_text
-                })
+        title = self._extract_title(card)
+        if not title:
+            return None
 
-                print(f"Found: {title} ({date_text})")
+        description = self._extract_summary(card) or title
+        date_text = self._extract_date_text(card)
+        if not date_text:
+            date_text = self._extract_published_on_from_page_html(url, page_html)
+        if not date_text:
+            date_text = fallback_date_text
+        if not date_text:
+            return None
 
-        # Sort articles by date (newest first)
-        articles_data.sort(key=lambda x: x['date'], reverse=True)
+        seen_urls.add(url)
+        return {
+            "title": title,
+            "url": url,
+            "description": description,
+            "date": self.parse_date(date_text),
+            "date_text": date_text,
+        }
 
-        # Remove duplicates based on URL
-        unique_articles = []
-        seen = set()
-        for article in articles_data:
-            if article['url'] not in seen:
-                seen.add(article['url'])
-                unique_articles.append(article)
+    def _find_article_links(self, card):
+        article_links = []
+        for link in card.find_all("a", href=True):
+            href = link.get("href", "").strip()
+            if href.startswith("/engineering/"):
+                article_links.append(link)
+        return article_links
 
-        return unique_articles
+    def _extract_title(self, card):
+        heading = card.find(["h1", "h2", "h3"])
+        if heading:
+            return " ".join(heading.get_text(" ", strip=True).split())
 
-    def _extract_from_json(self, item, articles_data, seen_urls):
-        """Extract article data from JSON structure"""
-        if not isinstance(item, dict):
-            return
+        article_links = self._find_article_links(card)
+        link = article_links[0] if article_links else None
+        if link:
+            text = " ".join(link.get_text(" ", strip=True).split())
+            if text:
+                return text
+        return None
 
-        # Look for common article fields
-        title = item.get('title') or item.get('heading') or item.get('headline')
-        url = item.get('url') or item.get('slug') or item.get('link')
-        date = item.get('date') or item.get('publishedAt') or item.get('pubDate')
+    def _extract_summary(self, card):
+        summary = card.find("p")
+        if not summary:
+            return None
+        text = " ".join(summary.get_text(" ", strip=True).split())
+        return text or None
 
-        if title and url:
-            # Build full URL if needed
-            if not url.startswith('http'):
-                if url.startswith('/'):
-                    url = f"https://www.anthropic.com{url}"
-                else:
-                    url = f"https://www.anthropic.com/engineering/{url}"
+    def _extract_date_text(self, card):
+        time_tag = card.find("time")
+        if time_tag:
+            datetime_value = time_tag.get("datetime")
+            if datetime_value:
+                return datetime_value.strip()
+            time_text = " ".join(time_tag.get_text(" ", strip=True).split())
+            if time_text:
+                return time_text
 
-            if url in seen_urls or '/engineering/' not in url:
-                return
+        for tag in card.find_all(["div", "span", "p"]):
+            classes = " ".join(tag.get("class", [])).lower()
+            text = " ".join(tag.get_text(" ", strip=True).split())
+            if "date" in classes and text:
+                return text
 
-            seen_urls.add(url)
+        card_text = " ".join(card.get_text(" ", strip=True).split())
+        return self._find_date_text(card_text)
 
-            parsed_date = datetime.now(timezone.utc)
-            date_text = None
-            if date:
-                try:
-                    parsed_date = self.parse_date(date)
-                    date_text = date
-                except:
-                    pass
+    def _extract_published_on_from_page_html(self, url, page_html):
+        slug = url.rstrip("/").split("/")[-1]
+        pattern = re.compile(
+            rf'{re.escape(slug)}.{{0,1500}}?"publishedOn":"([^"]+)"',
+            re.DOTALL,
+        )
+        match = pattern.search(page_html)
+        if match:
+            return match.group(1)
+        return None
 
-            articles_data.append({
-                'title': title,
-                'url': url,
-                'date': parsed_date,
-                'date_text': date_text or parsed_date.strftime('%b %d, %Y')
-            })
+    def _find_date_text(self, text):
+        for pattern in self.date_patterns:
+            match = pattern.search(text)
+            if match:
+                return match.group(0)
+        return None
 
-            print(f"Found: {title} ({date_text or 'N/A'})")
+    def _extract_latest_visible_date_text(self, soup):
+        latest_date = None
+        latest_date_text = None
+
+        for card in soup.find_all("article"):
+            date_text = self._extract_date_text(card)
+            if not date_text:
+                continue
+
+            parsed_date = self.parse_date(date_text)
+            if latest_date is None or parsed_date > latest_date:
+                latest_date = parsed_date
+                latest_date_text = date_text
+
+        return latest_date_text
 
     def create_feed(self):
-        """Create a fresh feed instance"""
+        """Create a fresh feed instance."""
         feed = FeedGenerator()
-        feed.title('Anthropic Engineering Blog')
-        feed.link(href=self.base_url, rel='alternate')
-        feed.description('Latest posts from Anthropic Engineering blog')
-        feed.language('en')
+        feed.title("Anthropic Engineering Blog")
+        feed.link(href=self.base_url, rel="alternate")
+        feed.description("Latest posts from Anthropic Engineering blog")
+        feed.language("en")
         return feed
 
     def generate_rss(self, articles_data):
         feed = self.create_feed()
 
         for article_data in articles_data:
-            entry = feed.add_entry(order='append')
-            entry.title(article_data['title'])
-            entry.link(href=article_data['url'])
-            entry.pubDate(article_data['date'])
-            entry.description(article_data['title'])
-            entry.guid(article_data['url'], permalink=True)
+            entry = feed.add_entry(order="append")
+            entry.title(article_data["title"])
+            entry.link(href=article_data["url"])
+            entry.pubDate(article_data["date"])
+            entry.description(article_data["description"])
+            entry.guid(article_data["url"], permalink=True)
 
-        rss_content = feed.rss_str(pretty=True)
-        return rss_content
+        return feed.rss_str(pretty=True)
+
 
 async def main():
     generator = AnthropicEngineeringRSSGenerator()
     articles_data = await generator.fetch_posts()
     rss_content = generator.generate_rss(articles_data)
 
-    # Create rss directory if it doesn't exist
-    os.makedirs('rss', exist_ok=True)
-
-    # Write to file in rss directory
-    with open('rss/anthropic_engineering_rss.xml', 'wb') as f:
+    os.makedirs("rss", exist_ok=True)
+    with open("rss/anthropic_engineering_rss.xml", "wb") as f:
         f.write(rss_content)
 
     print(f"RSS feed generated successfully with {len(articles_data)} articles!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

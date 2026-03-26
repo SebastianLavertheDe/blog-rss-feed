@@ -53,6 +53,9 @@ class ExternalRSSImporter:
         self.max_retries = max_retries
         self._extracted_feed_info = None
 
+    def _sort_key_datetime(self, value):
+        return value if value is not None else datetime.min.replace(tzinfo=timezone.utc)
+
     def _extract_feed_info(self, root):
         """Extract feed title, link, description from RSS/Atom feed"""
         title = self.feed_title
@@ -193,16 +196,18 @@ class ExternalRSSImporter:
             ET.SubElement(channel, 'language').text = 'en'
             ET.SubElement(channel, 'lastBuildDate').text = format_datetime(datetime.now(timezone.utc))
 
-            # Sort entries by date
-            sorted_entries = sorted(
-                parsed.entries[:30],
-                key=lambda e: (
-                    e.get('published_parsed') or e.get('updated_parsed') or (0, 0, 0, 0, 0, 0)
-                ),
-                reverse=True
-            )
+            def entry_datetime(entry):
+                parsed_value = entry.get('published_parsed') or entry.get('updated_parsed')
+                if parsed_value:
+                    return datetime(*parsed_value[:6], tzinfo=timezone.utc)
+                return None
 
-            count = 0
+            sorted_entries = sorted(
+                parsed.entries,
+                key=lambda entry: self._sort_key_datetime(entry_datetime(entry)),
+                reverse=True,
+            )[:30]
+
             for e in sorted_entries:
                 item = ET.SubElement(channel, 'item')
                 ET.SubElement(item, 'title').text = clean_xml_text(e.get('title', ''))
@@ -213,18 +218,12 @@ class ExternalRSSImporter:
                 guid.text = clean_xml_text(guid_val)
 
                 # pubDate
-                published_parsed = e.get('published_parsed') or e.get('updated_parsed')
-                if published_parsed:
-                    dt = datetime(*published_parsed[:6], tzinfo=timezone.utc)
-                else:
-                    dt = datetime.now(timezone.utc)
+                dt = entry_datetime(e) or datetime.now(timezone.utc)
                 ET.SubElement(item, 'pubDate').text = format_datetime(dt)
 
                 # description
                 summary = e.get('summary', '')
                 ET.SubElement(item, 'description').text = clean_xml_text(summary)
-                count += 1
-
             # Save output
             os.makedirs('rss', exist_ok=True)
             output_path = os.path.join('rss', self.output_file)
@@ -236,7 +235,7 @@ class ExternalRSSImporter:
                 tree.write(f, encoding='utf-8', xml_declaration=False)
 
             print(f"✓ RSS saved to: {output_path}")
-            print(f"  Processed {count} items")
+            print(f"  Processed {len(sorted_entries)} items")
             return True
 
         except Exception as e:
@@ -276,6 +275,7 @@ class ExternalRSSImporter:
             # Find all entries in Atom format
             entries = root.findall('.//{http://www.w3.org/2005/Atom}entry')
 
+            parsed_entries = []
             for entry in entries:
                 try:
                     title_elem = entry.find('{http://www.w3.org/2005/Atom}title')
@@ -300,20 +300,33 @@ class ExternalRSSImporter:
 
                     guid_text = id_elem.text if id_elem is not None else link_text
 
-                    # Add entry
-                    feed_entry = feed.add_entry()
-                    feed_entry.title(title_text)
-                    feed_entry.link(href=link_text)
-                    feed_entry.description(content_text)
-                    feed_entry.guid(guid_text, permalink=True)
-
-                    if pub_date_text:
-                        parsed_date = self.parse_date(pub_date_text)
-                        feed_entry.pubDate(parsed_date)
+                    parsed_date = self.parse_date(pub_date_text) if pub_date_text else None
+                    parsed_entries.append({
+                        "title": title_text,
+                        "link": link_text,
+                        "description": content_text,
+                        "guid": guid_text,
+                        "pub_date": parsed_date,
+                    })
 
                 except Exception as e:
                     print(f"Warning: Error processing entry: {e}")
                     continue
+
+            parsed_entries.sort(
+                key=lambda item: self._sort_key_datetime(item["pub_date"]),
+                reverse=True,
+            )
+
+            for entry_data in parsed_entries:
+                feed_entry = feed.add_entry(order='append')
+                feed_entry.title(entry_data["title"])
+                feed_entry.link(href=entry_data["link"])
+                feed_entry.description(entry_data["description"])
+                feed_entry.guid(entry_data["guid"], permalink=True)
+
+                if entry_data["pub_date"]:
+                    feed_entry.pubDate(entry_data["pub_date"])
 
             # Save output
             os.makedirs('rss', exist_ok=True)
@@ -323,7 +336,7 @@ class ExternalRSSImporter:
                 f.write(rss_content)
 
             print(f"✓ RSS saved to: {output_path}")
-            print(f"  Processed {len(entries)} entries")
+            print(f"  Processed {len(parsed_entries)} entries")
             return True
 
         except Exception as e:

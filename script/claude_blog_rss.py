@@ -4,13 +4,20 @@ from feedgen.feed import FeedGenerator
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
-import json
 import re
 import os
 
 class ClaudeBlogRSSGenerator:
     def __init__(self):
         self.base_url = "https://claude.com/blog"
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0"
+        })
+        self.date_patterns = [
+            re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b"),
+            re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b"),
+        ]
 
     def parse_date(self, date_text):
         """Parse date text and return a datetime object with timezone"""
@@ -25,163 +32,126 @@ class ClaudeBlogRSSGenerator:
             return datetime.now(timezone.utc)
 
     async def fetch_posts(self):
-        # Fetch the blog page
-        response = requests.get(self.base_url, headers={'User-Agent': 'Mozilla/5.0'})
+        response = self.session.get(self.base_url, timeout=30)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, 'html.parser')
-
         articles_data = []
         seen_urls = set()
 
-        # Look for script tags that might contain JSON data
-        script_tags = soup.find_all('script')
-        for script in script_tags:
-            try:
-                script_content = script.string or ''
-                # Look for JSON-like data in script tags
-                if '__DATA__' in script_content or 'window.__DATA' in script_content:
-                    # Try to extract JSON
-                    json_match = re.search(r'window\.__DATA__\s*=\s*({.*?});', script_content, re.DOTALL)
-                    if json_match:
-                        try:
-                            data = json.loads(json_match.group(1))
-                            self._extract_from_json(data, articles_data, seen_urls)
-                        except:
-                            pass
-            except:
-                pass
+        for item in soup.select("div.blog_cms_item.w-dyn-item"):
+            article = self._extract_article_from_card(item, seen_urls)
+            if article:
+                articles_data.append(article)
+                print(f"Found: {article['title']} ({article['date_text']})")
 
-        # Also try HTML parsing - look for blog post links
-        # Claude blog uses Webflow, so we look for specific patterns
-        for link in soup.find_all('a', href=True):
-            href = link.get('href')
-
-            # Look for blog post links
-            if href and ('/blog/' in href or href.startswith('/blog')):
-                # Skip the main blog page
-                if href == '/blog' or href.endswith('/blog'):
-                    continue
-
-                # Build full URL if relative
-                if not href.startswith('http'):
-                    href = f"https://claude.com{href}"
-
-                # Skip duplicates
-                if href in seen_urls:
-                    continue
-                seen_urls.add(href)
-
-                # Get title from link text or nearby elements
-                title = link.get_text(strip=True)
-
-                # Also check for heading elements near the link
-                if not title or len(title) < 10:
-                    parent = link.parent
-                    if parent:
-                        heading = parent.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
-                        if heading:
-                            title = heading.get_text(strip=True)
-
-                if not title or len(title) < 10:
-                    continue
-
-                # Try to find date near the link
-                date_text = None
-                parent = link.parent
-                if parent:
-                    # Look for date patterns in parent and siblings
-                    for elem in parent.find_all(string=True):
-                        if re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)[a-z]*\s+\d{1,2},\s+\d{4}', elem):
-                            date_text = elem.strip()
-                            break
-                        # Also match abbreviated months
-                        elif re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}', elem):
-                            date_text = elem.strip()
-                            break
-
-                parsed_date = datetime.now(timezone.utc)
-                if date_text:
-                    parsed_date = self.parse_date(date_text)
-                else:
-                    date_text = parsed_date.strftime('%b %d, %Y')
-
-                articles_data.append({
-                    'title': title,
-                    'url': href,
-                    'date': parsed_date,
-                    'date_text': date_text
-                })
-
-                print(f"Found: {title} ({date_text})")
-
-        # Sort articles by date (newest first)
         articles_data.sort(key=lambda x: x['date'], reverse=True)
+        return articles_data
 
-        # Remove duplicates based on URL
-        unique_articles = []
-        seen = set()
-        for article in articles_data:
-            if article['url'] not in seen:
-                seen.add(article['url'])
-                unique_articles.append(article)
+    def _extract_article_from_card(self, item, seen_urls):
+        link = self._find_article_link(item)
+        if not link:
+            return None
 
-        return unique_articles
+        url = link.get("href", "").strip()
+        if url.startswith("/"):
+            url = f"https://claude.com{url}"
 
-    def _extract_from_json(self, data, articles_data, seen_urls):
-        """Extract article data from JSON structure"""
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if key.lower() in ['posts', 'articles', 'items', 'entries', 'blog']:
-                    if isinstance(value, list):
-                        for item in value:
-                            self._extract_article_from_item(item, articles_data, seen_urls)
-                elif isinstance(value, (dict, list)):
-                    self._extract_from_json(value, articles_data, seen_urls)
-        elif isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    self._extract_article_from_item(item, articles_data, seen_urls)
+        if (
+            not url
+            or url in seen_urls
+            or "/blog/" not in url
+            or "/blog/category/" in url
+            or url.rstrip("/") == self.base_url
+        ):
+            return None
 
-    def _extract_article_from_item(self, item, articles_data, seen_urls):
-        """Extract article from a single item"""
-        if not isinstance(item, dict):
-            return
+        title = self._extract_title(item, link)
+        if not title:
+            return None
 
-        title = item.get('title') or item.get('heading') or item.get('name')
-        url = item.get('url') or item.get('slug') or item.get('link') or item.get('href')
-        date = item.get('date') or item.get('publishedAt') or item.get('pubDate') or item.get('published-date')
+        card_text = " ".join(item.get_text(" ", strip=True).split())
+        date_text = self._find_date_text(card_text)
+        if not date_text:
+            date_text = self._fetch_article_date(url)
+        if not date_text:
+            return None
 
-        if title and url:
-            # Build full URL if needed
-            if not url.startswith('http'):
-                if url.startswith('/'):
-                    url = f"https://claude.com{url}"
-                else:
-                    url = f"https://claude.com/blog/{url}"
+        seen_urls.add(url)
+        parsed_date = self.parse_date(date_text)
+        return {
+            "title": title,
+            "url": url,
+            "date": parsed_date,
+            "date_text": date_text,
+        }
 
-            if url in seen_urls or '/blog/' not in url:
-                return
+    def _find_article_link(self, item):
+        candidates = []
+        for link in item.select("a[href]"):
+            href = link.get("href", "").strip()
+            if href.startswith("/blog/") and "/blog/category/" not in href:
+                candidates.append(link)
 
-            seen_urls.add(url)
+        if not candidates:
+            return None
 
-            parsed_date = datetime.now(timezone.utc)
-            date_text = None
-            if date:
-                try:
-                    parsed_date = self.parse_date(date)
-                    date_text = date
-                except:
-                    pass
+        candidates.sort(
+            key=lambda link: len(" ".join(link.get_text(" ", strip=True).split())),
+            reverse=True,
+        )
+        return candidates[0]
 
-            articles_data.append({
-                'title': title,
-                'url': url,
-                'date': parsed_date,
-                'date_text': date_text or parsed_date.strftime('%b %d, %Y')
-            })
+    def _extract_title(self, item, link):
+        link_text = " ".join(link.get_text(" ", strip=True).split())
+        if len(link_text) >= 10:
+            return link_text
 
-            print(f"Found: {title} ({date_text or 'N/A'})")
+        heading = item.find(["h1", "h2", "h3", "h4", "h5", "h6"])
+        if heading:
+            heading_text = " ".join(heading.get_text(" ", strip=True).split())
+            if heading_text:
+                return heading_text
+
+        return None
+
+    def _find_date_text(self, text):
+        for pattern in self.date_patterns:
+            match = pattern.search(text)
+            if match:
+                return match.group(0)
+        return None
+
+    def _fetch_article_date(self, url):
+        try:
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+        except requests.RequestException:
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        for meta_name in ("article:published_time", "og:published_time"):
+            meta = soup.find("meta", attrs={"property": meta_name})
+            if meta and meta.get("content"):
+                return meta["content"].strip()
+
+        for meta_name in ("publish-date", "datePublished"):
+            meta = soup.find("meta", attrs={"name": meta_name})
+            if meta and meta.get("content"):
+                return meta["content"].strip()
+
+        time_tag = soup.find("time")
+        if time_tag:
+            datetime_value = time_tag.get("datetime")
+            if datetime_value:
+                return datetime_value.strip()
+            time_text = " ".join(time_tag.get_text(" ", strip=True).split())
+            if time_text:
+                return time_text
+
+        article_text = " ".join(soup.get_text(" ", strip=True).split())
+        return self._find_date_text(article_text)
 
     def create_feed(self):
         """Create a fresh feed instance"""
