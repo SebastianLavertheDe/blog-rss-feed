@@ -5,7 +5,373 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 27 Mar 2026 19:04:06 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 27 Mar 2026 20:46:27 +0000</lastBuildDate>
+    <item>
+      <title>Using Perfetto in ZJIT</title>
+      <link>https://bernsteinbear.com/blog/zjit-perfetto/?utm_source=rss</link>
+      <description>&lt;p&gt;&lt;em&gt;Originally published on &lt;a href="https://railsatscale.com/2026-03-27-using-perfetto-in-zjit/"&gt;Rails At Scale&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;Look! A trace of slow events in a benchmark! Hover over the image to see it get bigger.&lt;/p&gt;
+
+&lt;style&gt;
+img {
+    max-width: 100%;
+}
+img:hover {
+  transform: scale(2);
+  transition: transform 0.1s ease-in;
+}
+img:not(:hover) {
+  transition: transform 0.1s ease-out;
+}
+&lt;/style&gt;
+
+&lt;figure&gt;
+
+  &lt;p&gt;&lt;img src="/assets/img/perfetto-demo.png" alt="" /&gt;&lt;/p&gt;
+
+  &lt;figcaption&gt;
+A sneak preview of what the trace looks like.
+&lt;/figcaption&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;Now read on to see what the slow events are and how we got this pretty picture.&lt;/p&gt;
+
+&lt;h2 id="the-rules"&gt;The rules&lt;/h2&gt;
+
+&lt;p&gt;The first rule of just-in-time compilers is: you stay in JIT code. The second
+rule of JIT is: you STAY in JIT code!&lt;/p&gt;
+
+&lt;p&gt;When control leaves the compiled code to run in the interpreter—what the ZJIT
+team calls either a “side-exit” or a “deopt”, depending on who you talk
+to—things slow down. In a well-tuned system, this should happen pretty
+rarely. Right now, because we’re still bringing up the compiler and runtime
+system, it happens more than we would like.&lt;/p&gt;
+
+&lt;p&gt;We’re reducing the number of exits over time.&lt;/p&gt;
+
+&lt;h2 id="lies-damned-lies-and-statistics"&gt;Lies, damned lies, and statistics&lt;/h2&gt;
+
+&lt;p&gt;We can track our side-exit reduction progress with &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-stats&lt;/code&gt;, which,
+on process exit, prints out a tidy summary of the counters for all of the bad
+stuff we track. It’s got side-exits. It’s got calls to C code. It’s got calls
+to slow-path runtime helpers. It’s got everything.&lt;/p&gt;
+
+&lt;p&gt;Here is a chopped-up sample of stats output for the Lobsters benchmark,
+which is a large Rails app:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ WARMUP_ITRS=0 MIN_BENCH_ITRS=20 MIN_BENCH_TIME=0 ruby --zjit-stats benchmarks/lobsters/benchmark.rb
+...
+***ZJIT: Printing ZJIT statistics on exit***
+...
+Top-20 side exit reasons (100.0% of total 12,549,876):
+                   guard_type_failure: 6,020,734 (48.0%)
+                  guard_shape_failure: 5,556,147 (44.3%)
+  block_param_proxy_not_iseq_or_ifunc:   445,358 ( 3.5%)
+                   unhandled_hir_insn:   215,168 ( 1.7%)
+                        compile_error:   181,474 ( 1.4%)
+...
+compiled_iseq_count:                               5,581
+failed_iseq_count:                                     2
+compile_time:                                    1,443ms
+...
+guard_type_count:                            133,425,094
+guard_type_exit_ratio:                              4.5%
+guard_shape_count:                            49,386,694
+guard_shape_exit_ratio:                            11.3%
+...
+code_region_bytes:                            31,571,968
+side_exit_size_ratio:                              33.1%
+zjit_alloc_bytes:                             19,329,659
+total_mem_bytes:                              50,901,627
+...
+ratio_in_zjit:                                     82.8%
+$
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;(I’ve cut out significant chunks of the stats output and replaced them with
+&lt;code class="language-plaintext highlighter-rouge"&gt;...&lt;/code&gt; because it’s overwhelming the first time you see it.)&lt;/p&gt;
+
+&lt;p&gt;The first thing you might note is that the thing I just described as terrible
+for performance is happening &lt;em&gt;over twelve million times&lt;/em&gt;. The second thing you
+might notice is that despite this, we’re staying in JIT code seemingly a high
+percentage of the time. Or are we? Is 80% high? Is a 4.5% class guard miss
+ratio high? What about 11% for shapes? It’s hard to say.&lt;/p&gt;
+
+&lt;p&gt;The counters are great because they’re &lt;em&gt;quick&lt;/em&gt; and they’re reasonably stable
+proxies for performance. There’s no substitute for painstaking measurements on
+a quiet machine but if the counter for Bad Slow Thing goes down (and others do
+not go up), we’re probably doing a good job.&lt;/p&gt;
+
+&lt;p&gt;But they’re not great for building intuition. For intuition, we want more
+tangible feeling numbers. We want to see things.&lt;/p&gt;
+
+&lt;h2 id="building-intuition"&gt;Building intuition&lt;/h2&gt;
+
+&lt;p&gt;The third thing is that you might ask yourself “self, where are these exits
+coming from?” Unfortunately, counters cannot tell you that. For that, we
+want stack traces. This lets us know where in the guest (Ruby) code triggers
+an exit.&lt;/p&gt;
+
+&lt;p&gt;Ideally also we would want some notion of time: we would want to know not just
+where these events happen but also when. Are the exits happening early, at
+application boot? At warmup? Even during what should be steady state
+application time? Hard to say.&lt;/p&gt;
+
+&lt;p&gt;So we need more tools. Thankfully, &lt;a href="https://perfetto.dev/"&gt;Perfetto&lt;/a&gt; exists.
+Perfetto is a system for visualizing and analyzing traces and profiles that your
+application generates. It has both a web UI and a command-line UI.&lt;/p&gt;
+
+&lt;p&gt;We can emit traces for Perfetto and visualize them there.&lt;/p&gt;
+
+&lt;h2 id="a-look-at-perfetto"&gt;A look at Perfetto&lt;/h2&gt;
+
+&lt;p&gt;Take a look at this &lt;a href="https://ui.perfetto.dev/#!/?url=https://bernsteinbear.comassets/misc/perfetto-36885.fxt"&gt;sample ZJIT Perfetto
+trace&lt;/a&gt;
+generated by running Ruby with &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-trace-exits&lt;/code&gt;&lt;sup id="fnref:sampled" role="doc-noteref"&gt;&lt;a href="#fn:sampled" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;. What do you see?&lt;/p&gt;
+
+&lt;p&gt;I see a couple arrows on the left. Arrows indicate “instant” point-in-time
+events. Then I see a mess of purple to the right of that until the end of the
+trace.&lt;/p&gt;
+
+&lt;p&gt;Hover over an arrow. Find out that each arrow is a side-exit. Scream silently.&lt;/p&gt;
+
+&lt;p&gt;But it’s a friendly arrow. It tells you what the side-exit reason is. If you
+click it, it even tells you the stack trace in the pop-up panel on the bottom.
+If we click a couple of them, maybe we can learn more.&lt;/p&gt;
+
+&lt;p&gt;We can also zoom by mousing over the track, holding Ctrl, and scrolling. That
+will get us look closer. But there are so many…&lt;/p&gt;
+
+&lt;p&gt;Fortunately, Perfetto also provides a SQL interface to the traces. We can write
+a query to aggregate all of the side exit events from the &lt;code class="language-plaintext highlighter-rouge"&gt;slice&lt;/code&gt; table and
+line them up with the topmost method from the backtrace arguments in the &lt;code class="language-plaintext highlighter-rouge"&gt;args&lt;/code&gt;
+table:&lt;/p&gt;
+
+&lt;div class="language-sql highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;SELECT&lt;/span&gt;
+  &lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="k"&gt;AS&lt;/span&gt; &lt;span class="n"&gt;reason&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+  &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;display_value&lt;/span&gt; &lt;span class="k"&gt;AS&lt;/span&gt; &lt;span class="k"&gt;method&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+  &lt;span class="k"&gt;COUNT&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;AS&lt;/span&gt; &lt;span class="k"&gt;count&lt;/span&gt;
+&lt;span class="k"&gt;FROM&lt;/span&gt; &lt;span class="n"&gt;slice&lt;/span&gt; &lt;span class="n"&gt;s&lt;/span&gt;
+&lt;span class="k"&gt;JOIN&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="k"&gt;ON&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg_set_id&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg_set_id&lt;/span&gt; &lt;span class="k"&gt;AND&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="k"&gt;key&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s1"&gt;'0'&lt;/span&gt;
+&lt;span class="k"&gt;GROUP&lt;/span&gt; &lt;span class="k"&gt;BY&lt;/span&gt; &lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;display_value&lt;/span&gt;
+&lt;span class="k"&gt;ORDER&lt;/span&gt; &lt;span class="k"&gt;BY&lt;/span&gt; &lt;span class="k"&gt;count&lt;/span&gt; &lt;span class="k"&gt;DESC&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This pulls up a query box at the bottom showing us that there are a couple big
+hotspots:&lt;/p&gt;
+
+&lt;figure&gt;
+
+  &lt;p&gt;&lt;img src="/assets/img/perfetto-method-query.png" alt="" /&gt;&lt;/p&gt;
+
+  &lt;figcaption&gt;
+Query results showing in columns left to right: reason for side-exit, method
+that exited, and count. The top three are above 1k but it quickly falls off
+after that.
+&lt;/figcaption&gt;
+
+&lt;/figure&gt;
+
+&lt;p&gt;It even has a helpful option to export the results Markdown table so I can
+paste (an edited version) into this blog post:&lt;/p&gt;
+
+&lt;div style="overflow-x: auto; font-size: 0.75em; margin-left: max(-10em, calc(-50vw + 50%)); margin-right: max(-10em, calc(-50vw + 50%));"&gt;
+
+  &lt;table&gt;
+    &lt;thead&gt;
+      &lt;tr&gt;
+        &lt;th&gt;reason&lt;/th&gt;
+        &lt;th&gt;method&lt;/th&gt;
+        &lt;th&gt;count&lt;/th&gt;
+      &lt;/tr&gt;
+    &lt;/thead&gt;
+    &lt;tbody&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardShape(ShapeId(2475))&lt;/td&gt;
+        &lt;td&gt;ActiveModel::AttributeRegistration::ClassMethods#attribute_types&lt;/td&gt;
+        &lt;td&gt;5119&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardShape(ShapeId(2099268))&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::ConnectionAdapters::AbstractAdapter#extended_type_map_key&lt;/td&gt;
+        &lt;td&gt;2295&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardType(FalseClass)&lt;/td&gt;
+        &lt;td&gt;ActiveModel::Type::Value#cast&lt;/td&gt;
+        &lt;td&gt;1025&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardShape(ShapeId(2099698))&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::Associations#association_instance_get&lt;/td&gt;
+        &lt;td&gt;904&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;BlockParamProxyNotIseqOrIfunc&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::AttributeMethods::Read#_read_attribute&lt;/td&gt;
+        &lt;td&gt;902&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardShape(ShapeId(526450))&lt;/td&gt;
+        &lt;td&gt;Rack::Request::Env#get_header&lt;/td&gt;
+        &lt;td&gt;636&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardType(Class[class_exact*:Class@VALUE(0x128c60100)])&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::Base._reflections&lt;/td&gt;
+        &lt;td&gt;622&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardType(ObjectSubclass[class_exact:Story])&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::Associations#association&lt;/td&gt;
+        &lt;td&gt;565&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardShape(ShapeId(2098982))&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::Reflection::AssociationReflection#polymorphic?&lt;/td&gt;
+        &lt;td&gt;510&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardType(StringSubclass[class_exact:ActiveSupport::SafeBuffer])&lt;/td&gt;
+        &lt;td&gt;ActionView::OutputBuffer#&amp;lt;&amp;lt;&lt;/td&gt;
+        &lt;td&gt;500&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardShape(ShapeId(2475))&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::AttributeMethods::PrimaryKey::ClassMethods#primary_key&lt;/td&gt;
+        &lt;td&gt;492&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardType(ObjectSubclass[class_exact:ActiveModel::Type::String])&lt;/td&gt;
+        &lt;td&gt;ActiveModel::Type::Value#deserialize&lt;/td&gt;
+        &lt;td&gt;442&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardShape(ShapeId(2098982))&lt;/td&gt;
+        &lt;td&gt;ActiveRecord::Reflection::AssociationReflection#deprecated?&lt;/td&gt;
+        &lt;td&gt;376&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;GuardType(ObjectSubclass[class_exact:Bundler::Dependency])&lt;/td&gt;
+        &lt;td&gt;Gem::Dependency#matches_spec?&lt;/td&gt;
+        &lt;td&gt;355&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td&gt;UnhandledHIRInvokeBuiltin&lt;/td&gt;
+        &lt;td&gt;Time#initialize&lt;/td&gt;
+        &lt;td&gt;346&lt;/td&gt;
+      &lt;/tr&gt;
+    &lt;/tbody&gt;
+  &lt;/table&gt;
+
+&lt;/div&gt;
+
+&lt;p&gt;Looks like we should figure out why we’re having shape misses so much and that will
+clear up a lot of exits. (Hint: it’s because once we make our first guess about
+what we think the object shape will be, we don’t re-assess… &lt;strong&gt;yet&lt;/strong&gt;.)&lt;/p&gt;
+
+&lt;p&gt;This has been a taste of Perfetto. There’s probably a lot more to explore.
+Please join the &lt;a href="https://zjit.zulipchat.com"&gt;ZJIT Zulip&lt;/a&gt; and let us know if you have any cool
+tracing or exploring tricks.&lt;/p&gt;
+
+&lt;p&gt;Now I’ll explain how you too can use Perfetto from your system. Adding support
+to ZJIT was pretty straightforward.&lt;/p&gt;
+
+&lt;h2 id="implementation"&gt;Implementation&lt;/h2&gt;
+
+&lt;p&gt;The first thing is that you’ll need some way to get trace data out of your
+system. We write to a file with a well-known location
+(&lt;code class="language-plaintext highlighter-rouge"&gt;/tmp/perfetto-PID.fxt&lt;/code&gt;), but you could do any number of things. Perhaps you
+can stream events over a socket to another process, or to a server that
+aggregates them, or store them internally and expose a webserver that serves
+them over the internet, or… anything, really.&lt;/p&gt;
+
+&lt;p&gt;Once you have that, you need a couple lines of code to emit the data. Perfetto
+accepts a number of formats. For example, in his &lt;a href="https://thume.ca/2023/12/02/tracing-methods/"&gt;excellent blog post&lt;/a&gt;,
+Tristan Hume opens with such a simple snippet of code for logging Chromium
+Trace JSON-formatted events (lightly modified by me):&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;event_name&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;timestamp&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;duration&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;f&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nb"&gt;open&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;'trace.json'&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="s"&gt;'a'&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="k"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"["&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="c1"&gt;# ... emit some events here ...
+&lt;/span&gt;
+&lt;span class="c1"&gt;# Log a single event
+&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="k"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;'{"name": "%s", "ts": %d, "dur": %d, "cat": "hi", "ph": "X", "pid": 1, "tid": 1, "args": {}},&lt;/span&gt;&lt;span class="se"&gt;\n&lt;/span&gt;&lt;span class="s"&gt;'&lt;/span&gt; &lt;span class="o"&gt;%&lt;/span&gt;
+  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;event_name&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;timestamp&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;duration&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+
+&lt;span class="c1"&gt;# ... emit some events here ...
+&lt;/span&gt;
+&lt;span class="c1"&gt;# ... at process exit, close the file ...
+&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="k"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"]"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="c1"&gt;# this closing ] isn't actually required
+&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;close&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This snippet is great. It shows, end-to-end, writing a stream of one event. It
+is a &lt;em&gt;complete&lt;/em&gt; (X) event, as opposed to either:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;two discrete timestamped &lt;em&gt;begin&lt;/em&gt; (B) and &lt;em&gt;end&lt;/em&gt; (E) events that book-end
+something, or&lt;/li&gt;
+  &lt;li&gt;an &lt;em&gt;instant&lt;/em&gt; (i) event that has no duration, or&lt;/li&gt;
+  &lt;li&gt;a couple other event types in the &lt;a href="https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview"&gt;Chromium Trace Event Format doc&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;It was enough to get me started. Since it’s JSON, and we have a lot of side
+exits, the trace quickly ballooned to 8GB large for a several second benchmark.
+Not great. Now, part of this is our fault—we should side exit less—and part
+of it is just the verbosity of JSON.&lt;/p&gt;
+
+&lt;p&gt;Thankfully, Perfetto ingests more compact binary formats, such as the &lt;a href="https://fuchsia.dev/fuchsia-src/reference/tracing/trace-format"&gt;Fuchsia
+trace format&lt;/a&gt;.
+In addition to being more compact, FXT even supports string interning. After
+modifying the tracer to emit FXT, we ended with closer to 100MB for the same
+benchmark.&lt;/p&gt;
+
+&lt;p&gt;We can reduce further by &lt;em&gt;sampling&lt;/em&gt;—not writing every exit to the trace, but
+instead every &lt;em&gt;K&lt;/em&gt; exits (for some (probably prime) K). This is why we provide
+the &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-trace-exits-sample-rate=K&lt;/code&gt; option.&lt;/p&gt;
+
+&lt;p&gt;Check out the &lt;a href="https://github.com/ruby/ruby/blob/eb8051185122d4b7bc9c6a6df694a85f34ced681/zjit/src/stats.rs#L988"&gt;trace writer&lt;/a&gt; implementation from the point this article
+was written.&lt;/p&gt;
+
+&lt;h2 id="tracing-more-things"&gt;Tracing more things&lt;/h2&gt;
+
+&lt;p&gt;We could trace:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;When methods get compiled&lt;/li&gt;
+  &lt;li&gt;How big the generated code is&lt;/li&gt;
+  &lt;li&gt;How long each compile phase takes&lt;/li&gt;
+  &lt;li&gt;When (and where) invalidation events happen&lt;/li&gt;
+  &lt;li&gt;When (and where) allocations happen from JITed code&lt;/li&gt;
+  &lt;li&gt;Garbage collection events&lt;/li&gt;
+  &lt;li&gt;and more!&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+
+&lt;p&gt;Visualizations are awesome. Get your data in the right format so you can ask
+the right questions easily. Thanks for Perfetto!&lt;/p&gt;
+
+&lt;p&gt;Also, looks like visualizations are now available in Perfetto canary. Time to
+go make some fun histograms…&lt;/p&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:sampled" role="doc-endnote"&gt;
+      &lt;p&gt;This is also sampled/strobed, so not every exit is in there. This
+is just 1/K of them for some K that I don’t remember. &lt;a href="#fnref:sampled" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/zjit-perfetto/</guid>
+      <pubDate>Fri, 27 Mar 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>A fuzzer for the Toy Optimizer</title>
       <link>https://bernsteinbear.com/blog/toy-fuzzer/?utm_source=rss</link>
@@ -2972,589 +3338,6 @@ that checks for &lt;code class="language-plaintext highlighter-rouge"&gt;float_a
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/walking-around/</guid>
       <pubDate>Tue, 23 Sep 2025 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Linear scan with lifetime holes</title>
-      <link>https://bernsteinbear.com/blog/linear-scan-lifetime-holes/?utm_source=rss</link>
-      <description>
-&lt;p&gt;In my &lt;a href="/blog/linear-scan/"&gt;last post&lt;/a&gt;, I explained a bit about how to retrofit
-SSA onto the original linear scan algorithm. I went over all of the details for
-how to go from low-level IR to register assignments—liveness analysis,
-scheduling, building intervals, and the actual linear scan algorithm.&lt;/p&gt;
-
-&lt;p&gt;Basically, we made it to 1997 linear scan, with small adaptations for
-allocating directly on SSA.&lt;/p&gt;
-
-&lt;p&gt;This time, we’re going to retrofit &lt;em&gt;lifetime holes&lt;/em&gt;.&lt;/p&gt;
-
-&lt;h2 id="lifetime-holes"&gt;Lifetime holes&lt;/h2&gt;
-
-&lt;p&gt;Lifetime holes come into play because a linearized sequence of instructions is
-not a great proxy for storing or using metadata about a program originally
-stored as a graph.&lt;/p&gt;
-
-&lt;p&gt;According to &lt;a href="/assets/img/wimmer-linear-scan-ssa.pdf"&gt;Linear Scan Register Allocation on SSA Form&lt;/a&gt; (PDF,
-2010):&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;The lifetime interval of a virtual register must cover all parts where this
-register is needed, with lifetime holes in between. Lifetime holes occur
-because the control flow graph is reduced to a list of blocks before register
-allocation. If a register flows into an &lt;code class="language-plaintext highlighter-rouge"&gt;else&lt;/code&gt;-block, but not into the
-corresponding &lt;code class="language-plaintext highlighter-rouge"&gt;if&lt;/code&gt;-block, the lifetime interval has a hole for the &lt;code class="language-plaintext highlighter-rouge"&gt;if&lt;/code&gt;-block.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Lifetime holes come from &lt;a href="/assets/img/quality-speed-linear-scan-ra-clean.pdf"&gt;Quality and Speed in Linear-scan Register
-Allocation&lt;/a&gt; (PDF, 1998) by Traub, Holloway, and Smith. Figure 1,
-though not in SSA form, is a nice diagram for understanding how lifetime holes
-may occur. Unfortunately, the paper contains a rather sparse plaintext
-description of their algorithm that I did not understand how to apply to my
-concrete allocator.&lt;/p&gt;
-
-&lt;p&gt;Thankfully, other papers continued this line of research in (at least) 2002,
-2005, and 2010. We will piece snippets from those papers together to understand
-what’s going on.&lt;/p&gt;
-
-&lt;p&gt;Let’s take a look at the sample IR snippet from Wimmer2010 to illustrate how
-lifetime holes form:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;16: label B1(R10, R11):
-18: jmp B2($1, R11)
-     # vvvvvvvvvv #
-20: label B2(R12, R13)
-22: cmp R13, $1
-24: branch lessThan B4() else B3()
-
-26: label B3()
-28: mul R12, R13 -&amp;gt; R14
-30: sub R13, $1 -&amp;gt; R15
-32: jump B2(R14, R15)
-
-34: label B4()
-     # ^^^^^^^^^^ #
-36: add R10, R12 -&amp;gt; R16
-38: ret R16
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Virtual register R12 is not used between position 28 and 34. For this reason,
-Wimmer’s interval building algorithm assigns it the interval &lt;code class="language-plaintext highlighter-rouge"&gt;[[20, 28), [34,
-...)]&lt;/code&gt;. Note how the interval has two disjoint ranges with space in the middle.&lt;/p&gt;
-
-&lt;p&gt;Our simplified interval building algorithm from last time gave us—in the same
-notation—the interval &lt;code class="language-plaintext highlighter-rouge"&gt;[[20, ...)]&lt;/code&gt; (well, &lt;code class="language-plaintext highlighter-rouge"&gt;[[20, 36)]&lt;/code&gt; in our modified
-snippet). This simplified interval only supports one range with no lifetime
-holes.&lt;/p&gt;
-
-&lt;p&gt;Ideally we would be able to use the physical register assigned to R12 for
-another virtual register in this empty slot! For example, maybe R14 or R15,
-which have short lifetimes that completely fit into the hole.&lt;/p&gt;
-
-&lt;p&gt;Another example is a control-flow diamond. In this example, B1 jumps to either
-B3 or B2, which then merge at B4. Virtual register R0 is defined in B1 and only
-used in one of the branches, B3. It’s also not used in B4—if it were used in
-B4, it would be live in both B2 and B3!&lt;/p&gt;
-
-&lt;!--
-# dot IN.dot -Tsvg -Nfontname=Monospace -Efontname=Monospace &gt; OUT.svg
-
-digraph G {
-node [shape=plaintext]
-B1 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B1()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;R0 = loadi $123&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;blt →B3, →B2&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-B1:s -&gt; B3:params:n;
-B1:s -&gt; B2:params:n;
-B2 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B2()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;R1 = loadi $456&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;R2 = add R1, $1&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="2"&gt;jump →B4&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-B2:s -&gt; B4:params:n;
-B3 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B3()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;R3 = mul R0, $2&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;jump →B4&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-B3:s -&gt; B4:params:n;
-B4 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
-&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B4()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;ret $5&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
-&lt;/TABLE&gt;&gt;];
-}
---&gt;
-&lt;figure&gt;
-&lt;object class="svg" type="image/svg+xml" data="/assets/img/lsra-diamond-cfg.svg"&gt;&lt;/object&gt;
-&lt;/figure&gt;
-
-&lt;p&gt;Once we schedule it, the need for lifetime holes becomes more apparent:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;0: label B1:
-2: R0 = loadi $123
-4: blt iftrue: →B3, iffalse: →B2
-
-6: label B2:
-8: R1 = loadi $456
-10: R2 = add R1, $1
-12: jump →B4
-
-14: label B3:
-16: R3 = mul R0, $2
-18: jump →B4
-
-20: label B4:
-22: ret $5
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Since B2 gets scheduled (in this case, arbitrarily) before B3, there’s a gap
-where R0—which is completely unused in B2—would otherwise take up space in
-our simplified interval form. Let’s fix that by adding some lifetime holes.&lt;/p&gt;
-
-&lt;p&gt;&lt;strong&gt;Even though&lt;/strong&gt; we are adding some gaps between ranges, each interval still
-gets assigned &lt;em&gt;one location for its entire life&lt;/em&gt;. It’s just that in the gaps,
-we get to put other smaller intervals, like lichen growing between bricks.&lt;/p&gt;
-
-&lt;p&gt;To get lifetime holes, we have to modify our interval data structure a bit.&lt;/p&gt;
-
-&lt;h2 id="finding-lifetime-holes"&gt;Finding lifetime holes&lt;/h2&gt;
-
-&lt;p&gt;Our interval currently only supports a single range:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="nb"&gt;attr_reader&lt;/span&gt; &lt;span class="ss"&gt;:range&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;initialize&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;raise&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;raise&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;set_from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;raise&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;We can change this to support multiple ranges by changing &lt;em&gt;just one character&lt;/em&gt;!!!&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="nb"&gt;attr_reader&lt;/span&gt; &lt;span class="ss"&gt;:ranges&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;initialize&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;raise&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;raise&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;set_from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;raise&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Har har. Okay, so we now have an array of &lt;code class="language-plaintext highlighter-rouge"&gt;Range&lt;/code&gt; instead of just a single
-&lt;code class="language-plaintext highlighter-rouge"&gt;Range&lt;/code&gt;. But now we have to implement the methods differently.&lt;/p&gt;
-
-&lt;p&gt;We’ll start with &lt;code class="language-plaintext highlighter-rouge"&gt;initialize&lt;/code&gt;. The start state of an interval is an empty array
-of ranges:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;initialize&lt;/span&gt;
-    &lt;span class="vi"&gt;@ranges&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Because we’re iterating backwards through the blocks and backwards through
-instructions in each block, we’ll be starting with instruction 38 and working
-our way linearly backwards until 16.&lt;/p&gt;
-
-&lt;p&gt;This means that we’ll see later uses before earlier uses, and uses before defs.
-In order to keep the &lt;code class="language-plaintext highlighter-rouge"&gt;@ranges&lt;/code&gt; array in sorted order, we need to add each new
-range to the front. This is O(n) in an array, so use a deque or linked list.
-(Alternatively, push to the end and then reverse them afterwards.)&lt;/p&gt;
-
-&lt;!-- TODO why keep them disjoint? --&gt;
-
-&lt;p&gt;We keep the ranges in sorted order because it makes keeping them disjoint
-easier, as we’ll see in &lt;code class="language-plaintext highlighter-rouge"&gt;add_range&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;set_from&lt;/code&gt;. Let’s start with &lt;code class="language-plaintext highlighter-rouge"&gt;set_from&lt;/code&gt;
-since it’s very similar to the previous version:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;set_from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;empty?&lt;/span&gt;
-      &lt;span class="c1"&gt;# @ranges is empty when we don't have a use of the vreg&lt;/span&gt;
-      &lt;span class="vi"&gt;@ranges&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;else&lt;/span&gt;
-      &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="n"&gt;assert_sorted_and_disjoint&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;add_range&lt;/code&gt; has a couple more cases, but we’ll go through them step by step.
-First, a quick check that the range is the right way ‘round:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;=&lt;/span&gt; &lt;span class="n"&gt;from&lt;/span&gt;
-      &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="no"&gt;ArgumentError&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"Invalid range: &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt; to &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Then we have a straightforward case: if we don’t have any ranges yet, add a
-brand new one:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;empty?&lt;/span&gt;
-      &lt;span class="vi"&gt;@ranges&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="k"&gt;return&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;But if we do have ranges, this new range might be totally subsumed by the
-existing first range. This happens if a virtual register is live for the
-entirety of a block and also used inside that block. The uses that cause an
-&lt;code class="language-plaintext highlighter-rouge"&gt;add_range&lt;/code&gt; don’t add any new information:&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;first&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;cover?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="o"&gt;..&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="n"&gt;assert_sorted_and_disjoint&lt;/span&gt;
-      &lt;span class="k"&gt;return&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Another case is that the new range has a partial overlap with the existing
-first range. This happens when we’re adding ranges for all of the live-out
-virtual registers; the range for the predecessor block (say &lt;code class="language-plaintext highlighter-rouge"&gt;[4, 8]&lt;/code&gt;) will abut
-the range for the successor block (say &lt;code class="language-plaintext highlighter-rouge"&gt;[8, 12]&lt;/code&gt;). We merge these ranges into
-one big range (say, &lt;code class="language-plaintext highlighter-rouge"&gt;[4, 12]&lt;/code&gt;):&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;first&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;cover?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;first&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;end&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-      &lt;span class="n"&gt;assert_sorted_and_disjoint&lt;/span&gt;
-      &lt;span class="k"&gt;return&lt;/span&gt;
-    &lt;span class="k"&gt;end&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;The last case is the case that gives us lifetime holes and happens when the new
-range is already completely disjoint from the existing first range. That is
-also a straightforward case: put the new range in at the start of the list.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Interval&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-    &lt;span class="c1"&gt;# TODO(max): Use a linked list or deque or something to avoid O(n) insertions&lt;/span&gt;
-    &lt;span class="vi"&gt;@ranges&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;insert&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="no"&gt;Range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-    &lt;span class="n"&gt;assert_sorted_and_disjoint&lt;/span&gt;
-    &lt;span class="c1"&gt;# ...&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This is all fine and good. I added this to the register allocator to test out
-the lifetime hole finding but kept the rest of the same (changed the APIs
-slightly so the interval could pretend it was still one big range). The tests
-passed. Neat!&lt;/p&gt;
-
-&lt;p&gt;I also verified that the lifetime holes were what we expected. This means our
-&lt;code class="language-plaintext highlighter-rouge"&gt;build_intervals&lt;/code&gt; function works unmodified with the new &lt;code class="language-plaintext highlighter-rouge"&gt;Interval&lt;/code&gt;
-implementation. That makes sense, given that we copied the implementation off
-of Wimmer2010, which can deal with lifetime holes.&lt;/p&gt;
-
-&lt;p&gt;Now we would like to use this new information in the register allocator.&lt;/p&gt;
-
-&lt;h2 id="modified-linear-scan"&gt;Modified linear scan&lt;/h2&gt;
-
-&lt;p&gt;It took a little bit of untangling, but the required modifications to support
-lifetime holes in the register assignment phase are not too invasive. To get an
-idea of the difference, I took the original &lt;a href="/assets/img/linearscan-ra.pdf"&gt;Poletto1999&lt;/a&gt; (PDF) algorithm
-and rewrote it in the style of the &lt;a href="/assets/img/linear-scan-ra-context-ssa.pdf"&gt;Mössenböck2002&lt;/a&gt; (PDF)
-algorithm.&lt;/p&gt;
-
-&lt;p&gt;For example, here is Poletto1999:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;LinearScanRegisterAllocation
-active ← {}
-foreach live interval i, in order of increasing start point
-  ExpireOldIntervals(i)
-  if length(active) = R then
-    SpillAtInterval(i)
-  else
-    register[i] ← a register removed from pool of free registers
-    add i to active, sorted by increasing end point
-
-ExpireOldIntervals(i)
-foreach interval j in active, in order of increasing end point
-  if endpoint[j] ≥ startpoint[i] then
-    return
-  remove j from active
-  add register[j] to pool of free registers
-
-SpillAtInterval(i)
-spill ← last interval in active
-if endpoint[spill] &amp;gt; endpoint[i] then
-  register[i] ← register[spill]
-  location[spill] ← new stack location
-  remove spill from active
-  add i to active, sorted by increasing end point
-else
-  location[i] ← new stack location
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;And here it is again, reformatted a bit. The implicit &lt;code class="language-plaintext highlighter-rouge"&gt;unhandled&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;handled&lt;/code&gt;
-sets that don’t get names in Poletto1999 now get names. &lt;code class="language-plaintext highlighter-rouge"&gt;ExpireOldIntervals&lt;/code&gt; is
-inlined and &lt;code class="language-plaintext highlighter-rouge"&gt;SpillAtInterval&lt;/code&gt; gets a new name:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;LINEARSCAN()
-unhandled ← all intervals in increasing order of their start points
-active ← {}; handled ← {}
-free ← set of available registers
-while unhandled ≠ {} do
-  cur ← pick and remove the first interval from unhandled
-  //----- check for active intervals that expired
-  for each interval i in active do
-    if i ends before cur.beg then
-      move i to handled and add i.reg to free
-
-  //----- collect available registers in f
-  f ← free
-
-  //----- select a register from f
-  if f = {} then
-    ASSIGNMEMLOC(cur) // see below
-  else
-    cur.reg ← any register in f
-    free ← free – {cur.reg}
-    move cur to active
-
-ASSIGNMEMLOC(cur: Interval)
-spill ← last interval in active
-if spill.end &amp;gt; cur.end then
-  cur.reg ← spill.reg
-  spill.location ← new stack location
-  move spill from active to handled
-  move cur to active
-else
-  cur.location ← new stack location
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Now we can pick out all of the bits of Mössenböck2002 that look like they are
-responsible for dealing with lifetime holes.&lt;/p&gt;
-
-&lt;p&gt;For example, the algorithm now has a fourth set, &lt;code class="language-plaintext highlighter-rouge"&gt;inactive&lt;/code&gt;. This set holds
-intervals that have holes that contain the current interval’s start position.
-These intervals are assigned registers that are potential candidates for the
-current interval to live (more on this in a sec).&lt;/p&gt;
-
-&lt;p&gt;I say potential candidates because in order for them to be a home for the
-current interval, an inactive interval has to be completely disjoint from the
-current interval. If they overlap at all—in any of their ranges—then we
-would be trying to put two virtual registers into one physical register at the
-same program point. That’s a bad compile.&lt;/p&gt;
-
-&lt;p&gt;We have to do a little extra bookkeeping in &lt;code class="language-plaintext highlighter-rouge"&gt;ASSIGNMEMLOC&lt;/code&gt; because now one
-physical register can be assigned to more than one interval that is still in
-the middle of being processed (active and inactive sets). If we choose to
-spill, we have to make sure that all conflicting uses of the register
-(intervals that overlap with the current interval) get reassigned locations.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;LINEARSCAN()
-unhandled ← all intervals in increasing order of their start points
-active ← {}; handled ← {}
-inactive ← {}
-free ← set of available registers
-while unhandled ≠ {} do
-  cur ← pick and remove the first interval from unhandled
-  //----- check for active intervals that expired
-  for each interval i in active do
-    if i ends before cur.beg then
-      move i to handled and add i.reg to free
-    else if i does not overlap cur.beg then
-      move i to inactive and add i.reg to free
-  //----- check for inactive intervals that expired or become reactivated
-  for each interval i in inactive do
-    if i ends before cur.beg then
-      move i to handled
-    else if i overlaps cur.beg then
-      move i to active and remove i.reg from free
-
-  //----- collect available registers in f
-  f ← free
-  for each interval i in inactive that overlaps cur do f ← f – {i.reg}
-
-  //----- select a register from f
-  if f = {} then
-    ASSIGNMEMLOC(cur) // see below
-  else
-    cur.reg ← any register in f
-    free ← free – {cur.reg}
-    move cur to active
-
-ASSIGNMEMLOC(cur: Interval)
-spill ← heuristic: pick some interval from active or inactive
-if spill.end &amp;gt; cur.end then
-  r = spill.reg
-  conflicting = set of active or inactive intervals with register r that
-    overlap with cur
-  move all intervals in conflicting to handled
-  assign memory locations to them
-  cur.reg ← r
-  move cur to active
-else
-  cur.location ← new stack location
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Note that this begins to depart from strictly linear (time) linear scan: the
-&lt;code class="language-plaintext highlighter-rouge"&gt;inactive&lt;/code&gt; set is bounded not by the number of physical registers but instead
-by the number of virtual registers. Mössenböck2002 notes that the size of the
-&lt;code class="language-plaintext highlighter-rouge"&gt;inactive&lt;/code&gt; set is generally very small, though, so “linear in practice”.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;EDIT: After re-reading Wimmer2010, I noticed that they say:&lt;/p&gt;
-
-  &lt;blockquote&gt;
-    &lt;p&gt;[…] introduced non-linear parts. Two of them are highlighted in Figure 6
-where the set of inactive intervals is iterated. The set can contain an
-arbitrary number of intervals since it is not bound by the number of
-physical registers. Testing the current interval for intersection with all
-of them can therefore be expensive.&lt;/p&gt;
-
-    &lt;p&gt;When the lifetime intervals are created from code in SSA form, this test is
-not necessary anymore: All intervals in inactive start before the current
-interval, so they do not intersect with the current interval at their
-definition. They are inactive and thus have a lifetime hole at the current
-position, so they do not intersect with the current interval at its
-definition. SSA form therefore guarantees that they never intersect [7],
-making the entire loop that tests for intersection unnecessary.&lt;/p&gt;
-
-    &lt;p&gt;Unfortunately, splitting of intervals leads to intervals that no longer
-adhere to the SSA form properties because it destroys SSA form. Therefore,
-the intersection test cannot be omitted completely; it must be performed if
-the current interval has been split off from another interval.&lt;/p&gt;
-  &lt;/blockquote&gt;
-
-  &lt;p&gt;Which indicates to me that we may actually be able to leave off that loop
-over the inactive intervals after all? Unclear. I’ll have to come back and
-mess with this later.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;I left out the parts about register weights that are heuristics to improve
-register allocation. They are not core to supporting lifetime holes. You can
-add them back in if you like.&lt;/p&gt;
-
-&lt;p&gt;Here is a text diff to make it clear what changed:&lt;/p&gt;
-
-&lt;div class="language-diff highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gh"&gt;diff --git a/tmp/lsra b/tmp/lsra-holes
-index e9de35b..de79a63 100644
-&lt;/span&gt;&lt;span class="gd"&gt;--- a/tmp/lsra
-&lt;/span&gt;&lt;span class="gi"&gt;+++ b/tmp/lsra-holes
-&lt;/span&gt;&lt;span class="p"&gt;@@ -1,6 +1,7 @@&lt;/span&gt;
- LINEARSCAN()
- unhandled ← all intervals in increasing order of their start points
- active ← {}; handled ← {}
-&lt;span class="gi"&gt;+inactive ← {}
-&lt;/span&gt; free ← set of available registers
- while unhandled ≠ {} do
-   cur ← pick and remove the first interval from unhandled
-&lt;span class="p"&gt;@@ -8,9 +9,18 @@&lt;/span&gt; while unhandled ≠ {} do
-   for each interval i in active do
-     if i ends before cur.beg then
-       move i to handled and add i.reg to free
-&lt;span class="gi"&gt;+    else if i does not overlap cur.beg then
-+      move i to inactive and add i.reg to free
-+  //----- check for inactive intervals that expired or become reactivated
-+  for each interval i in inactive do
-+    if i ends before cur.beg then
-+      move i to handled
-+    else if i overlaps cur.beg then
-+      move i to active and remove i.reg from free
-&lt;/span&gt;
-   //----- collect available registers in f
-   f ← free
-&lt;span class="gi"&gt;+  for each interval i in inactive that overlaps cur do f ← f – {i.reg}
-&lt;/span&gt;
-   //----- select a register from f
-   if f = {} then
-&lt;span class="p"&gt;@@ -23,10 +33,10 @@&lt;/span&gt; while unhandled ≠ {} do
- ASSIGNMEMLOC(cur: Interval)
-&lt;span class="gd"&gt;-spill ← last interval in active
-&lt;/span&gt;&lt;span class="gi"&gt;+spill ← heuristic: pick some interval from active or inactive
-&lt;/span&gt; if spill.end &amp;gt; cur.end then
-&lt;span class="gd"&gt;-  cur.reg ← spill.reg
--  spill.location ← new stack location
--  move spill from active to handled
-&lt;/span&gt;&lt;span class="gi"&gt;+  r = spill.reg
-+  conflicting = set of active or inactive intervals with register r that
-+    overlap with cur
-+  move all intervals in conflicting to handled
-+  assign memory locations to them
-+  cur.reg ← r
-&lt;/span&gt;   move cur to active
- else
-   cur.location ← new stack location
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This reformatting and diffing made it much easier for me to reason about what
-specifically had to be changed.&lt;/p&gt;
-
-&lt;p&gt;There’s just one thing left after register assignment: resolution and SSA
-deconstruction.&lt;/p&gt;
-
-&lt;h2 id="resolution-and-ssa-destruction"&gt;Resolution and SSA destruction&lt;/h2&gt;
-
-&lt;p&gt;I’m pretty sure we can actually just keep the resolution the same. In our
-&lt;code class="language-plaintext highlighter-rouge"&gt;resolve&lt;/code&gt; function, we are only making sure that the block arguments get
-parallel-moved into the block parameters. That hasn’t changed.&lt;/p&gt;
-
-&lt;p&gt;Wimmer2010 says:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Linear scan register allocation with splitting of lifetime intervals requires
-a resolution phase after the actual allocation. Because the control flow
-graph is reduced to a list of blocks, control flow is possible between blocks
-that are not adjacent in the list. When the location of an interval is
-different at the end of the predecessor and at the start of the successor, a
-move instruction must be inserted to resolve the conflict.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;That’s great news for us: we don’t do splitting. An interval, though it has
-lifetime holes, still only ever has one location for its entire life. So once
-an interval begins, we don’t need to think about moving its contents.&lt;/p&gt;
-
-&lt;p&gt;So I was actually overly conservative in the previous post, which I have
-amended!&lt;/p&gt;
-
-&lt;h2 id="fixed-intervals-and-register-constraints"&gt;Fixed intervals and register constraints?&lt;/h2&gt;
-
-&lt;p&gt;Mössenböck2002 also tackles register constraints with this notion of “fixed
-intervals”—intervals that have been pre-allocated physical registers.&lt;/p&gt;
-
-&lt;p&gt;Since I eventually want to use “register hinting” from Wimmer2005 and
-Wimmer2010, I’m going to ignore the fixed interval part of Mössenböck2002 for
-now. It seems like they work nicely together.&lt;/p&gt;
-
-&lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
-
-&lt;p&gt;We added lifetime holes to our register allocator without too much effort. This
-better maps the graph-like nature of the IR onto the linear sequence of
-instructions and should get us some better allocation for short-lived virtual
-registers.&lt;/p&gt;
-
-&lt;p&gt;Maybe next time we will add &lt;em&gt;interval splitting&lt;/em&gt;, which will help us a) address
-ABI constraints more cleanly in function calls and b) remove the dependence on
-reserving a scratch register.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/linear-scan-lifetime-holes/</guid>
-      <pubDate>Sun, 24 Aug 2025 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
