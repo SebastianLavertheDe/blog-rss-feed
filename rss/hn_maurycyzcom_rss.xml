@@ -5,7 +5,175 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Fri, 03 Apr 2026 21:41:16 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 03 Apr 2026 22:39:06 +0000</lastBuildDate>
+    <item>
+      <title>Loading... [13 kB]</title>
+      <link>https://maurycyz.com/misc/13kb/</link>
+      <description>&lt;!-- mksite: start of content --&gt;
+&lt;p&gt;
+
+While testing my gopher client, I noticed something interesting:
+All downloads froze at 13 kilobytes.
+Sometimes this was barely noticeable, other times it would stall for a good second or so.
+&lt;!-- snip --&gt;
+&lt;/p&gt;
+&lt;p&gt;
+&lt;em&gt;Networks operate on small chunks of data called packets&lt;/em&gt;.
+This allows resources to be shared between computers:
+&lt;/p&gt;&lt;p&gt;
+Instead of waiting for someone else's download to finish before loading a website,
+your web traffic can be sent in between the other user's packets.
+There's still some waiting involved, but it's on the order of milliseconds instead of hours. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;... but it does create a problem if you're the one doing a big download.&lt;/em&gt;
+Because each packet is routed independently, they frequently arrive out-of-order or get lost in transit:
+Any large file would be hopelessly corrupted. 
+&lt;/p&gt;&lt;p&gt;
+&lt;h1&gt;&lt;em&gt;Transmission Control Protocol&lt;/em&gt;:&lt;/h1&gt;
+&lt;/p&gt;&lt;p&gt;
+The obvious way to solve the first problem is to number each packet.
+Even if they arrive in the wrong order, the file can be put back together correctly.
+&lt;/p&gt;
+&lt;style&gt;
+/* HTML tags, keywords, commands */
+h-n {color: #F27;}
+/* Values */
+h-v {color: #B8F;}
+/* CSS selectors, attribute/varable names, file names */
+h-s {color: #AEE;}
+/* Comments */
+h-c {color: #777;}
+h-e {color: #F6F;}
+&lt;/style&gt;
+For example, the string "Hello, World!" could be sent like this:
+&lt;pre&gt;
+#&lt;h-n&gt;1&lt;/h-n&gt;: "&lt;h-n&gt;Hello&lt;/h-n&gt;"
+#&lt;h-s&gt;2&lt;/h-s&gt;: "&lt;h-s&gt;, Wor&lt;/h-s&gt;"
+#&lt;h-v&gt;3&lt;/h-v&gt;: "&lt;h-v&gt;ld!&lt;/h-v&gt;"
+&lt;/pre&gt;
+After a trip on the internet, it gets shuffled around:
+&lt;pre&gt;
+#&lt;h-s&gt;2&lt;/h-s&gt;: "&lt;h-s&gt;, Wor&lt;/h-s&gt;"
+#&lt;h-v&gt;3&lt;/h-v&gt;: "&lt;h-v&gt;ld!&lt;/h-v&gt;"
+#&lt;h-n&gt;1&lt;/h-n&gt;: "&lt;h-n&gt;Hello&lt;/h-n&gt;"
+&lt;/pre&gt;
+... but can still be reassembled:
+&lt;pre&gt;
+"&lt;h-n&gt;Hello&lt;/h-n&gt;&lt;h-s&gt;, Wor&lt;/h-s&gt;&lt;h-v&gt;ld!&lt;/h-v&gt;"
+&lt;/pre&gt;
+&lt;p&gt;
+&lt;em&gt;To deal with packet loss,&lt;/em&gt; the receiver responds to each data packet
+with an acknowledgment containing the next sequence number the computer expects.
+&lt;/p&gt;&lt;p&gt;
+Since communication is bidirectional, I'll call the computer sending data the "server", and the computer receiving it the "client":
+&lt;/p&gt;
+&lt;pre&gt;
+Server sends:
+   #&lt;h-n&gt;1&lt;/h-n&gt;: "&lt;h-n&gt;Hello&lt;/h-n&gt;"
+   #&lt;h-s&gt;2&lt;/h-s&gt;: "&lt;h-s&gt;, Wor&lt;/h-s&gt;"
+   #&lt;h-v&gt;3&lt;/h-v&gt;: "&lt;h-v&gt;ld!&lt;/h-v&gt;"
+&lt;/pre&gt;
+&lt;p&gt;
+... but packet #2 never arrives:
+&lt;/p&gt;
+&lt;pre&gt;
+Client receives and responds:
+   #&lt;h-n&gt;1&lt;/h-n&gt;: "&lt;h-n&gt;Hello&lt;/h-n&gt;"  -&gt; ACK #&lt;h-s&gt;2&lt;/h-s&gt; (next please.)
+   &lt;h-c&gt;[ nothing ]&lt;/h-c&gt;
+   #&lt;h-v&gt;3&lt;/h-v&gt;: "&lt;h-v&gt;ld!&lt;/h-v&gt;"    -&gt; ACK #&lt;h-s&gt;2&lt;/h-s&gt; (got #&lt;h-v&gt;3&lt;/h-v&gt;, but I still need #&lt;h-s&gt;2&lt;/h-s&gt;!)
+
+Got: "&lt;h-n&gt;Hello&lt;/h-n&gt;.....&lt;h-v&gt;ld!&lt;/h-v&gt;"
+&lt;/pre&gt;
+&lt;p&gt;
+... and few milliseconds later:
+&lt;/p&gt;
+&lt;pre&gt;
+Server receives:
+   ACK #&lt;h-s&gt;2&lt;/h-s&gt;
+   ACK #&lt;h-s&gt;2&lt;/h-s&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+After waiting for enough time to rule out packet reordering or jitter, the server assumes that packet #2 got lost and sends it again:
+&lt;pre&gt;
+Server sends:
+   #&lt;h-s&gt;2&lt;/h-s&gt;: "&lt;h-s&gt;, Wor&lt;/h-s&gt;"
+&lt;/pre&gt;
+&lt;pre&gt;
+Client receives:
+   #&lt;h-s&gt;2&lt;/h-s&gt;: "&lt;h-s&gt;, Wor&lt;/h-s&gt;"    -&gt; ACK #&lt;h-e&gt;4&lt;/h-e&gt; (I already have #&lt;h-v&gt;3&lt;/h-v&gt;)
+
+Got: "&lt;h-n&gt;Hello&lt;/h-n&gt;&lt;h-s&gt;, Wor&lt;/h-s&gt;&lt;h-v&gt;ld!&lt;/h-v&gt;"
+&lt;/pre&gt;
+&lt;p&gt;
+Now, the client has all the data, and the server knows it can safely continue or close the connection.
+Modern implementations also retransmit if they see enough duplicate acknowledgment numbers, which is faster then waiting for a timeout.
+&lt;/p&gt;&lt;p&gt;
+&lt;note-box&gt;
+* Technically, these examples are wrong: TCP numbers bytes, not packets.
+&lt;/note-box&gt;
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;On paper, this is a great system&lt;/em&gt;, but in practice, it's very dangerous.
+If the network gets overloaded, routers are forced to drop packets.
+This results in systems constantly retransmitting data, creating more congestion, causing more packet loss...
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;To avoid breaking the internet (again, this happened in 1986)&lt;/em&gt;, TCP adjusts it's "congestion window":
+The number of packets are sent ahead of the last acknowledgment.
+This is a roundabout way to cap the transfer speed, because it limits how much data is sent in a singe round trip.
+&lt;/p&gt;&lt;p&gt;
+At the start of the connection, TCP's "slow start" sets the window to 10 packets.
+Each (sequential) acknowledgment received increases the window by one, causing it to double each round trip.
+&lt;/p&gt;&lt;p&gt;
+Once packet loss is observed, the window is halved,
+ and the algorithm switches to incrementing the transmit window by one packet each round trip.
+This "congestion avoidance" aims to track the maximum capacity of a network and evenly share bandwidth between systems.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;There's a bit of subtly here with how control is handed around&lt;/em&gt;:
+If a packet loss is detected by repeated acknowledgment numbers, congestion control proceeds as described.
+If it's detected by timeout, the window is reset to 1 and "slow start" takes over until half the original window size.
+&lt;/p&gt;&lt;p&gt;
+The reasoning is that if the server gets a bunch of acknowledgments, this means that most of the packets have arrived
+and are no longer taking up network resources.
+If nothing is sent back, it's possible that those packets are still on the network and it should be careful &amp;mdash;
+both to avoid creating congestion and to avoid wasting bandwidth on unnecessary retransmissions. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Anyways, if the network isn't congested&lt;/em&gt;, transfer speeds will ramp up exponentially, but that can take a while. 
+With long ping times, the client might have to wait multiple seconds to get more than the 10 initial packets.
+&lt;/p&gt;&lt;p&gt;
+In my testing, most packets contained 1368 bytes of TCP payload, for a total of 13.2 kB...
+but some variation exists because of differences hardware along the path:
+different types of link can handle different amounts of data, and things like vlans can cut into the size limit.
+&lt;/p&gt;&lt;p&gt;
+&lt;h1&gt;Why should I &lt;em&gt;care&lt;/em&gt;?&lt;/h1&gt;
+&lt;/p&gt;&lt;p&gt;
+The practical takeaway is that size matters, even on gigabit connections.
+&lt;/p&gt;&lt;p&gt;
+During the first RTT, a client will receive somewhere on the order of 13 kB.
+After two, it'll receive twice that, for a total of ~40 kB.
+After three, it'll have got ~92 kB of data.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;If you are writing a website&lt;/em&gt;, that first 13 kB should include everything needed to render the first screen's worth of content.
+This includes inlining any critical CSS or/and JavaScript.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;... although, these aren't hard numbers&lt;/em&gt;, even though "Why your website should be under X kB" makes a good blog title.
+Setting aside network variations, HTTP headers and encryption can take up quite a bit of data.
+On the flip side, HTTP compression can save space.
+&lt;/p&gt;&lt;p&gt;
+&lt;/p&gt;
+&lt;h1&gt;Related:&lt;/h1&gt;
+&lt;link-box&gt;
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href=https://datatracker.ietf.org/doc/html/rfc9293&gt;https://datatracker.ietf.org/doc/html/rfc9293&lt;/a&gt;: TCP standard.&lt;/li&gt;
+  &lt;li&gt;&lt;a href=https://datatracker.ietf.org/doc/html/rfc5681&gt;https://datatracker.ietf.org/doc/html/rfc5681&lt;/a&gt;: Congestion Control.&lt;/li&gt;
+  &lt;li&gt;&lt;a href=/projects/gopher/&gt;/projects/gopher/&lt;/a&gt;: That gopher client&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/link-box&gt;
+&lt;p&gt;
+&lt;/p&gt;
+&lt;!-- mksite: end of content --&gt;
+				</description>
+      <guid isPermaLink="true">http://maurycyz.com/misc/13kb/</guid>
+      <pubDate>Fri, 03 Apr 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>My ramblings are available over gopher</title>
       <link>https://maurycyz.com/misc/gopher/</link>
@@ -633,99 +801,6 @@ If you want a small browser, there are far more complete and well-tested options
 				</description>
       <guid isPermaLink="true">http://maurycyz.com/projects/tinyweb/</guid>
       <pubDate>Thu, 12 Mar 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Remove annoying banners</title>
-      <link>https://maurycyz.com/projects/fixsite/</link>
-      <description>&lt;!-- mksite: start of content --&gt;
-&lt;p&gt;
-
-This is a small javascript snippet that removes most annoying website elements:
-&lt;/p&gt;
-&lt;style&gt;
-/* HTML tags, keywords, commands */
-h-n {color: #F27;}
-/* Values */
-h-v {color: #B8F;}
-/* CSS selectors, attribute/varable names, file names */
-h-s {color: #AEE;}
-/* Comments */
-h-c {color: #777;}
-&lt;/style&gt;
-&lt;pre&gt;
-&lt;h-c&gt;// For everything on the page...&lt;/h-c&gt;
-(&lt;h-s&gt;document&lt;/h-s&gt;.&lt;h-n&gt;querySelectorAll&lt;/h-n&gt;(&lt;h-v&gt;'*'&lt;/h-v&gt;).&lt;h-n&gt;forEach&lt;/h-n&gt;((node) &lt;h-n&gt;=&amp;gt;&lt;/h-n&gt; {
-        &lt;h-c&gt;// Read style information&lt;/h-c&gt;
-        &lt;h-n&gt;var&lt;/h-n&gt; &lt;h-s&gt;style&lt;/h-s&gt; = &lt;h-n&gt;getComputedStyle&lt;/h-n&gt;(&lt;h-s&gt;node&lt;/h-s&gt;);
-
-        &lt;h-c&gt;// Remove "dick bars" and the such&lt;/h-c&gt;
-        &lt;h-n&gt;var&lt;/h-n&gt; &lt;h-s&gt;bad&lt;/h-s&gt; = (&lt;h-s&gt;a&lt;/h-s&gt;)&lt;h-n&gt;=&amp;gt;&lt;/h-n&gt;([&lt;h-v&gt;"fixed"&lt;/h-v&gt;,&lt;h-v&gt;"sticky"&lt;/h-v&gt;,&lt;h-v&gt;"hidden"&lt;/h-v&gt;,&lt;h-v&gt;"clip"&lt;/h-v&gt;].&lt;h-n&gt;includes&lt;/h-n&gt;(&lt;h-s&gt;a&lt;/h-s&gt;));
-        &lt;h-n&gt;if&lt;/h-n&gt; (&lt;h-n&gt;bad&lt;/h-n&gt;(&lt;h-s&gt;style&lt;/h-s&gt;.&lt;h-s&gt;position&lt;/h-s&gt;))
-                &lt;h-s&gt;node&lt;/h-s&gt;.&lt;h-s&gt;parentNode&lt;/h-s&gt;.&lt;h-n&gt;removeChild&lt;/h-n&gt;(&lt;h-s&gt;node&lt;/h-s&gt;);
-
-        &lt;h-c&gt;// Show hidden content&lt;/h-c&gt;
-        &lt;h-n&gt;if&lt;/h-n&gt; (&lt;h-n&gt;bad&lt;/h-n&gt;(&lt;h-s&gt;style&lt;/h-s&gt;.&lt;h-s&gt;overflow&lt;/h-s&gt;))  &lt;h-s&gt;node&lt;/h-s&gt;.&lt;h-s&gt;style&lt;/h-s&gt;.&lt;h-s&gt;overflow&lt;/h-s&gt;  = &lt;h-v&gt;"visible"&lt;/h-v&gt;;
-        &lt;h-n&gt;if&lt;/h-n&gt; (&lt;h-n&gt;bad&lt;/h-n&gt;(&lt;h-s&gt;style&lt;/h-s&gt;.&lt;h-s&gt;overflowX&lt;/h-s&gt;)) &lt;h-s&gt;node&lt;/h-s&gt;.&lt;h-s&gt;style&lt;/h-s&gt;.&lt;h-s&gt;overflowX&lt;/h-s&gt; = &lt;h-v&gt;"visible"&lt;/h-v&gt;;
-        &lt;h-n&gt;if&lt;/h-n&gt; (&lt;h-n&gt;bad&lt;/h-n&gt;(&lt;h-s&gt;style&lt;/h-s&gt;.&lt;h-s&gt;overflowY&lt;/h-s&gt;)) &lt;h-s&gt;node&lt;/h-s&gt;.&lt;h-s&gt;style&lt;/h-s&gt;.&lt;h-s&gt;overflowY&lt;/h-s&gt; = &lt;h-v&gt;"visible"&lt;/h-v&gt;;
-}),&lt;h-v&gt;null&lt;/h-v&gt;)
-&lt;/pre&gt;
-&lt;p&gt;
-&lt;!-- snip --&gt;
-&lt;/p&gt;
-&lt;p&gt;
-It's really simple: removing anything that doesn't scroll with the page, and enabling scrolling if it's been disabled.
-This gets rid of cookie popups/banners, recommend&amp;shy;ation sidebars,
-those annoying headers that follow you down the page, etc, etc.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;If you don't want to mess around with the JS console&lt;/em&gt;, you can drag this link into your bookmark bar, and run it by clicking the bookmark:
-&lt;/p&gt;&lt;p&gt;
-&lt;a href="javascript:(document.querySelectorAll(%27*%27).forEach((node)%3D%3E%7Bvar%20style%3DgetComputedStyle(node)%3Bvar%20bad%3D(a)%3D%3E(%5B%22fixed%22%2C%22sticky%22%2C%22hidden%22%2C%22clip%22%5D.includes(a))%3Bif(bad(style.position))node.parentNode.removeChild(node)%3Bif(bad(style.overflow))node.style.overflow%3D%22visible%22%3Bif%20(bad(style.overflowX))node.style.overflowX%3D%22visible%22%3Bif%20(bad(style.overflowY))node.style.overflowY%3D%22visible%22%3B%7D)%2Cnull)"&gt;Cleanup Site&lt;/a&gt;
-&lt;/p&gt;&lt;p&gt;
-If you need to manually create the bookmark, here's the URL:
-&lt;/p&gt;
-&lt;pre&gt;
-javascript:(document.querySelectorAll(%27*%27).forEach((node)%3D%3E%7Bvar%20style%3DgetComputedStyle(node)%3Bvar%20bad%3D(a)%3D%3E(%5B%22fixed%22%2C%22sticky%22%2C%22hidden%22%2C%22clip%22%5D.includes(a))%3Bif(bad(style.position))node.parentNode.removeChild(node)%3Bif(bad(style.overflow))node.style.overflow%3D%22visible%22%3Bif%20(bad(style.overflowX))node.style.overflowX%3D%22visible%22%3Bif%20(bad(style.overflowY))node.style.overflowY%3D%22visible%22%3B%7D)%2Cnull)
-&lt;/pre&gt;
-&lt;p&gt;
-(On mobile chrome, you will have to click the bookmark from the address bar instead of the menu.)
-&lt;/p&gt;&lt;p&gt;
-&lt;p&gt;
-&lt;em&gt;This is a typical website before the script&lt;/em&gt;:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/projects/fixsite/before.png&gt;
-&lt;/p&gt;&lt;p&gt;
-... and after:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/projects/fixsite/after.png&gt;
-&lt;/p&gt;&lt;p&gt;
-One click to get all your screen space back.
-It even works on very complex sites like social media &amp;mdash;
-great for when you want to read a longer post without constant distractions.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;As a bonus, I made these to fix bad color schemes:&lt;/em&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;a href="javascript:(document.querySelectorAll(%27*%27).forEach((a)%20%3D%3E%20%7Ba.style.color%3D%22white%22%3Ba.style.backgroundColor%3D%22black%22%3B%7D)%2Cnull)"&gt;
-Force dark mode
-&lt;/a&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-javascript:(document.querySelectorAll(%27*%27).forEach((a)%20%3D%3E%20%7Ba.style.color%3D%22white%22%3Ba.style.backgroundColor%3D%22black%22%3B%7D)%2Cnull)
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-... and ...
-&lt;/p&gt;&lt;p&gt;
-&lt;a href="javascript:(document.querySelectorAll(%27*%27).forEach((a)%20%3D%3E%20%7Ba.style.color%3D%22black%22%3Ba.style.backgroundColor%3D%22white%22%3B%7D)%2Cnull)"&gt;
-Force light mode
-&lt;/a&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-javascript:(document.querySelectorAll(%27*%27).forEach((a)%20%3D%3E%20%7Ba.style.color%3D%22black%22%3Ba.style.backgroundColor%3D%22white%22%3B%7D)%2Cnull)
-&lt;/pre&gt;
-&lt;/p&gt;
-&lt;!-- mksite: end of content --&gt;
-				</description>
-      <guid isPermaLink="true">http://maurycyz.com/projects/fixsite/</guid>
-      <pubDate>Sat, 07 Mar 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
