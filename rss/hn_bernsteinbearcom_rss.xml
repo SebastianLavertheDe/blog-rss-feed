@@ -5,7 +5,657 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Sat, 04 Apr 2026 20:39:12 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 04 Apr 2026 21:37:24 +0000</lastBuildDate>
+    <item>
+      <title>Value numbering</title>
+      <link>https://bernsteinbear.com/blog/value-numbering/?utm_source=rss</link>
+      <description>&lt;p&gt;Welcome back to compiler land. Today we’re going to talk about &lt;em&gt;value
+numbering&lt;/em&gt;, which is like SSA, but more.&lt;/p&gt;
+
+&lt;p&gt;Static single assignment (SSA) gives names to values: every expression has a
+name, and each name corresponds to exactly one expression. It transforms
+programs like this:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;where the variable &lt;code class="language-plaintext highlighter-rouge"&gt;x&lt;/code&gt; is assigned more than once in the program text, into
+programs like this:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;v2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;where each assignment to &lt;code class="language-plaintext highlighter-rouge"&gt;x&lt;/code&gt; has been replaced with an assignment to a new
+fresh name.&lt;/p&gt;
+
+&lt;p&gt;It’s great because it makes clear the differences between the two &lt;code class="language-plaintext highlighter-rouge"&gt;x + 1&lt;/code&gt;
+expressions. Though they textually look similar, they compute different values.
+The first computes 1 and the second computes 2. In this example, it is not
+possible to substitute in a variable and re-use the value of &lt;code class="language-plaintext highlighter-rouge"&gt;x + 1&lt;/code&gt;, because
+the &lt;code class="language-plaintext highlighter-rouge"&gt;x&lt;/code&gt;s are different.&lt;/p&gt;
+
+&lt;p&gt;But what if we see two “textually” identical instructions in SSA? That sounds
+much more promising than non-SSA because the transformation into SSA form has
+removed (much of) the statefulness of it all. When can we re-use the result?&lt;/p&gt;
+
+&lt;p&gt;Identifying instructions that are known at compile-time to always produce the
+same value at run-time is called &lt;em&gt;value numbering&lt;/em&gt;. &lt;!-- This is also called common
+subexpression elimination (CSE), though for some reason the two mean slightly
+different things to different groups of people. --&gt;&lt;/p&gt;
+
+&lt;h2 id="eliminating-common-subexpressions"&gt;Eliminating common subexpressions&lt;/h2&gt;
+
+&lt;p&gt;To understand value numbering, let’s extend the above IR snippet with two more
+instructions, v3 and v4.&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;v2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;v3&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;  &lt;span class="c1"&gt;# new
+&lt;/span&gt;&lt;span class="n"&gt;v4&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;do_something&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;v2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v3&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;  &lt;span class="c1"&gt;# new
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;In this new snippet, v3 looks the same as v1: adding v0 and 1. Assuming our
+addition operation is some ideal mathematical addition, we can absolutely
+re-use v1; no need to compute the addition again. We can rewrite the IR to
+something like:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;v2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;v3&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v1&lt;/span&gt;
+&lt;span class="n"&gt;v4&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;do_something&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;v2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v3&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This is kind of similar to the destructive union-find representation that
+JavaScriptCore and a couple other compilers use, where the optimizer doesn’t
+eagerly re-write all uses but instead leaves a little breadcrumb
+&lt;code class="language-plaintext highlighter-rouge"&gt;Identity&lt;/code&gt;/&lt;code class="language-plaintext highlighter-rouge"&gt;Assign&lt;/code&gt; instruction&lt;sup id="fnref:cinder" role="doc-noteref"&gt;&lt;a href="#fn:cinder" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
+
+&lt;p&gt;We could then run our copy propagation pass (“union-find cleanup”?) and get:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v0&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;v2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;v1&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;v4&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;do_something&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;v2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Great. But how does this happen? How does an optimizer identify reusable
+instruction candidates that are “textually identical”? Generally, there is &lt;a href="https://pointersgonewild.com/2011/10/07/optimizing-global-value-numbering/"&gt;no
+actual text in the
+IR&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;One popular solution is to compute a hash of each instruction. Then any
+instructions with the same hash (that also compare equal, in case of
+collisions) are considered equivalent. This is called &lt;em&gt;hash-consing&lt;/em&gt;.&lt;/p&gt;
+
+&lt;p&gt;When trying to figure all this out, I read through a couple of different
+implementations. I particularly like the &lt;a href="https://maxine-vm.readthedocs.io/en/stable/"&gt;Maxine VM&lt;/a&gt; implementation.
+For example, here is the &lt;code class="language-plaintext highlighter-rouge"&gt;valueNumber&lt;/code&gt; (hashing) and &lt;code class="language-plaintext highlighter-rouge"&gt;valueEqual&lt;/code&gt;
+functions for most binary operations, slightly modified for clarity:&lt;/p&gt;
+
+&lt;div class="language-java highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="kd"&gt;public&lt;/span&gt; &lt;span class="kd"&gt;abstract&lt;/span&gt; &lt;span class="kd"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Instruction&lt;/span&gt; &lt;span class="kd"&gt;extends&lt;/span&gt; &lt;span class="nc"&gt;Value&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt; &lt;span class="o"&gt;...&lt;/span&gt; &lt;span class="o"&gt;}&lt;/span&gt;
+
+&lt;span class="c1"&gt;// The base class for binary operations&lt;/span&gt;
+&lt;span class="kd"&gt;public&lt;/span&gt; &lt;span class="kd"&gt;abstract&lt;/span&gt; &lt;span class="kd"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Op2&lt;/span&gt; &lt;span class="kd"&gt;extends&lt;/span&gt; &lt;span class="nc"&gt;Instruction&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+    &lt;span class="c1"&gt;// Each binary operation has an opcode and two opearands&lt;/span&gt;
+    &lt;span class="kd"&gt;public&lt;/span&gt; &lt;span class="kd"&gt;final&lt;/span&gt; &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;opcode&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;  &lt;span class="c1"&gt;// (IMUL, IADD, ...)&lt;/span&gt;
+    &lt;span class="nc"&gt;Value&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+    &lt;span class="nc"&gt;Value&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+
+    &lt;span class="nd"&gt;@Override&lt;/span&gt;
+    &lt;span class="kd"&gt;public&lt;/span&gt; &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="nf"&gt;valueNumber&lt;/span&gt;&lt;span class="o"&gt;()&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+        &lt;span class="c1"&gt;// There are other fields but only opcode, and operands get hashed.&lt;/span&gt;
+        &lt;span class="c1"&gt;// Always set at least one bit in case the hash wraps to zero.&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="mh"&gt;0x20000000&lt;/span&gt;
+        &lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;opcode&lt;/span&gt;
+           &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;7&lt;/span&gt;  &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="nc"&gt;System&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;identityHashCode&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt;
+           &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;11&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="nc"&gt;System&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;identityHashCode&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="o"&gt;));&lt;/span&gt;
+    &lt;span class="o"&gt;}&lt;/span&gt;
+
+    &lt;span class="nd"&gt;@Override&lt;/span&gt;
+    &lt;span class="kd"&gt;public&lt;/span&gt; &lt;span class="kt"&gt;boolean&lt;/span&gt; &lt;span class="nf"&gt;valueEqual&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="nc"&gt;Instruction&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="k"&gt;instanceof&lt;/span&gt; &lt;span class="nc"&gt;Op2&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+            &lt;span class="nc"&gt;Op2&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="nc"&gt;Op2&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+            &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;opcode&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;opcode&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;x&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;y&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+        &lt;span class="o"&gt;}&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+    &lt;span class="o"&gt;}&lt;/span&gt;
+&lt;span class="o"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The rest of the value numbering implementation assumes that if a &lt;code class="language-plaintext highlighter-rouge"&gt;valueNumber&lt;/code&gt;
+function returns 0, it does not wish to be considered for value
+numbering. Why might an instruction opt-out of value numbering?&lt;/p&gt;
+
+&lt;h2 id="pure-vs-impure"&gt;Pure vs impure&lt;/h2&gt;
+
+&lt;p&gt;An instruction might opt out of value numbering if it is not “pure”.&lt;/p&gt;
+
+&lt;p&gt;Some instructions are not pure. Purity is in the eye of the beholder, but in
+general it means that an instruction does not interact with the state of the
+outside world, except for trivial computation on its operands. (What does it
+mean to de-duplicate/cache/reuse &lt;code class="language-plaintext highlighter-rouge"&gt;printf&lt;/code&gt;?)&lt;/p&gt;
+
+&lt;p&gt;A load from an array object is also not a pure operation&lt;sup id="fnref:heap-ssa" role="doc-noteref"&gt;&lt;a href="#fn:heap-ssa" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt;. The load operation
+implicitly relies on the state of the memory. Also, even if the array was
+known-constant, in some runtime
+systems, the load might raise an exception. Changing the source location where
+an exception is raised is generally frowned upon. Languages such as Java often
+have requirements about where exceptions are raised codified in their
+specifications.&lt;/p&gt;
+
+&lt;p&gt;We’ll work only on pure operations for now, but we’ll come back to this later.
+We do often want to optimize impure operations as well!&lt;/p&gt;
+
+&lt;p&gt;We’ll start off with the simplest form of value numbering, which operates only
+on linear sequences of instructions, like basic blocks or traces.&lt;/p&gt;
+
+&lt;h2 id="local-value-numbering"&gt;Local value numbering&lt;/h2&gt;
+
+&lt;p&gt;Let’s build a small implementation of local value numbering (LVN). We’ll start with
+straight-line code—no branches or anything tricky.&lt;/p&gt;
+
+&lt;p&gt;Most compiler optimizations on control-flow graphs (CFGs) iterate over the
+instructions “top to bottom”&lt;sup id="fnref:order" role="doc-noteref"&gt;&lt;a href="#fn:order" class="footnote" rel="footnote"&gt;3&lt;/a&gt;&lt;/sup&gt; and it seems like we can do the same thing
+here too.&lt;/p&gt;
+
+&lt;p&gt;From what we’ve seen so far optimizing our made-up IR snippet, we can do
+something like this:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;initialize a map from instruction numbers to instruction pointers&lt;/li&gt;
+  &lt;li&gt;for each instruction &lt;code class="language-plaintext highlighter-rouge"&gt;i&lt;/code&gt;
+    &lt;ul&gt;
+      &lt;li&gt;if &lt;code class="language-plaintext highlighter-rouge"&gt;i&lt;/code&gt; wants to participate in value numbering
+        &lt;ul&gt;
+          &lt;li&gt;if &lt;code class="language-plaintext highlighter-rouge"&gt;i&lt;/code&gt;’s value number is already in the map, replace all pointers to &lt;code class="language-plaintext highlighter-rouge"&gt;i&lt;/code&gt;
+in the rest of the program with the corresponding value from the map&lt;/li&gt;
+          &lt;li&gt;otherwise, add &lt;code class="language-plaintext highlighter-rouge"&gt;i&lt;/code&gt; to the map&lt;/li&gt;
+        &lt;/ul&gt;
+      &lt;/li&gt;
+    &lt;/ul&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;The find-and-replace, remember, is not a literal find-and-replace, but instead
+something like:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;instr&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;opcode&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s"&gt;"Assign"&lt;/span&gt;
+&lt;span class="n"&gt;instr&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;operands&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;replacement&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;or&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;instr&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;make_equal_to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;replacement&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;(if you have been following along with the &lt;a href="https://pypy.org/categories/toy-optimizer.html"&gt;toy optimizer&lt;/a&gt; series)&lt;/p&gt;
+
+&lt;p&gt;This several-line function (as long as you already have a hash map and a
+union-find available to you) is enough to build local value numbering! And real
+compilers are built this way, too.&lt;/p&gt;
+
+&lt;p&gt;If you don’t believe me, take a look at this slightly edited snippet from
+&lt;a href="https://maxine-vm.readthedocs.io/en/stable/"&gt;Maxine’s&lt;/a&gt; value numbering implementation. It has all of the components
+we just talked about: iterating over instructions, map lookup, and some
+substitution.&lt;/p&gt;
+
+&lt;div class="language-java highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;// Local value numbering&lt;/span&gt;
+&lt;span class="nc"&gt;BlockBegin&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;...;&lt;/span&gt;
+&lt;span class="nc"&gt;ValueMap&lt;/span&gt; &lt;span class="n"&gt;currentMap&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="nc"&gt;ValueMap&lt;/span&gt;&lt;span class="o"&gt;();&lt;/span&gt;
+&lt;span class="nc"&gt;InstructionSubstituter&lt;/span&gt; &lt;span class="n"&gt;subst&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="nc"&gt;InstructionSubstituter&lt;/span&gt;&lt;span class="o"&gt;();&lt;/span&gt;
+
+&lt;span class="c1"&gt;// visit all instructions of this block&lt;/span&gt;
+&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="nc"&gt;Instruction&lt;/span&gt; &lt;span class="n"&gt;instr&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;next&lt;/span&gt;&lt;span class="o"&gt;();&lt;/span&gt; &lt;span class="n"&gt;instr&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="kc"&gt;null&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt; &lt;span class="n"&gt;instr&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;instr&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;next&lt;/span&gt;&lt;span class="o"&gt;())&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+    &lt;span class="c1"&gt;// attempt value numbering (uses valueNumber() and valueEqual())&lt;/span&gt;
+    &lt;span class="c1"&gt;//&lt;/span&gt;
+    &lt;span class="c1"&gt;// return a previous instruction if it exists in the map, or insert the&lt;/span&gt;
+    &lt;span class="c1"&gt;// current instruction into the map and return it&lt;/span&gt;
+    &lt;span class="nc"&gt;Instruction&lt;/span&gt; &lt;span class="n"&gt;f&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;currentMap&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;findInsert&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;instr&lt;/span&gt;&lt;span class="o"&gt;);&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;instr&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+        &lt;span class="c1"&gt;// remember the replacement in the union-find&lt;/span&gt;
+        &lt;span class="n"&gt;subst&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;setSubst&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;instr&lt;/span&gt;&lt;span class="o"&gt;,&lt;/span&gt; &lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="o"&gt;);&lt;/span&gt;
+    &lt;span class="o"&gt;}&lt;/span&gt;
+&lt;span class="o"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This alone will get you pretty far. Code generators of all shapes tend to leave
+messy repeated computations all over their generated code and this will make
+short work of them.&lt;/p&gt;
+
+&lt;p&gt;Sometimes, though, your computations are spread across control flow—over
+multiple basic blocks. What do you do then?&lt;/p&gt;
+
+&lt;!--
+## Equivalence classes
+--&gt;
+
+&lt;h2 id="global-value-numbering"&gt;Global value numbering&lt;/h2&gt;
+
+&lt;p&gt;Computing value numbers for an entire function is called &lt;em&gt;global value
+numbering&lt;/em&gt; (GVN) and it requires dealing with control flow (if, loops, etc). I
+don’t just mean that for an entire function, we run local value numbering
+block-by-block. Global value numbering implies that expressions can be
+de-duplicated and shared across blocks.&lt;/p&gt;
+
+&lt;p&gt;Let’s tackle control flow case by case.&lt;/p&gt;
+
+&lt;p&gt;First is the simple case from above: one block. In this case, we can go top to
+bottom with our value numbering and do alright.&lt;/p&gt;
+
+&lt;figure&gt;
+  &lt;object class="svg" type="image/svg+xml" data="/assets/img/gvn-one-block.svg"&gt;&lt;/object&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;The second case is also reasonable to handle: one block flowing into another. In this
+case, we can still go top to bottom. We just have to find a way to iterate over
+the blocks.&lt;/p&gt;
+
+&lt;p&gt;If we’re not going to share value maps between blocks, the order doesn’t
+matter. But since the point of global value numbering is to share values, we
+have to iterate them in topological order (reverse post order (RPO)). This
+ensures that predecessors get visited before successors. If you have &lt;code class="language-plaintext highlighter-rouge"&gt;bb0 -&amp;gt;
+bb1&lt;/code&gt;, we have to visit first &lt;code class="language-plaintext highlighter-rouge"&gt;bb0&lt;/code&gt; and then &lt;code class="language-plaintext highlighter-rouge"&gt;bb1&lt;/code&gt;.&lt;/p&gt;
+
+&lt;p&gt;Because of how SSA works and how CFGs work, the second block can “look up” into
+the first block and use the values from it. To get global value numbering
+working, we have to copy &lt;code class="language-plaintext highlighter-rouge"&gt;bb0&lt;/code&gt;’s value map before we start processing &lt;code class="language-plaintext highlighter-rouge"&gt;bb1&lt;/code&gt; so
+we can re-use the instructions.&lt;/p&gt;
+
+&lt;figure&gt;
+  &lt;object class="svg" type="image/svg+xml" data="/assets/img/gvn-two-blocks.svg"&gt;&lt;/object&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;Maybe something like:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;value_map&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ValueMap&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;function&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;reverse_post_order&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="n"&gt;local_value_numbering&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;value_map&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Then the expressions can accrue across blocks. &lt;code class="language-plaintext highlighter-rouge"&gt;bb1&lt;/code&gt; can re-use the
+already-computed &lt;code class="language-plaintext highlighter-rouge"&gt;Add v0, 1&lt;/code&gt; from &lt;code class="language-plaintext highlighter-rouge"&gt;bb0&lt;/code&gt; because it is still in the map.&lt;/p&gt;
+
+&lt;p&gt;…but this breaks as soon as you have control-flow splits. Consider the
+following shape graph:&lt;/p&gt;
+
+&lt;!--
+digraph G {
+  node [shape=square];
+  A -&gt; B;
+  A -&gt; C;
+}
+--&gt;
+&lt;figure&gt;
+  &lt;object class="svg" type="image/svg+xml" data="/assets/img/gvn-split.svg"&gt;&lt;/object&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;We’re going to iterate over that graph in one of two orders: A B C or A C B. In
+either case, we’re going to be adding all this stuff into the value map from
+one block (say, B) that is not actually available to its sibling block (say,
+C).&lt;/p&gt;
+
+&lt;p&gt;When I say “not available”, I mean “would not have been computed before”. This
+is because we execute either A then B or A then C. There’s no world in which we
+execute B then C.&lt;/p&gt;
+
+&lt;p&gt;But alright, look at a third case where there is such a world: a control-flow
+join. In this diagram, we have two predecessor blocks B and C each flowing into
+D. In this diagram, B &lt;em&gt;always&lt;/em&gt; flows into D and also C &lt;em&gt;always&lt;/em&gt; flows into D.
+So the iterator order is fine, right?&lt;/p&gt;
+
+&lt;!--
+digraph G {
+  node [shape=square];
+  A -&gt; B;
+  A -&gt; C;
+  B -&gt; D;
+  C -&gt; D;
+}
+--&gt;
+&lt;figure&gt;
+  &lt;object class="svg" type="image/svg+xml" data="/assets/img/gvn-join.svg"&gt;&lt;/object&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;Well, still no. We have the same sibling problem as before. B and C still can’t
+share value maps.&lt;/p&gt;
+
+&lt;p&gt;We also have a weird question when we enter D: where did we come from? If we
+came from B, we can re-use expressions from B. If we came from C, we can re-use
+expressions from C. But we cannot in general know which predecessor block we
+came from.&lt;/p&gt;
+
+&lt;p&gt;The only block we know &lt;em&gt;for sure&lt;/em&gt; that we executed before D is A. This means we
+can re-use A’s value map in D because we can guarantee that all execution paths
+that enter D have previously gone through A.&lt;/p&gt;
+
+&lt;p&gt;This relationship is called a &lt;em&gt;dominator&lt;/em&gt; relationship and this is the key to
+one style of global value numbering that we’re going to talk about in this
+post. A block can always use the value map from any other block that dominates
+it. For completeness’ sake, in the diamond diagram, A dominates each of B and
+C, too.&lt;/p&gt;
+
+&lt;p&gt;We can compute dominators a couple of ways&lt;sup id="fnref:compute-doms" role="doc-noteref"&gt;&lt;a href="#fn:compute-doms" class="footnote" rel="footnote"&gt;4&lt;/a&gt;&lt;/sup&gt;, but that’s a little
+bit out of scope for this blog post. If we assume that we have dominator
+information available in our CFG, we can use that for global value numbering.
+And that’s just what—you guessed it—Maxine VM does.&lt;/p&gt;
+
+&lt;p&gt;It iterates over all blocks in reverse post-order, doing local value numbering,
+threading through value maps from dominator blocks. In this case, their method
+&lt;code class="language-plaintext highlighter-rouge"&gt;dominator&lt;/code&gt; gets the &lt;em&gt;immediate dominator&lt;/em&gt;: the “closest” dominator block of
+all the blocks that dominate the current one.&lt;/p&gt;
+
+&lt;div class="language-java highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="kd"&gt;public&lt;/span&gt; &lt;span class="kd"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;GlobalValueNumberer&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+    &lt;span class="kd"&gt;final&lt;/span&gt; &lt;span class="nc"&gt;HashMap&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nc"&gt;BlockBegin&lt;/span&gt;&lt;span class="o"&gt;,&lt;/span&gt; &lt;span class="nc"&gt;ValueMap&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;valueMaps&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+    &lt;span class="kd"&gt;final&lt;/span&gt; &lt;span class="nc"&gt;InstructionSubstituter&lt;/span&gt; &lt;span class="n"&gt;subst&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+    &lt;span class="nc"&gt;ValueMap&lt;/span&gt; &lt;span class="n"&gt;currentMap&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+
+    &lt;span class="kd"&gt;public&lt;/span&gt; &lt;span class="nf"&gt;GlobalValueNumberer&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="no"&gt;IR&lt;/span&gt; &lt;span class="n"&gt;ir&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+        &lt;span class="k"&gt;this&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;subst&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="nc"&gt;InstructionSubstituter&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ir&lt;/span&gt;&lt;span class="o"&gt;);&lt;/span&gt;
+        &lt;span class="c1"&gt;// reverse post-order&lt;/span&gt;
+        &lt;span class="nc"&gt;List&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nc"&gt;BlockBegin&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;blocks&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ir&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;linearScanOrder&lt;/span&gt;&lt;span class="o"&gt;();&lt;/span&gt;
+        &lt;span class="n"&gt;valueMaps&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="nc"&gt;HashMap&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nc"&gt;BlockBegin&lt;/span&gt;&lt;span class="o"&gt;,&lt;/span&gt; &lt;span class="nc"&gt;ValueMap&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;(&lt;/span&gt;&lt;span class="n"&gt;blocks&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;size&lt;/span&gt;&lt;span class="o"&gt;());&lt;/span&gt;
+        &lt;span class="n"&gt;optimize&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;blocks&lt;/span&gt;&lt;span class="o"&gt;);&lt;/span&gt;
+        &lt;span class="n"&gt;subst&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;finish&lt;/span&gt;&lt;span class="o"&gt;();&lt;/span&gt;
+    &lt;span class="o"&gt;}&lt;/span&gt;
+
+    &lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="nf"&gt;optimize&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="nc"&gt;List&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nc"&gt;BlockBegin&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;blocks&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+        &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;numBlocks&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;blocks&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;size&lt;/span&gt;&lt;span class="o"&gt;();&lt;/span&gt;
+        &lt;span class="nc"&gt;BlockBegin&lt;/span&gt; &lt;span class="n"&gt;startBlock&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;blocks&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;get&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="o"&gt;);&lt;/span&gt;
+
+        &lt;span class="c1"&gt;// initial value map, with nesting 0&lt;/span&gt;
+        &lt;span class="n"&gt;valueMaps&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;put&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;startBlock&lt;/span&gt;&lt;span class="o"&gt;,&lt;/span&gt; &lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="nc"&gt;ValueMap&lt;/span&gt;&lt;span class="o"&gt;());&lt;/span&gt;
+
+        &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;numBlocks&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;++)&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+            &lt;span class="c1"&gt;// iterate through all the blocks&lt;/span&gt;
+            &lt;span class="nc"&gt;BlockBegin&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;blocks&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;get&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;);&lt;/span&gt;
+            &lt;span class="nc"&gt;BlockBegin&lt;/span&gt; &lt;span class="n"&gt;dominator&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;dominator&lt;/span&gt;&lt;span class="o"&gt;();&lt;/span&gt;
+
+            &lt;span class="c1"&gt;// create new value map with increased nesting&lt;/span&gt;
+            &lt;span class="n"&gt;currentMap&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;new&lt;/span&gt; &lt;span class="nc"&gt;ValueMap&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;valueMaps&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;get&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dominator&lt;/span&gt;&lt;span class="o"&gt;));&lt;/span&gt;
+
+            &lt;span class="c1"&gt;// &amp;lt;&amp;lt; INSERT LOCAL VALUE NUMBERING HERE &amp;gt;&amp;gt;&lt;/span&gt;
+
+            &lt;span class="c1"&gt;// remember value map for successors&lt;/span&gt;
+            &lt;span class="n"&gt;valueMaps&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;put&lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="o"&gt;,&lt;/span&gt; &lt;span class="n"&gt;currentMap&lt;/span&gt;&lt;span class="o"&gt;);&lt;/span&gt;
+        &lt;span class="o"&gt;}&lt;/span&gt;
+    &lt;span class="o"&gt;}&lt;/span&gt;
+&lt;span class="o"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;And that’s it! That’s the core of Maxine’s &lt;a href="https://github.com/beehive-lab/Maxine-VM/blob/e213a842f78983e2ba112ae46de8c64317bc206e/com.sun.c1x/src/com/sun/c1x/opt/GlobalValueNumberer.java"&gt;GVN implementation&lt;/a&gt;. I
+love how short it is. For not very much code, you can remove a lot of duplicate
+pure SSA instructions.&lt;/p&gt;
+
+&lt;p&gt;This does still work with loops, but with some caveats. From p7 of &lt;a href="/assets/img/briggs-gvn.pdf"&gt;Briggs GVN&lt;/a&gt;:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;The φ-functions require special treatment. Before the compiler can analyze
+the φ-functions in a block, it must previously have assigned value numbers to
+all of the inputs. This is not possible in all cases; specifically, any
+φ-function input whose value flows along a back edge (with respect to the
+dominator tree) cannot have a value number. If any of the parameters of a
+φ-function have not been assigned a value number, then the compiler cannot
+analyze the φ-function, and it must assign a unique, new value number to the
+result.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;It also talks about eliminating useless phis, which is optional, but would
+the strengthen global value numbering pass: it makes more information
+transparent.&lt;/p&gt;
+
+&lt;p&gt;But what if we want to handle impure instructions?&lt;/p&gt;
+
+&lt;h2 id="state-management-and-invalidation"&gt;State management and invalidation&lt;/h2&gt;
+
+&lt;p&gt;Languages such as Java allow for reading fields from the &lt;code class="language-plaintext highlighter-rouge"&gt;this&lt;/code&gt;/&lt;code class="language-plaintext highlighter-rouge"&gt;self&lt;/code&gt; object within
+methods as if the field were a variable name. This makes code like the
+following common:&lt;/p&gt;
+
+&lt;div class="language-java highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="kd"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;CPU&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+    &lt;span class="kd"&gt;private&lt;/span&gt; &lt;span class="kt"&gt;void&lt;/span&gt; &lt;span class="nf"&gt;exec_adc&lt;/span&gt;&lt;span class="o"&gt;()&lt;/span&gt; &lt;span class="o"&gt;{&lt;/span&gt;
+        &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;result_int&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;regA&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;fetched_data&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;flagCARRY&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+        &lt;span class="kt"&gt;byte&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;byte&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; &lt;span class="n"&gt;result_int&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+        &lt;span class="c1"&gt;// ...&lt;/span&gt;
+        &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;result_int&lt;/span&gt; &lt;span class="o"&gt;^&lt;/span&gt; &lt;span class="n"&gt;regA&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+        &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;result_int&lt;/span&gt; &lt;span class="o"&gt;^&lt;/span&gt; &lt;span class="n"&gt;fetched_data&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+        &lt;span class="c1"&gt;// ...&lt;/span&gt;
+        &lt;span class="n"&gt;regA&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt;&lt;span class="o"&gt;;&lt;/span&gt;
+    &lt;span class="o"&gt;}&lt;/span&gt;
+&lt;span class="o"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Each of these reference to &lt;code class="language-plaintext highlighter-rouge"&gt;regA&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;fetched_data&lt;/code&gt; is an implicit reference
+to &lt;code class="language-plaintext highlighter-rouge"&gt;this.regA&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;this.fetched_data&lt;/code&gt;, which is semantically a field load off
+an object. You can see it in &lt;a href="https://godbolt.org/#g:!((g:!((g:!((h:codeEditor,i:(filename:'1',fontScale:14,fontUsePx:'0',j:1,lang:java,selection:(endColumn:19,endLineNumber:14,positionColumn:19,positionLineNumber:14,selectionStartColumn:19,selectionStartLineNumber:14,startColumn:19,startLineNumber:14),source:'class+CPU+%7B%0A++++private+void+exec_adc()+%7B%0A++++++++int+result_int+%3D+regA+%2B+fetched_data+%2B+flagCARRY%3B%0A++++++++byte+result+%3D+(byte)+result_int%3B%0A++++++++//+...%0A++++++++int+a+%3D+result_int+%5E+regA%3B%0A++++++++int+b+%3D+result_int+%5E+fetched_data%3B%0A++++++++//+...%0A++++++++regA+%3D+result%3B%0A++++%7D%0A%0A++++int+regA%3B%0A++++int+fetched_data%3B%0A++++int+flagCARRY%3B%0A%7D%0A'),l:'5',n:'0',o:'Java+source+%231',t:'0')),k:50,l:'4',n:'0',o:'',s:0,t:'0'),(g:!((h:compiler,i:(compiler:java2501,filters:(b:'0',binary:'1',binaryObject:'1',commentOnly:'0',debugCalls:'1',demangle:'0',directives:'0',execute:'1',intel:'0',libraryCode:'0',trim:'1',verboseDemangling:'0'),flagsViewOpen:'1',fontScale:14,fontUsePx:'0',j:1,lang:java,libs:!(),options:'',overrides:!(),selection:(endColumn:19,endLineNumber:40,positionColumn:1,positionLineNumber:1,selectionStartColumn:19,selectionStartLineNumber:40,startColumn:1,startLineNumber:1),source:1),l:'5',n:'0',o:'+jdk+25.0.1+(Editor+%231)',t:'0')),k:50,l:'4',n:'0',o:'',s:0,t:'0')),l:'2',n:'0',o:'',t:'0')),version:4"&gt;the bytecode&lt;/a&gt; (thanks, Matt Godbolt):&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;class CPU {
+  int regA;
+
+  int fetched_data;
+
+  int flagCARRY;
+
+  CPU();
+         0: aload_0
+         1: invokespecial #1                  // Method java/lang/Object."&amp;lt;init&amp;gt;":()V
+         4: return
+
+
+  private void exec_adc();
+         0: aload_0
+         1: getfield      #7                  // Field regA:I
+         4: aload_0
+         // ...
+        20: getfield      #7                  // Field regA:I
+        23: ixor
+        24: istore_3
+        25: iload_1
+        26: aload_0
+        27: getfield      #13                 // Field fetched_data:I
+        30: ixor
+        31: istore        4
+        33: aload_0
+        34: iload_2
+        35: putfield      #7                  // Field regA:I
+        38: return
+}
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;When straightforwardly building an SSA IR from the JVM bytecode for this
+method, you will end up with a bunch of IR that looks like this:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;v0 = LoadField self, :regA
+v1 = LoadField self, :fetched_data
+v2 = LoadField self, :flagCARRY
+v3 = IntAdd v0, v1
+v4 = IntAdd v3, v2
+// ...
+v7 = LoadField self, :regA
+v8 = IntXor v4, v7
+v9 = LoadField self, :fetched_data
+v10 = IntXor v4, v9
+// ...
+StoreField self, :regA, ...
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Pretty much the same as the bytecode. Even though no code in the middle could
+modify the field &lt;code class="language-plaintext highlighter-rouge"&gt;regA&lt;/code&gt; (which would require a re-load), we still have a
+duplicate load. Bummer.&lt;/p&gt;
+
+&lt;p&gt;I don’t want to re-hash this too much but it’s possible to fold &lt;a href="/blog/toy-load-store/"&gt;Load and store
+forwarding&lt;/a&gt; into your GVN implementation by either:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;doing load-store forwarding as part of local value numbering and clearing
+memory information from the value map at the end of each block, or&lt;/li&gt;
+  &lt;li&gt;keeping track of effects across blocks&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;See, there’s nothing fundamentally stopping you from tracking the state of your
+heap at compile-time across blocks. You just have to do a little more
+bookkeeping. In our dominator-based GVN implementation, for example, you can:&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;track heap write effects for each block&lt;/li&gt;
+  &lt;li&gt;at the start of each block B, union all of the “kill” sets for every block
+back to its immediate dominator&lt;/li&gt;
+  &lt;li&gt;finally, remove the stuff that got killed from the dominator’s value map&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Not so bad.&lt;/p&gt;
+
+&lt;p&gt;Maxine doesn’t do global memory tracking, but they do a limited form of
+load-store forwarding while building their HIR from bytecode: see
+&lt;a href="https://github.com/beehive-lab/Maxine-VM/blob/e213a842f78983e2ba112ae46de8c64317bc206e/com.sun.c1x/src/com/sun/c1x/graph/GraphBuilder.java#L871"&gt;GraphBuilder&lt;/a&gt; which uses the &lt;a href="https://github.com/beehive-lab/Maxine-VM/blob/e213a842f78983e2ba112ae46de8c64317bc206e/com.sun.c1x/src/com/sun/c1x/graph/MemoryMap.java"&gt;MemoryMap&lt;/a&gt; to help track this stuff. At least
+they would not have the same duplicate &lt;code class="language-plaintext highlighter-rouge"&gt;LoadField&lt;/code&gt; instructions in the example
+above!&lt;/p&gt;
+
+&lt;!--
+```ruby
+module Psych
+  module Visitors
+    class YAMLTree &lt; Psych::Visitors::Visitor
+      def initialize emitter, ss, options
+        # ...
+        @line_width = options[:line_width]
+        if @line_width &amp;&amp; @line_width &lt; 0
+          if @line_width == -1
+            # Treat -1 as unlimited line-width, same as libyaml does.
+            @line_width = nil
+          else
+            fail(...)
+          end
+        end
+        # ...
+    end
+  end
+end
+```
+--&gt;
+
+&lt;p&gt;We’ve now looked at one kind of value numbering and one implementation of it.
+What else is out there?&lt;/p&gt;
+
+&lt;h2 id="out-in-the-world"&gt;Out in the world&lt;/h2&gt;
+
+&lt;p&gt;Apparently, you can get better results by having a unified hash table (p9 of
+&lt;a href="/assets/img/briggs-gvn.pdf"&gt;Briggs GVN&lt;/a&gt;) of expressions, not limiting the
+value map to dominator-available expressions. Not 100% on how this works yet.
+&lt;!-- TODO What do you do in the second pass for available expressions? --&gt;
+They note:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Using a unified hash-table has one important algorithmic consequence.
+Replacements cannot be performed on-line because the table no longer reflects
+availability.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Which is the first time that it occurred to me that hash-based value numbering
+with dominators was an approximation of available expression analysis.&lt;/p&gt;
+
+&lt;p&gt;There’s also a totally different kind of value numbering called value
+partitioning (p12 of &lt;a href="/assets/img/briggs-gvn.pdf"&gt;Briggs GVN&lt;/a&gt;). See also a nice
+blog post about this by Allen Wang from the &lt;a href="https://www.cs.cornell.edu/courses/cs6120/2025sp/blog/global-value-numbering/"&gt;Cornell compiler
+course&lt;/a&gt;.
+I think this mostly replaces the hashing bit, and you still need some other
+thing for the available expressions bit.&lt;/p&gt;
+
+&lt;p&gt;Ben Titzer and Seth Goldstein have some good &lt;a href="https://www.cs.cmu.edu/~411/slides/s25-24-gvn-inlining.pdf"&gt;slides from
+CMU&lt;/a&gt;. Where they
+talk about the worklist dataflow approach. Apparently this is slower but gets
+you more available expressions than just looking to dominator blocks. I wonder
+how much it differs from dominator+unified hash table.&lt;/p&gt;
+
+&lt;p&gt;While Maxine uses hash table cloning to copy value maps from dominator blocks,
+there are also compilers such as Cranelift that use
+&lt;a href="https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/codegen/src/scoped_hash_map.rs"&gt;scoped hash maps&lt;/a&gt;
+to track this information more efficiently. (Though &lt;a href="https://github.com/bytecodealliance/wasmtime/issues/4371#issuecomment-1255956651"&gt;Amanieu
+notes&lt;/a&gt; that you may
+not need a scoped hash map and instead can tag values in your value map with the
+block they came from, ignoring non-dominating values with a quick check. The
+dominance check makes sense but I haven’t internalized how this affects the set
+of available expressions yet.)&lt;/p&gt;
+
+&lt;p&gt;You may be wondering if this kind of algorithm even helps at all in a dynamic
+language JIT context. Surely everything is too dynamic, right? Actually, no!
+The JIT hopes to eliminate a lot of method calls and dynamic behaviors,
+replacing them with guards, assumptions, and simpler operations. These strength
+reductions often leave behind a lot of repeated instructions. Just the other
+day, Kokubun filed a &lt;a href="https://github.com/ruby/ruby/pull/16654"&gt;value-numbering-like
+PR&lt;/a&gt; to clean up some of the waste.&lt;/p&gt;
+
+&lt;p&gt;ART has a recent &lt;a href="https://android-developers.googleblog.com/2025/12/18-faster-compiles-0-compromises.html"&gt;blog
+post&lt;/a&gt;
+about speeding up GVN.&lt;/p&gt;
+
+&lt;h3 id="implementations"&gt;Implementations&lt;/h3&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href="https://android.googlesource.com/platform/art/+/refs/heads/main/compiler/optimizing/gvn.cc"&gt;ART&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/tekknolagi/v8/blob/f030838700a83cde6992cb8ebcb3facc6a8fc1f1/src/crankshaft/hydrogen-gvn.cc"&gt;V8 Hydrogen&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/facebook/hhvm/blob/1a885fae7421c759d70a8ed85aab1defcf5cc68f/hphp/runtime/vm/jit/gvn.cpp"&gt;HHVM&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://github.com/openjdk/jdk/blob/f21e47db805b56d5bf183d7a2cfba076f380612a/src/hotspot/share/c1/c1_ValueMap.cpp#L517"&gt;HotSpot C1&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id="wrapping-up-bits-and-bobbles"&gt;Wrapping up; bits and bobbles&lt;/h2&gt;
+
+&lt;p&gt;Go forth and give your values more numbers.&lt;/p&gt;
+
+&lt;p&gt;There’s been an ongoing discussion with Phil Zucker on SSI, GVN, acyclic
+egraphs, and scoped union-find. TODO summarize&lt;/p&gt;
+
+&lt;h3 id="acyclic-e-graphs"&gt;Acyclic e-graphs&lt;/h3&gt;
+
+&lt;p&gt;Commutativity; canonicalization&lt;/p&gt;
+
+&lt;p&gt;Seeding alternative representations into the GVN&lt;/p&gt;
+
+&lt;p&gt;Aegraphs and union-find during GVN&lt;/p&gt;
+
+&lt;p&gt;https://github.com/bytecodealliance/rfcs/blob/main/accepted/cranelift-egraph.md
+https://github.com/bytecodealliance/wasmtime/issues/9049
+https://github.com/bytecodealliance/wasmtime/issues/4371&lt;/p&gt;
+
+&lt;h3 id="partial-redundancy-elimination"&gt;Partial redundancy elimination&lt;/h3&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:cinder" role="doc-endnote"&gt;
+      &lt;p&gt;Writing this post is roughly the time when I realized that the whole
+time I was wondering why Cinder did not use union-find for rewriting, it
+actually did! Optimizing instruction &lt;code class="language-plaintext highlighter-rouge"&gt;X = A + 0&lt;/code&gt; by replacing with &lt;code class="language-plaintext highlighter-rouge"&gt;X =
+Assign A&lt;/code&gt; followed by copy propagation is equivalent to union-find. &lt;a href="#fnref:cinder" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+    &lt;li id="fn:heap-ssa" role="doc-endnote"&gt;
+      &lt;p&gt;In some forms of SSA, like heap-array SSA or sea of nodes, it’s
+possible to more easily de-duplicate loads because the memory
+representation has been folded into (modeled in) the IR. &lt;a href="#fnref:heap-ssa" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+    &lt;li id="fn:order" role="doc-endnote"&gt;
+      &lt;p&gt;The order is a little more complicated than that: &lt;a href="https://stackoverflow.com/questions/36131500/what-is-the-reverse-postorder"&gt;reverse
+post-order&lt;/a&gt;
+(RPO). And there’s a paper called “A Simple Algorithm for Global Data Flow
+Analysis Problems” that I don’t yet have a PDF for that claims that RPO is
+optimal for solving dataflow problems. &lt;a href="#fnref:order" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+    &lt;li id="fn:compute-doms" role="doc-endnote"&gt;
+      &lt;p&gt;There’s the iterative dataflow way (described in the &lt;a href="/assets/img/dominators-engineered.pdf"&gt;Cooper
+paper&lt;/a&gt; (PDF)),
+&lt;a href="/assets/img/dominators-lengauer-tarjan.pdf"&gt;Lengauer-Tarjan&lt;/a&gt; (PDF), the
+&lt;a href="/assets/img/dominators-engineered.pdf"&gt;Engineered Algorithm&lt;/a&gt; (PDF),
+&lt;a href="/assets/img/dominators-practice.pdf"&gt;hybrid/Semi-NCA approach&lt;/a&gt; (PDF), … &lt;a href="#fnref:compute-doms" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/value-numbering/</guid>
+      <pubDate>Sat, 04 Apr 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Using Perfetto in ZJIT</title>
       <link>https://bernsteinbear.com/blog/zjit-perfetto/?utm_source=rss</link>
@@ -2677,7 +3327,7 @@ same number, there are no effects. There is no one &lt;code class="language-plai
 range could be normalized to &lt;code class="language-plaintext highlighter-rouge"&gt;HeapRange { start: 0, end: 0 }&lt;/code&gt;.&lt;/p&gt;
 
 &lt;p&gt;Maybe this was obvious to you, dear reader, but this pre-order/post-order thing
-is about nested ranges! Seeing the output of the generator laid out clearly
+is about nested ranges&lt;sup id="fnref:dominance" role="doc-noteref"&gt;&lt;a href="#fn:dominance" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;! Seeing the output of the generator laid out clearly
 like this made it make a lot more sense for me.&lt;/p&gt;
 
 &lt;!--
@@ -2832,7 +3482,7 @@ think are interesting.&lt;/p&gt;
 utility in the &lt;code class="language-plaintext highlighter-rouge"&gt;def(PureValue(...))&lt;/code&gt; call but I didn’t understand fully.&lt;/p&gt;
 
 &lt;p&gt;Then there are some instructions that conditionally have effects depending on
-the use types of their operands.&lt;sup id="fnref:dfg-use-type" role="doc-noteref"&gt;&lt;a href="#fn:dfg-use-type" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt; Taking the absolute value of an
+the use types of their operands.&lt;sup id="fnref:dfg-use-type" role="doc-noteref"&gt;&lt;a href="#fn:dfg-use-type" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt; Taking the absolute value of an
 Int32 or a Double is effect-free but otherwise looks like it can run arbitrary
 code.&lt;/p&gt;
 
@@ -3135,6 +3785,14 @@ TODO maybe lattice in ascent
 --&gt;
 &lt;div class="footnotes" role="doc-endnotes"&gt;
   &lt;ol&gt;
+    &lt;li id="fn:dominance" role="doc-endnote"&gt;
+      &lt;p&gt;Update: After reading &lt;a href="https://github.com/bytecodealliance/wasmtime/issues/4371#issuecomment-1255956651"&gt;Amanieu’s
+comment&lt;/a&gt;
+while writing my post on &lt;a href="/blog/value-numbering/"&gt;value numbering&lt;/a&gt;, I
+realized that heap-range-subtype is literally the same as checking dominance with
+pre-order-post-order comparison. This in retrospect makes a lot of sense.
+It’s just a tree. &lt;a href="#fnref:dominance" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
     &lt;li id="fn:dfg-use-type" role="doc-endnote"&gt;
       &lt;p&gt;This is because the DFG compiler does this interesting thing
 where they track and guard the input types on &lt;em&gt;use&lt;/em&gt; vs having types
@@ -3147,197 +3805,6 @@ change over time (which it can do in many dynamic language runtimes). &lt;a hre
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/compiler-effects/</guid>
       <pubDate>Tue, 11 Nov 2025 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Walking around the compiler</title>
-      <link>https://bernsteinbear.com/blog/walking-around/?utm_source=rss</link>
-      <description>&lt;p&gt;Walking around outside is good for you.&lt;sup&gt;[&lt;a href="https://en.wikipedia.org/wiki/Wikipedia:Citation_needed"&gt;&lt;i&gt;citation needed&lt;/i&gt;&lt;/a&gt;]&lt;/sup&gt;
-A nice amble through the trees can quiet inner turbulence and make complex
-engineering problems disappear.&lt;/p&gt;
-
-&lt;p&gt;Vicki Boykis wrote a post, &lt;a href="https://vickiboykis.com/2025/09/09/walking-around-the-app/"&gt;Walking around the
-app&lt;/a&gt;, about a more
-proverbial stroll. In it, she talks about constantly using your production
-application’s interface to make sure the whole thing is cohesively designed
-with few rough edges.&lt;/p&gt;
-
-&lt;p&gt;She also talks about walking around other parts of the &lt;em&gt;implementation&lt;/em&gt; of the
-application, fixing inconsistencies, complex machinery, and broken builds. Kind
-of like picking up someone else’s trash on your hike.&lt;/p&gt;
-
-&lt;p&gt;That’s awesome and universally good advice for pretty much every software
-project. It got me thinking about how I walk around the compiler.&lt;/p&gt;
-
-&lt;h2 id="what-does-your-output-look-like"&gt;What does your output look like?&lt;/h2&gt;
-
-&lt;p&gt;There’s a certain class of software project that transforms data—compression
-libraries, compilers, search engines—for which there’s another layer of
-“walking around” you can do. You have the code, yes, but you also have
-&lt;em&gt;non-trivial output&lt;/em&gt;.&lt;/p&gt;
-
-&lt;!-- TODO pick another term --&gt;
-
-&lt;p&gt;By non-trivial, I mean an output that scales along some quality axis instead of
-something semi-regular like a JSON response. For compression, it’s size. For
-compilers, it’s generated code.&lt;/p&gt;
-
-&lt;p&gt;You probably already have some generated cases checked into your codebase as
-tests. That’s awesome. I think golden tests are fantastic for correctness and
-for people to help understand. But this isolated understanding may not scale to
-more complex examples.&lt;/p&gt;
-
-&lt;p&gt;How &lt;em&gt;does&lt;/em&gt; your compiler handle, for example, switch-case statements in loops?
-Does it do the jump threading you expect it to? Maybe you’re sitting there idly
-wondering while you eat a cookie, but maybe that thought would only have
-occurred to you while you were scrolling through the optimizer.&lt;/p&gt;
-
-&lt;h3 id="an-example"&gt;An example&lt;/h3&gt;
-
-&lt;p&gt;Say you are &lt;a href="https://cfbolz.de/"&gt;CF Bolz-Tereick&lt;/a&gt; and you are paging through
-&lt;a href="https://pypy.org/"&gt;PyPy&lt;/a&gt; IR. You notice some IR that looks like:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;v0 = ...
-v1 = float_abs v0
-...
-v2 = float_abs v1
-...
-v3 = float_abs v2
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;“Huh”, you say to yourself, “surely the optimizer can reason that running
-&lt;code class="language-plaintext highlighter-rouge"&gt;float_abs&lt;/code&gt; on the result of &lt;code class="language-plaintext highlighter-rouge"&gt;float_abs&lt;/code&gt; is redundant!”&lt;/p&gt;
-
-&lt;p&gt;But some quirk in your optimizer means that it does not. Maybe it used to work,
-or maybe it never did. But this little stroll revealed a bug with a quick fix
-(adding a new peephole optimization function):&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;optimize_FLOAT_ABS&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="n"&gt;v&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_box_replacement&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getarg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-    &lt;span class="n"&gt;arg_op&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;as_operation&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;arg_op&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt; &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;arg_op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getopnum&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;rop&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;FLOAT_ABS&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;make_equal_to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;emit&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Now, thankfully, your IR looks much better:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;v0 = ...
-v1 = float_abs v0
-...
-...
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;and you can check this in as a tidy test case:&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;test_abs_abs_no&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="n"&gt;ops&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s"&gt;"""
-    [f1]
-    f2 = float_abs(f1)
-    f3 = float_abs(f2)
-    escape_f(f3)
-    """&lt;/span&gt;
-    &lt;span class="n"&gt;expected&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s"&gt;"""
-    [f1]
-    f2 = float_abs(f1)
-    escape_f(f2)
-    """&lt;/span&gt;
-    &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optimize_loop&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ops&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;expected&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Fun fact: this was my first exposure to the PyPy project. CF walked me through
-fixing this bug&lt;sup id="fnref:actual-fix" role="doc-noteref"&gt;&lt;a href="#fn:actual-fix" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt; live at ECOOP 2022! I had a great time.&lt;/p&gt;
-
-&lt;h3 id="internal-state"&gt;Internal state&lt;/h3&gt;
-
-&lt;p&gt;If checking (and, later, testing) your assumptions is tricky, this may be a
-sign that your library does not expose enough of its internal state to
-developers. This may present a usability impediment that prevents you from
-immediately checking your assumptions or suspicions.&lt;/p&gt;
-
-&lt;p&gt;For an excellent source of inspiration, see &lt;a href="https://x.com/thingskatedid/status/1386077306381242371"&gt;Kate’s tweets about program
-internals&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Even if it does provide a flag like &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-dump-hir&lt;/code&gt; to print to the console,
-maybe this is hard to run from a phone&lt;sup id="fnref:log-off" role="doc-noteref"&gt;&lt;a href="#fn:log-off" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt; or a friend’s computer. For
-that, you may want &lt;em&gt;friendlier tools&lt;/em&gt;.&lt;/p&gt;
-
-&lt;h2 id="mechanical-sympathy-and-the-compiler-explorer"&gt;Mechanical sympathy and the compiler explorer&lt;/h2&gt;
-
-&lt;p&gt;The right kind of tool invites exploration.&lt;/p&gt;
-
-&lt;p&gt;Matthew Godbolt built the first friendly compiler explorer tool I used, the
-&lt;a href="https://godbolt.org/"&gt;Compiler Explorer&lt;/a&gt; (“Godbolt”). It allows inputting
-programs into your web browser in many different languages and immediately
-seeing the compiled result. It will even execute your programs, within reason.&lt;/p&gt;
-
-&lt;p&gt;This is a powerful tool:&lt;/p&gt;
-
-&lt;ol&gt;
-  &lt;li&gt;The feedback is near-instant and live updates on key-up.&lt;/li&gt;
-  &lt;li&gt;There is no fussing with the command line and file watching.&lt;/li&gt;
-  &lt;li&gt;Where possible, it highlights slices of source and compiled result to
-indicate what regions produced what output.&lt;/li&gt;
-  &lt;li&gt;It’s open source and you can add your own compiler.&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;p&gt;This combination lowers the barrier to check things &lt;em&gt;tremendously&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;Now, sometimes you want the reverse: a Compiler Explorer -like thing in your
-terminal or editor so you don’t have to break flow. I unfortunately have not
-found a comparable tool.&lt;/p&gt;
-
-&lt;p&gt;In addition to the immediate effects of being able to spot-check certain inputs
-and outputs, continued use of these tools builds long-term intuition about the
-behavior of the compiler. It builds &lt;em&gt;mechanical sympathy&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;I haven’t written a lot about mechanical sympathy other than my grad school
-&lt;a href="/assets/img/statement-of-purpose.pdf"&gt;statement of purpose&lt;/a&gt; (PDF) and a few
-brief internet posts, so I will leave you with that for now.&lt;/p&gt;
-
-&lt;h2 id="every-function-is-special"&gt;Every function is special&lt;/h2&gt;
-
-&lt;p&gt;Your compiler likely compiles some applications and you can likely get access
-to the IR for the functions in that application.&lt;/p&gt;
-
-&lt;p&gt;Scroll through every function’s optimized IR. If there are too many, maybe the
-top N functions’ IRs. See what can be improved. Maybe you will see some
-unexpected patterns. Even if you don’t notice anything in May, that could shift
-by August because of compiler advancements or a cool paper that you read in the
-intervening months.&lt;/p&gt;
-
-&lt;p&gt;One time I found a bizarre reference counting bug that was causing
-copy-on-write and potential memory issues by noticing that some objects that
-should have been marked “immortal” in the IR were actually being refcounted.
-The bug was not in the compiler, but far away in application setup code—and
-yet it was visible in the IR.&lt;/p&gt;
-
-&lt;h2 id="love-your-tools"&gt;Love your tools&lt;/h2&gt;
-
-&lt;p&gt;My conclusion is similar to Vicki’s.&lt;/p&gt;
-
-&lt;p&gt;Put some love into your tools. Your colleagues will notice. Your users will
-notice. It might even improve your mood.&lt;/p&gt;
-
-&lt;h2 id="acknowledgements"&gt;Acknowledgements&lt;/h2&gt;
-
-&lt;p&gt;Thank you to &lt;a href="https://cfbolz.de/"&gt;CF&lt;/a&gt; for feedback on the post.&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:actual-fix" role="doc-endnote"&gt;
-      &lt;p&gt;The &lt;a href="https://github.com/pypy/pypy/commit/a31689c0b5977f8a73cca87c216dc8884aa34a76"&gt;actual
-fix&lt;/a&gt;
-that checks for &lt;code class="language-plaintext highlighter-rouge"&gt;float_abs(float_abs(x))&lt;/code&gt; and rewrites to
-&lt;code class="language-plaintext highlighter-rouge"&gt;float_abs(x)&lt;/code&gt;. &lt;a href="#fnref:actual-fix" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-    &lt;li id="fn:log-off" role="doc-endnote"&gt;
-      &lt;p&gt;Just make sure to log off and touch grass. &lt;a href="#fnref:log-off" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/walking-around/</guid>
-      <pubDate>Tue, 23 Sep 2025 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
