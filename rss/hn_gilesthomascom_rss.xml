@@ -5,7 +5,515 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Thu, 09 Apr 2026 17:13:27 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 09 Apr 2026 19:15:32 +0000</lastBuildDate>
+    <item>
+      <title>Writing an LLM from scratch, part 32j -- Interventions: trying to train a better model in the cloud</title>
+      <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud</link>
+      <description>&lt;p&gt;Since early February, I've been trying various interventions on a 163M-parameter GPT-2-style model that I
+&lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;trained from scratch on my local RTX 3090&lt;/a&gt;,
+using code based on
+&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".&lt;/p&gt;
+
+&lt;p&gt;My original model got a loss of 3.944 on my test set, while the original GPT-2
+weights got 3.500 on the same dataset.  I wanted to see if I could close that gap,
+and had a list of potential changes to the
+training setup, and to the model itself.  Which of them would help?&lt;/p&gt;
+
+&lt;p&gt;I found a list of solid-looking interventions, and in &lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;my last post&lt;/a&gt;
+I came to the conclusion that the improvements in loss I had seen with all of them -- with
+two possible exceptions -- seemed unlikely to be in the noise.  What would happen
+if I tried to put them into a new model?&lt;/p&gt;
+&lt;h3 id="the-interventions"&gt;The interventions&lt;/h3&gt;
+
+&lt;p&gt;Let's start by looking at the results that we have for the interventions so far --
+this is the table I've been using as I go through them, but I've updated it to contain
+the loss figures for each model to six decimal places instead of three, and
+made each model name link to the associated post.  I've also corrected the loss for
+the &lt;code&gt;8xa100m40-weight-decay-cerebras&lt;/code&gt; model, which was mistakenly using the training loss at the
+end of the run rather than the loss on the test set &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test set loss&lt;/th&gt;
+  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;8xa100m40-weight-tying&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.874305&lt;/td&gt;
+  &lt;td&gt;-0.182779&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;8xa100m40-weight-decay-cerebras&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.813856&lt;/td&gt;
+  &lt;td&gt;-0.122330&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;8xa100m40-baseline&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;8xa100m80-no-amp&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.678968&lt;/td&gt;
+  &lt;td&gt;0.012558&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;8xa100m40-gradient-clipping&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.678317&lt;/td&gt;
+  &lt;td&gt;0.013209&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;8xa100m40-qkv-bias&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.669385&lt;/td&gt;
+  &lt;td&gt;0.022141&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;8xa100m40-weight-decay-gpt2&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.642940&lt;/td&gt;
+  &lt;td&gt;0.048586&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;8xa100m40-remove-dropout&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.641282&lt;/td&gt;
+  &lt;td&gt;0.050244&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32e-interventions-learning-rate"&gt;8xa100m40-schedule-learning-rate&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.601917&lt;/td&gt;
+  &lt;td&gt;0.089609&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;As I've mentioned before, simply moving to training in the cloud improved things markedly,
+getting loss down from 3.944 to 3.691526; I suspect this was due to having a closer-to-optimal
+batch size (more about that in my next post).  What to do about the other interventions, though?&lt;/p&gt;
+
+&lt;p&gt;It seemed clear that two of them were not helping: weight tying, and the one using the figure
+for weight decay that I'd (I suspect incorrectly) derived from a paper by Cerebras
+Research.  The "no-AMP" run (which would be better described
+as "full-fat float32") had a small positive effect, but was so costly in terms of both time and money
+that it wasn't worthwhile.&lt;/p&gt;
+
+&lt;p&gt;So we had five interventions to try:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;Gradient clipping.&lt;/li&gt;
+&lt;li&gt;QKV bias (that is, adding bias to the attention weight matrices).&lt;/li&gt;
+&lt;li&gt;Changing weight decay to the GPT-2 value (0.01 rather than the 0.1 that is typical nowadays).&lt;/li&gt;
+&lt;li&gt;Removing dropout&lt;/li&gt;
+&lt;li&gt;Updating the learning rate from 0.0004 to 0.0014, but also scheduling it so that it varies
+over the course of the training run.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;How would they stack up?  It seemed pretty unlikely that their independent contributions
+would just sum up neatly so that we got a total improvement
+of 0.013209 + 0.022141 + 0.048586 + 0.050244 + 0.089609 = 0.223789 (though that would
+certainly be nice!).&lt;/p&gt;
+
+&lt;p&gt;One question to consider was how independent they were.  For any set of interventions,
+you can imagine them being independent and adding up nicely, or pulling in separate
+directions so that the combined effect is worse than the sum, or pulling in the same
+direction so that they amplify each other.&lt;/p&gt;
+
+&lt;p&gt;My intuition was that gradient clipping and removing dropout were pretty independent,
+at least conceptually.  They might affect other interventions indirectly (eg. via changing the
+training run's use of the random number generator) but they'd be unlikely to have a direct
+effect.  QKV bias I was less sure about, but it seemed -- again, just intuitively --
+at least reasonably independent of the others, with one important exception (which I'll get into below).&lt;/p&gt;
+
+&lt;p&gt;By contrast, weight decay and the learning rate interact together quite strongly,
+at least in standard gradient descent, and I'd tested them in isolation.  The result for changing the weight
+decay to 0.01 was based on a fixed learning rate of 0.0004, and the result for scheduling
+the learning rate was based on a weight decay of 0.1.&lt;/p&gt;
+
+&lt;p&gt;That felt like an issue, and definitely needed some thought.&lt;/p&gt;
+
+&lt;p&gt;Additionally, there were some issues with which interventions might have not had a real
+effect, and instead just been the results of the use of randomness.  While my analysis of how that might have affected
+things was somewhat limited by the number of test runs I could
+afford to do, it did show up two plausible issues:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Adding gradient clipping looked like it might have been within the training run noise.&lt;/li&gt;
+&lt;li&gt;Adding QKV bias would have had a large effect on the model's initial weights.  All
+of the others would have started with essentially the same weights (apart from
+weight tying, though even that would have had the same values for the initial
+weights apart from the tied ones).  But adding the bias would have completely changed
+them, and its effect size was comfortably within the range of differences you might
+expect from that.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;After some thought, I came up with a plan.  If I were doing this properly and scientifically,
+I suppose I'd try every combination of interventions, but that would be ruinously expensive &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;, so a sensible
+minimal set of training runs felt like this:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Start a training run with all of the interventions apart from QKV bias.&lt;/li&gt;
+&lt;li&gt;In parallel (Lambda instance availability permitting) run another one, with
+all of the interventions &lt;em&gt;including&lt;/em&gt; QKV bias.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;When those completed, I'd find the test set loss for both models.  I'd choose the best
+run, and then do another run with those settings, but with weight decay switched
+back to the original value of 0.1.  I chose to revert weight decay rather than the learning rate stuff because this was
+the one I was least sure about -- the updated "GPT-2" value of 0.01 is very unusual
+by today's standards, and I'd come to it via a rather circuitous route -- see
+&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;the post&lt;/a&gt; for more details.&lt;/p&gt;
+
+&lt;p&gt;The best of the three runs would be the winning combination of interventions.&lt;/p&gt;
+
+&lt;p&gt;Again, this was not an exhaustive plan &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;.  But it seemed to make sense.  Let's see
+how it turned out.&lt;/p&gt;
+
+&lt;h3 id="training-run-1-without-qkv-bias"&gt;Training run 1: without QKV bias&lt;/h3&gt;
+
+&lt;p&gt;Just to recap, this one had these interventions against the baseline:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Gradient clipping at 3.5&lt;/li&gt;
+&lt;li&gt;Weight decay changed from 0.1 to 0.01&lt;/li&gt;
+&lt;li&gt;Dropout removed&lt;/li&gt;
+&lt;li&gt;Learning rate changed from 0.0004 to 0.0014, with a warmup over 5% of the run
+then a cosine decay to 0.00014.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;It did not have QKV bias.  You can see &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/main/runs/8xa100m40-stacked-interventions-1"&gt;the config here&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Here's the loss chart over the course of the training run:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-1-loss-chart.png" alt="The loss chart without QKV bias" title="The loss chart without QKV bias" /&gt;&lt;/p&gt;
+
+&lt;p&gt;As normal with learning rate scheduling, I also charted that to make sure it was
+doing the right thing (you can see that it was):&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-1-learning-rate-chart.png" alt="The learning rate chart without QKV bias" title="The learning rate chart without QKV bias" /&gt;&lt;/p&gt;
+
+&lt;p&gt;And I also tracked the gradient norms -- you can see that there was some clipping
+happening near the start of the run:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-1-grad-norm-chart.png" alt="The gradient norm chart without QKV bias" title="The gradient norm chart without QKV bias" /&gt;&lt;/p&gt;
+
+&lt;p&gt;At the end of the run, it reported this:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Training complete in 11,437.717 seconds
+Tokens seen: 3,260,252,160
+Throughput: 285,044 tokens/second
+Final train loss: 3.557
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;That's a slightly lower final train loss than normal, and it took 3h10m, which is
+faster than usual, but about the same as the other train we did without dropout --
+that makes sense, as the process of zeroing out random activations isn't free.&lt;/p&gt;
+
+&lt;p&gt;I downloaded the model -- &lt;a href="https://huggingface.co/gpjt/8xa100m40-stacked-interventions-1"&gt;here it is&lt;/a&gt; -- and then ran the smoke test:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you back to writing. In addition, there is room in your notebook so this will be an opportunity that
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;...and got its loss on the test set:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Loss against our test dataset: 3.577761
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Not bad at all -- the best result we've had so far, albeit not quite
+up to the standard of the original GPT-2 weights.&lt;/p&gt;
+
+&lt;p&gt;Now the next one, with QKV bias.&lt;/p&gt;
+
+&lt;h3 id="training-run-2-all-five-interventions-including-qkv-bias"&gt;Training run 2: all five interventions including QKV bias&lt;/h3&gt;
+
+&lt;p&gt;This one had these interventions:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Gradient clipping at 3.5&lt;/li&gt;
+&lt;li&gt;Weight decay changed from 0.1 to 0.01&lt;/li&gt;
+&lt;li&gt;Dropout removed&lt;/li&gt;
+&lt;li&gt;Learning rate changed from 0.0004 to 0.0014, with a warmup over 5% of the run
+then a cosine decay to 0.00014.&lt;/li&gt;
+&lt;li&gt;QKV bias switched on.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;You can see &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/main/runs/8xa100m40-stacked-interventions-2"&gt;the config here&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Here's the loss chart:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-2-loss-chart.png" alt="The loss chart with QKV bias" title="The loss chart with QKV bias" /&gt;&lt;/p&gt;
+
+&lt;p&gt;...the learning rate:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-2-learning-rate-chart.png" alt="The learning rate chart with QKV bias" title="The learning rate chart with QKV bias" /&gt;&lt;/p&gt;
+
+&lt;p&gt;...the gradient norms (note that we had more clipping, about halfway through):&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-2-grad-norm-chart.png" alt="The gradient norm chart with QKV bias" title="The gradient norm chart with QKV bias" /&gt;&lt;/p&gt;
+
+&lt;p&gt;...and the final printout at the end.&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Training complete in 11,487.294 seconds
+Tokens seen: 3,260,252,160
+Throughput: 283,814 tokens/second
+Final train loss: 3.584
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;That final train loss is slightly higher, which is normally an indicator that the
+test loss will be higher, but we'll have to see.&lt;/p&gt;
+
+&lt;p&gt;Time to download the model --
+&lt;a href="https://huggingface.co/gpjt/8xa100m40-stacked-interventions-2"&gt;here it is&lt;/a&gt; --
+and on to the smoke test:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you to change the color in your image.
+Your image’s color will need to match the
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;...and then the moment of truth -- what was its loss on the test set?&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Loss against our test dataset: 3.604342
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;As I suspected from the training loss at the end, slightly worse than the run without
+QKV bias. So, that meant that we should do the next run, with a weight decay of 0.1, with
+no QKV bias.&lt;/p&gt;
+
+&lt;h3 id="training-run-3-just-dropout-removal-gradient-clipping-and-a-higher-but-scheduled-learning-rate"&gt;Training run 3: just dropout removal, gradient clipping, and a higher but scheduled learning rate&lt;/h3&gt;
+
+&lt;p&gt;Given the above results, this one had these interventions vs the baseline:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Gradient clipping at 3.5&lt;/li&gt;
+&lt;li&gt;Dropout removed&lt;/li&gt;
+&lt;li&gt;Learning rate changed from 0.0004 to 0.0014, with a warmup over 5% of the run
+then a cosine decay to 0.00014.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Weight decay was back to the baseline value of 0.1, rather than the value of 0.01
+used in the previous two runs, and QKV bias was switched back off.&lt;/p&gt;
+
+&lt;p&gt;You can see &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/main/runs/8xa100m40-stacked-interventions-3"&gt;the config here&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Here's the loss chart:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-3-loss-chart.png" alt="The loss chart without QKV bias and with weight decay back to 0.1" title="The loss chart without QKV bias and with weight decay back to 0.1" /&gt;&lt;/p&gt;
+
+&lt;p&gt;You can see that it's much choppier than the previous two runs; that initially surprised me,
+as the higher weight decay means that we're regularising the model more than we were with
+those, which I thought would "calm things down".  But on reflection, I had it backward.
+Hand-waving a bit, a more regularised model is fitting less closely every detail to the data it has seen, considering
+the typical stuff more than it does the outliers.
+That means that when something a bit more out-of-distribution appears, it might not
+have yet learned how to integrate it into its model of the world.&lt;/p&gt;
+
+&lt;p&gt;Well, it sounds plausible, anyway :-)&lt;/p&gt;
+
+&lt;p&gt;On to the learning rate (just to double-check), and it's fine:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-3-learning-rate-chart.png" alt="The learning rate chart without QKV bias and with weight decay back to 0.1" title="The learning rate chart without QKV bias and with weight decay back to 0.1" /&gt;&lt;/p&gt;
+
+&lt;p&gt;And again, the gradient norms:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-3-grad-norm-chart.png" alt="The gradient norm chart without QKV bias and with weight decay back to 0.1" title="The gradient norm chart without QKV bias and with weight decay back to 0.1" /&gt;&lt;/p&gt;
+
+&lt;p&gt;...which similarly to the loss chart show more occasions where gradients spiked and
+had to be clipped -- even towards the end of the training run this time.&lt;/p&gt;
+
+&lt;p&gt;The final printout at the end:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Training complete in 11,422.638 seconds
+Tokens seen: 3,260,252,160
+Throughput: 285,420 tokens/second
+Final train loss: 3.570
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Once again, although the final train loss is not definitive, it tends to be indicative
+of the test loss.  It's in between the last two runs, so we'd expect the test loss to
+be likewise in between theirs:&lt;/p&gt;
+
+&lt;p&gt;Time to download the model --
+&lt;a href="https://huggingface.co/gpjt/8xa100m40-stacked-interventions-3"&gt;here it is&lt;/a&gt; --
+and on to the smoke test:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you to make, our service has helped millions of women around the world who were recently hit by car wreck
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Hmm.  At least vaguely coherent, though I'm not 100% convinced.  It looks like ads for
+personal injury lawyers have crept into FineWeb somehow...&lt;/p&gt;
+
+&lt;p&gt;Still, it's time for the test loss (drumroll):&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Loss against our test dataset: 3.590266
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;As predicted from the train loss, it's in between the two runs above.&lt;/p&gt;
+
+&lt;h3 id="conclusion"&gt;Conclusion&lt;/h3&gt;
+
+&lt;p&gt;Let's put these three runs into the results table:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test set loss&lt;/th&gt;
+  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;8xa100m40-weight-tying&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.874305&lt;/td&gt;
+  &lt;td&gt;-0.182779&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;8xa100m40-weight-decay-cerebras&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.813856&lt;/td&gt;
+  &lt;td&gt;-0.122330&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;8xa100m40-baseline&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;8xa100m80-no-amp&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.678968&lt;/td&gt;
+  &lt;td&gt;0.012558&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;8xa100m40-gradient-clipping&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.678317&lt;/td&gt;
+  &lt;td&gt;0.013209&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;8xa100m40-qkv-bias&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.669385&lt;/td&gt;
+  &lt;td&gt;0.022141&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;8xa100m40-weight-decay-gpt2&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.642940&lt;/td&gt;
+  &lt;td&gt;0.048586&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;8xa100m40-remove-dropout&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.641282&lt;/td&gt;
+  &lt;td&gt;0.050244&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;8xa100m40-stacked-interventions-2&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.604342&lt;/td&gt;
+  &lt;td&gt;0.087184&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32e-interventions-learning-rate"&gt;8xa100m40-schedule-learning-rate&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.601917&lt;/td&gt;
+  &lt;td&gt;0.089609&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;8xa100m40-stacked-interventions-3&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.590266&lt;/td&gt;
+  &lt;td&gt;0.101260&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;8xa100m40-stacked-interventions-1&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+  &lt;td&gt;0.113765&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;As a reminder:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt; was gradient clipping at 3.5, weight decay changed from 0.1 to 0.01,
+dropout removed, and the learning rate intervention, but &lt;em&gt;no&lt;/em&gt; QKV bias&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;8xa100m40-stacked-interventions-2&lt;/code&gt; was gradient clipping at 3.5, weight decay changed from 0.1 to 0.01,
+dropout removed, and the learning rate intervention, &lt;em&gt;with&lt;/em&gt; QKV bias&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;8xa100m40-stacked-interventions-3&lt;/code&gt; was gradient clipping at 3.5,
+dropout removed, and the learning rate intervention, but &lt;em&gt;no&lt;/em&gt; QKV bias, and &lt;em&gt;no change to weight decay&lt;/em&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;You can see that adding on QKV bias actually made the model &lt;em&gt;worse&lt;/em&gt; than the learning-rate-only
+intervention.  That pushes me slightly away from the "it's all about the initial weights"
+direction; perhaps instead the bias adds some kind of stability that the learning rate
+scheduling also provides, and they fight against each other?  Unfortunately I think the
+only way to pick it apart would be to do a full set of runs, switching each intervention
+on and off independently, and that would be too costly.&lt;/p&gt;
+
+&lt;p&gt;The fact that the weight decay change from 0.1 to 0.01 actually did help when combined
+with the learning rate change and scheduling was a bit of a surprise; because they're both
+coupled when we think about standard gradient descent, I was expecting them to be too intertwined for my tests
+of them in isolation to have been valid.  Quite pleased that it didn't work out that way,
+though, because sweeping across values for different parameters is much easier than
+it would be if they were connected.&lt;/p&gt;
+
+&lt;p&gt;However, at this point it occurs to me that it
+might be because we're using the AdamW optimiser.  As I
+understand it, its big difference versus Adam is that it decouples weight decay.  I don't
+have a solid mental model of what that means exactly (will read up and post about
+it eventually), but it certainly seems pertinent here.&lt;/p&gt;
+
+&lt;p&gt;Anyway, I have to say, I'm both pleased with and disappointed by these results.
+Pleased because we got a result by putting interventions together that was better
+than any of them in isolation, but disappointed that the end result wasn't even
+better.&lt;/p&gt;
+
+&lt;p&gt;The difference between &lt;code&gt;8xa100m40-baseline&lt;/code&gt;'s loss, at 3.691526, and original GPT-2 small's,
+at 3.5, was 0.191526.  Our best result, for &lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;,
+was 3.577761, so an improvement of 0.113765.  That's about 60% of the way there.&lt;/p&gt;
+
+&lt;p&gt;That said, by sheer chance, while trying out the different sizes of cloud machines,
+I'd got from a loss of 3.944 training locally to the baseline's value of 3.691526 --
+I suspect due to the fact that training in the cloud meant that I could use
+batch sizes of 96.&lt;/p&gt;
+
+&lt;p&gt;So a different way of looking at it is that we should include that in the calculations too.
+From 3.944 to 3.5, the gap with GPT-2 small was 0.444.  And we went from 3.944 to 3.577761,
+an improvement of 0.366239.  And that means that we managed to get 82% of the improvement
+we needed.&lt;/p&gt;
+
+&lt;p&gt;On the other hand, it means that in terms of my improvements, 0.252474 came from a happy
+accident, while all of my careful work on interventions only got me 0.113765.  :-(&lt;/p&gt;
+
+&lt;p&gt;Anyway, I think that for now, I'll have to rest happy with that as a result -- and next time around,
+let's see if we can get to the same level of improvement locally, using gradient accumulation.&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;Luckily the difference was small enough that it doesn't change any of the
+conclusions I'd made about it.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;Because there are five interventions, and each can be on or off, then it's
+equivalent to a 5-digit binary number.  So that's &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mn&gt;5&lt;/mn&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; trains, less the five ones I'd already done and the baseline,
+for a total of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;32&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;26&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.
+At US$50-odd for a train, that's definitely a no-go.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;I did also consider changing the random seed at the start of the code to 67
+rather than 42, given that it seemed to provide better initial weights when I was
+exploring the effects of random noise on the training.  I even started the first two
+training runs with that in place.  However, on reflection I realised that it would be
+one step too far away from scientific rigour.  I'm not trying to be 100% rigorous in
+these posts, but it seemed like a step too far to diligently test all of the
+interventions against one seed, and then YOLO
+in a different one for the final training runs.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud</guid>
+      <pubDate>Thu, 09 Apr 2026 20:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Writing an LLM from scratch, part 32i -- Interventions: what is in the noise?</title>
       <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise</link>
@@ -941,6 +1449,8 @@ together, and do a best-effort training run.  Can we approach the original GPT-2
 weights' performance on our test set loss?&lt;/p&gt;
 
 &lt;p&gt;It should be fun to find out :-)&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
 
 &lt;div class="footnotes"&gt;
 &lt;hr /&gt;
@@ -4660,286 +5170,6 @@ one used for gradient clipping.&amp;#160;&lt;a href="#fnref-2" class="footnoteBa
 </description>
       <guid isPermaLink="true">/2026/02/llm-from-scratch-32b-interventions-gradient-clipping</guid>
       <pubDate>Thu, 05 Feb 2026 01:20:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 32a -- Interventions: training a baseline model</title>
-      <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32a-interventions-baseline-model</link>
-      <description>&lt;p&gt;I'm rounding out my series of posts on
-&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;"
-by seeing how I could train the &lt;em&gt;best&lt;/em&gt; base model I can from scratch on my own hardware.
-I started by &lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;training one in two days on my RTX 3090&lt;/a&gt;,
-and found that while it was a decent little model, it wasn't as good as the original
-GPT-2 small, either in terms of the loss it got on my test dataset, or
-in terms of how good it was at following instruction prompts after fine-tuning on them.  I decided
-that I wanted to see what levers I could pull -- dropout, attention weight biases, and so
-on -- to make it better.&lt;/p&gt;
-
-&lt;p&gt;For that, I didn't want to have my PC tied up for days at a time with multiple long training runs,
-so I &lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud"&gt;learned how to train faster in the cloud&lt;/a&gt;.
-That led to some &lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;refinements in the prompt-following test I was using&lt;/a&gt;,
-and I also spent a bit of time on a side quest getting the various models I'd trained &lt;a href="/2026/01/llm-from-scratch-31-models-on-hugging-face"&gt;onto Hugging Face Hub&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Now it's time to try the various "interventions", as I'll call them -- the levers to
-pull to see if I can make the model better.  This post is
-to recap what they are, and to describe what I did to establish a baseline model to
-compare to.&lt;/p&gt;
-&lt;h3 id="the-interventions"&gt;The interventions&lt;/h3&gt;
-
-&lt;p&gt;I listed a number of possible interventions at the end of the RTX 3090 post; I'm not going
-to do them all, but for completeness, here's the full list:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;The amount of training data.  I'm not going to dig into this one; it looks like it
-does help, but the returns diminish rapidly, so I think that in order to get any serious
-improvement we'd need to train for much more than two days locally.  In the one
-"extended training" test I did, I managed to get the loss down from 4.167 to 4.135, which
-was... less-than-inspiring.&lt;/li&gt;
-&lt;li&gt;The number of epochs.  I'm going to stick to single-epoch training -- that is, I'll
-train on a single pass through an amount of non-repeating data chosen to take 48 hours to handle
-on my local machine.&lt;/li&gt;
-&lt;li&gt;The bias on the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;q&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;v&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; matrices.  This one definitely sounds worth looking
-into -- easy, as it's just a change to a config flag, and makes the model more like the
-original GPT-2.  I'll give that a go.  &lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;Here's the post&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;Dropout.  I've read that for single-epoch training, dropout doesn't help (which
-doesn't quite work with &lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;my mental model&lt;/a&gt; of what it's for, but
-does sound plausible).  Worth a look!  &lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;Here's the post&lt;/a&gt;.&lt;/li&gt;
-&lt;li&gt;The learning rate, and weight decay.  The values I've used for these are basically copypasta
-from the book.  I think I should learn to understand these and try to optimise them a bit.
-I'll post separately on each of them.  &lt;a href="/2026/02/llm-from-scratch-32e-interventions-learning-rate"&gt;Here's the one about the learning rate&lt;/a&gt;,
-and &lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;here's the one on weight decay&lt;/a&gt;.&lt;/li&gt;
-&lt;li&gt;The precision.  I'm using &lt;a href="https://docs.pytorch.org/docs/stable/amp.html"&gt;AMP&lt;/a&gt;, which means that
-some calculations are done in 16-bit rather than 32-bit, and calling
-&lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html"&gt;&lt;code&gt;set_float32_matmul_precision&lt;/code&gt;&lt;/a&gt;
-with &lt;code&gt;"high"&lt;/code&gt; to let PyTorch choose to use the GPU's tensor cores, which use TF32, a kind of "32-bit float lite" (see the
-&lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;post on the local train&lt;/a&gt; for details).
-Those both (at least potentially) reduce the precision of
-the train below what you'd get if you trained with full-fat &lt;code&gt;float32&lt;/code&gt;.  Would reverting
-that be worth the longer train time?  I should probably at least poke at that.
-&lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;Here's the blog post about it&lt;/a&gt;.&lt;/li&gt;
-&lt;li&gt;The batch size.  I've already, in effect, tried playing with that.  The different
-cloud machines I played with had different amounts of per-GPU VRAM, so supported
-different per-GPU micro-batch sizes.  So I wound up trying batch sizes from
-512 (the same as the original GPT-2 was trained with) down to 104 in the cloud,
-plus my local trains with a batch size of 6.  I did a rough-and-ready calculation
-&lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud#the-results"&gt;at the end of the cloud training post&lt;/a&gt;
-where I estimated that the ideal batch size might be something like 97.  So, probably
-not worth much more investigation.&lt;/li&gt;
-&lt;li&gt;Exploding gradients.  In one of my local trains, and in three out of the four cloud
-trains, I had sudden spikes in both training and validation loss.  It generally took
-quite a bit of training -- maybe 10-15% of training time -- to get back on track after
-some of these, so we had what could be seen as wasted time in the training runs.
-Exploding gradients can be fixed by gradient clipping, which is relatively easy to
-do.  Definitely worth investigating!  &lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;Here's the post on that&lt;/a&gt;.&lt;/li&gt;
-&lt;li&gt;Weight-tying.  We have a feed-forward network acting as the output head of our LLM --
-the mapping from the embedding-space outputs from the Transformer layers back into
-vocab space.  But the original GPT-2 just re-used the input token embedding's
-matrix for that.  It seems unlikely that that would be a good thing -- after all,
-our current setup has a flexibility that the original didn't, as the output embedding
-space can differ from the input one.  But who knows, perhaps with a small model
-like this, it might help? &lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;Here's the post&lt;/a&gt;.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I've worked through each of those apart from the first two and the batch size (and have retrospectively added links to
-the list above when I do), trying a train with just that intervention and nothing else, on
-a cloud machine.  Once that's done, I'll bake all of the things that helped into
-the training loop, and do another local train -- with
-&lt;a href="https://www.hopsworks.ai/dictionary/gradient-accumulation"&gt;gradient accumulation&lt;/a&gt; to make
-the batch size match the cloud instances'.&lt;/p&gt;
-
-&lt;p&gt;The cloud machine size that I decided to use for this was the one that came out the
-most cost-effective (and due to its VRAM size, had the best loss) in my earlier
-cloud training test: an 8x A100 machine with 40 GiB VRAM per GPU.&lt;/p&gt;
-
-&lt;p&gt;But first, we need a baseline model.&lt;/p&gt;
-
-&lt;h3 id="why-a-new-baseline"&gt;Why a new baseline?&lt;/h3&gt;
-
-&lt;p&gt;I've already done a train on an 8x A100 40 GiB machine -- why do we need a new one?&lt;/p&gt;
-
-&lt;p&gt;In my cloud training post, I came to the conclusion that the cost in terms of training
-time of running a periodic validation loop as we trained was not really worth it, at
-least in this case.  Two of the biggest reasons to have validation during training
-are to work out when you're overfitting on a multi-epoch train, and to see how your model
-can handle datasets that it has not been trained on.&lt;/p&gt;
-
-&lt;p&gt;In a single-epoch train like this,
-you're not going to overfit -- every sample it sees will be new to it -- and the training
-loss itself is over samples it's not been trained on at the time it was calculated, for the
-same reason (though of course it will be trained on them as soon as we do the backward
-pass starting with that loss).&lt;/p&gt;
-
-&lt;p&gt;Of course, it's not perfect --
-a big benefit of the validation loss is that it's over the &lt;em&gt;same&lt;/em&gt; held-back dataset
-on every run -- and there are arguments for keeping it (albeit, perhaps doing full
-runs less frequently than I was).  But for these experiments, I decided that I'd
-simply drop it.&lt;/p&gt;
-
-&lt;p&gt;I also wanted to introduce a consistent random seed at the start of the training
-loop.  I didn't have that in my cloud trains, and of course if we want to have solid
-results on whether each intervention really does improve matters, then we need one
-so that we can be sure they're all starting from the same point.&lt;/p&gt;
-
-&lt;p&gt;Both of those meant that I couldn't use the earlier train on the 8x A100 40 GiB machine
-as a baseline; I'd need a new one, introducing those two changes: no validation during the
-training run (using training loss as a proxy), and setting a random seed at the start
-for reproducibility.&lt;/p&gt;
-
-&lt;p&gt;So: what was the baseline train going to look like?&lt;/p&gt;
-
-&lt;h3 id="creating-the-baseline"&gt;Creating the baseline&lt;/h3&gt;
-
-&lt;p&gt;The first step was to &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/5175b84262a95b0c0353d784ed9bb6161e9ee882"&gt;strip out the validation code&lt;/a&gt;
-and to replace it with code that just took periodic checkpoints, keeping track of
-which one had the best average training loss over the period since the previous one.  Next, I
-decided to &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/9ed8cfd5ff40cde47c8c49a730f0571285469cf8"&gt;plot on the training chart&lt;/a&gt; that is generated during the run not just
-the training loss, but also an indicator of the maximum and minimum training loss
-over all of the steps in that period.  Then I &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/6a7e5867f86882050fee058cdf9c5880a0f3fcb1"&gt;added the random seed&lt;/a&gt;,
-which I set to 42.&lt;/p&gt;
-
-&lt;p&gt;A couple of bugfixes, and we were left with &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/dc341a246c13190409d0158765e340d8292a29ae"&gt;this version of the code&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;One thing to highlight: in the &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/dc341a246c13190409d0158765e340d8292a29ae/runs/8xa100m40-baseline/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;
-file that specifies the various training parameters, I set the per-GPU micro-batch
-size to 12 rather than the 13 I'd used on this size of machine earlier.
-Two reasons for that:&lt;/p&gt;
-
-&lt;p&gt;Firstly, I'm going to want to do a local run with gradient
-accumulation later, using all of the helpful interventions.
-With gradient accumulation, you do a number of steps with batches that you can fit
-into your memory, but you don't update the gradients each time.  After a number of those,
-you do one big update based on the accumulated gradients -- hence the name.  The full
-batch is all of those smaller batches taken together.&lt;/p&gt;
-
-&lt;p&gt;If I want that to closely match the cloud train, I'll want the accumulated batches to
-be the same size as each global batch in the cloud.&lt;/p&gt;
-
-&lt;p&gt;Now, on my local machine, I can fit a batch of 6 into VRAM.  So that means that the
-full batch needs to be divisible by 6 &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;.  On the cloud train, with a micro-batch of 13 and 8 GPUs, we had an overall batch
-size of 104 in the previous train.  104 is not divisible by 6: no joy.  But with a micro-batch size of
-12, we have an overall batch of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;12&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;8&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;96&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;, which means we'd be able to do gradient
-accumulation and do a parameter update every &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;96&lt;/mn&gt;&lt;mi&gt;&amp;#x000F7;&lt;/mi&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;16&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; steps.&lt;/p&gt;
-
-&lt;p&gt;Secondly, while my estimate of the ideal overall batch size was based on a rather arbitrary
-bit of curve-fitting, it did say that 97 was the ideal size.  So it could be interesting
-to see whether it did help!&lt;/p&gt;
-
-&lt;p&gt;So, having coded that up and set up the configuration, it was time to run it.&lt;/p&gt;
-
-&lt;p&gt;Here's the training chart it came up with:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32a-interventions-baseline-model/baseline-training-run-chart.png" alt="Baseline training run on an 8x A100 with 40 GiB/GPU" title="Baseline training run on an 8x A100 with 40 GiB/GPU" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Note the loss spikes at around global steps 4,200, 13,000 and 23,000.  Those are important, I'll explain why later.&lt;/p&gt;
-
-&lt;p&gt;The training run reported this at the end:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 12,243.523 seconds&lt;/span&gt;
-&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
-&lt;span class="go"&gt;Throughput: 266,284 tokens/second&lt;/span&gt;
-&lt;span class="go"&gt;Final train loss: 3.743&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So it took about 3h24m to train, even less than we expected from the previous
-cloud experiments' estimates of how long it would take excluding validation.  About
-US$35 in cost.&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-baseline"&gt;Here is the model on Hugging Face Hub&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Let's see how it looks.&lt;/p&gt;
-
-&lt;h3 id="evals"&gt;Evals&lt;/h3&gt;
-
-&lt;p&gt;For these intervention posts, I won't run the instruction-following tests, as they
-can only be run against a batch of models in one go to get results that
-&lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;are consistent with each other&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;But the smoke test -- how does it complete the sequence &lt;code&gt;Every effort moves you&lt;/code&gt; is worthwhile:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/checkpoints/best/model.safetensors
-&lt;span class="go"&gt;Every effort moves you in on a good cause.&lt;/span&gt;
-&lt;span class="go"&gt;If it doesn’t work you would like to join the&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Looks good!  Reasonably coherent.&lt;/p&gt;
-
-&lt;p&gt;Now we can find the loss on our held-back test set:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-baseline/checkpoints/best/model.safetensors
-&lt;span class="go"&gt;Fetching 4 files: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00&amp;lt;00:00, 990.57it/s]&lt;/span&gt;
-&lt;span class="go"&gt;100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3200/3200 [04:53&amp;lt;00:00, 10.91it/s]&lt;/span&gt;
-&lt;span class="go"&gt;Loss against our test dataset: 3.692&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That's a bit worse than the 3.674 we got for the original cloud train.  Either
-the calculations of the optimal batch size I did were not quite right (entirely likely,
-they were very ad-hoc) or the model weights we started with, given the random seed
-we're using, just happened to lead us in a slightly worse direction (also plausible).  Either way, it's
-in line with what we expected, and is still better than the test loss of 3.725 that we
-got with the second-best machine in the cloud comparison post (the 8x H100 80 GiB with a global batch size of 216).&lt;/p&gt;
-
-&lt;p&gt;So: we have a solid baseline model -- before we wrap up, let's consider those spikes in
-the loss that I called out in the training chart.&lt;/p&gt;
-
-&lt;h3 id="the-loss-spikes"&gt;The loss spikes&lt;/h3&gt;
-
-&lt;p&gt;Random spikes in the loss are a Bad Thing, right?  Certainly they're a bad thing for
-a train in general, especially if you don't know for sure what's causing them.  But my
-working assumption has been that they're caused by exploding gradients -- for some
-specific sample in the dataset, the gradients have gone up to some insanely high value,
-and we've had a bad update to our parameters as a result.  It hasn't completely knocked the model back to its starting
-point, but it does take some time to recover, so we lose the benefit of some of our
-training.&lt;/p&gt;
-
-&lt;p&gt;If that is the case -- and it's not just something like a batch happening to have stuff
-that's wildly different to the rest of the training data, or something weird in the optimiser
--- then gradient clipping is the solution.  I wanted to see if it
-would help the model quality in general, but of course if we hadn't had any loss spikes
-in this baseline train it would have been hard to see if that was the case!&lt;/p&gt;
-
-&lt;p&gt;So I
-was very glad to see them here, as if there had been none I would either have had
-to do a gradient clipping experiment with no real expectation of it helping -- or do
-another baseline train with a different random seed in the hope that that caused some
-spikes, which would have cost another US$35.&lt;/p&gt;
-
-&lt;p&gt;All in all, it was good to see them there, as it sets us up well for that experiment.&lt;/p&gt;
-
-&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
-
-&lt;p&gt;So, we've trained a baseline model that we can make changes to -- the interventions
-I listed at the start -- and get a pretty reliable understanding of whether or not
-they help the quality of the final model.  With that in place, we're in a good position
-to start running those intervention tests!&lt;/p&gt;
-
-&lt;p&gt;Given the loss spike situation in that chart, I think that a solid first one to go
-for -- even though it was the last in that list at the top of this post -- is gradient
-clipping.  Where are those loss spikes coming from, and if it's exploding gradients, what happens if we limit the
-damage they do with gradient clipping?&lt;/p&gt;
-
-&lt;p&gt;Stay tuned!  I've already done the training run for that (while I wrote this one up),
-so I should be able to post about it tomorrow.&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;Well, you could potentially do something with batches of different sizes, but
-that would be fiddly.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/02/llm-from-scratch-32a-interventions-baseline-model</guid>
-      <pubDate>Wed, 04 Feb 2026 01:45:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
