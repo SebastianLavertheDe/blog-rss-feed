@@ -7,7 +7,159 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Thu, 09 Apr 2026 23:42:06 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 10 Apr 2026 02:55:53 +0000</lastBuildDate>
+    <item>
+      <title>watgo - a WebAssembly Toolkit for Go</title>
+      <link>https://eli.thegreenplace.net/2026/watgo-a-webassembly-toolkit-for-go/</link>
+      <description>&lt;p&gt;I'm happy to announce the general availability of &lt;a class="reference external" href="https://github.com/eliben/watgo"&gt;watgo&lt;/a&gt;
+- the &lt;strong&gt;W&lt;/strong&gt;eb&lt;strong&gt;A&lt;/strong&gt;ssembly &lt;strong&gt;T&lt;/strong&gt;oolkit for &lt;strong&gt;G&lt;/strong&gt;o. This project is similar to
+&lt;a class="reference external" href="https://github.com/webassembly/wabt"&gt;wabt&lt;/a&gt; (C++) or
+&lt;a class="reference external" href="https://github.com/bytecodealliance/wasm-tools"&gt;wasm-tools&lt;/a&gt; (Rust), but in
+pure, zero-dependency Go.&lt;/p&gt;
+&lt;p&gt;watgo comes with a CLI and a Go API to parse WAT (WebAssembly Text), validate
+it, and encode it into WASM binaries; it also supports decoding WASM from its
+binary format.&lt;/p&gt;
+&lt;p&gt;At the center of it all is &lt;a class="reference external" href="https://pkg.go.dev/github.com/eliben/watgo/wasmir"&gt;wasmir&lt;/a&gt; - a semantic
+representation of a WebAssembly module that users can examine (and manipulate).
+This diagram shows the functionalities provided by watgo:&lt;/p&gt;
+&lt;img alt="Block diagram showing the different parts of watgo; described in the next paragraph" class="align-center" src="https://eli.thegreenplace.net/images/2026/watgo-diagram.png" /&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;Parse: a parser from WAT to &lt;tt class="docutils literal"&gt;wasmir&lt;/tt&gt;&lt;/li&gt;
+&lt;li&gt;Validate: uses the official WebAssembly validation semantics to check that the
+module is well formed and safe&lt;/li&gt;
+&lt;li&gt;Encode: emits &lt;tt class="docutils literal"&gt;wasmir&lt;/tt&gt; into WASM binary representation&lt;/li&gt;
+&lt;li&gt;Decode: read WASM binary representation into &lt;tt class="docutils literal"&gt;wasmir&lt;/tt&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="section" id="cli-use-case"&gt;
+&lt;h2&gt;CLI use case&lt;/h2&gt;
+&lt;p&gt;watgo comes with a CLI, which you can install by issuing this command:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;go install github.com/eliben/watgo/cmd/watgo@latest
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The CLI aims to be compatible with wasm-tools &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;, and I've already switched my
+&lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples"&gt;wasm-wat-samples&lt;/a&gt; projects to
+use it; e.g. a command to parse a WAT file, validate it and encode it into
+binary format:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;watgo parse stack.wat -o stack.wasm
+&lt;/pre&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="api-use-case"&gt;
+&lt;h2&gt;API use case&lt;/h2&gt;
+&lt;p&gt;&lt;tt class="docutils literal"&gt;wasmir&lt;/tt&gt; semantically represents a WASM module with an API that's easy to work
+with. Here's an example of using watgo to parse a simple WAT
+program and do some analysis:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kn"&gt;package&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;main&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="s"&gt;&amp;quot;fmt&amp;quot;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="s"&gt;&amp;quot;github.com/eliben/watgo&amp;quot;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="s"&gt;&amp;quot;github.com/eliben/watgo/wasmir&amp;quot;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="kd"&gt;const&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;wasmText&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s"&gt;`&lt;/span&gt;
+&lt;span class="s"&gt;(module&lt;/span&gt;
+&lt;span class="s"&gt;  (func (export &amp;quot;add&amp;quot;) (param i32 i32) (result i32)&lt;/span&gt;
+&lt;span class="s"&gt;    local.get 0&lt;/span&gt;
+&lt;span class="s"&gt;    local.get 1&lt;/span&gt;
+&lt;span class="s"&gt;    i32.add&lt;/span&gt;
+&lt;span class="s"&gt;  )&lt;/span&gt;
+&lt;span class="s"&gt;  (func (param f32 i32) (result i32)&lt;/span&gt;
+&lt;span class="s"&gt;    local.get 1&lt;/span&gt;
+&lt;span class="s"&gt;    i32.const 1&lt;/span&gt;
+&lt;span class="s"&gt;    i32.add&lt;/span&gt;
+&lt;span class="s"&gt;    drop&lt;/span&gt;
+&lt;span class="s"&gt;    i32.const 0&lt;/span&gt;
+&lt;span class="s"&gt;  )&lt;/span&gt;
+&lt;span class="s"&gt;)`&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="kd"&gt;func&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;m&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;err&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;watgo&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;ParseWAT&lt;/span&gt;&lt;span class="p"&gt;([]&lt;/span&gt;&lt;span class="nb"&gt;byte&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nx"&gt;wasmText&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;err&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;!=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;nil&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nb"&gt;panic&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nx"&gt;err&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;i32Params&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;localGets&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;i32Adds&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="c1"&gt;// Module-defined functions carry a type index into m.Types. The function&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="c1"&gt;// body itself is a flat sequence of wasmir.Instruction values.&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;fn&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;range&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;m&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Funcs&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nx"&gt;sig&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;m&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Types&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="nx"&gt;fn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;TypeIdx&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;param&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;range&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;sig&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Params&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;param&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Kind&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;==&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;wasmir&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;ValueKindI32&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nx"&gt;i32Params&lt;/span&gt;&lt;span class="o"&gt;++&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;instr&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;:=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;range&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;fn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Body&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="k"&gt;switch&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;instr&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Kind&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="k"&gt;case&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;wasmir&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;InstrLocalGet&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nx"&gt;localGets&lt;/span&gt;&lt;span class="o"&gt;++&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="k"&gt;case&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;wasmir&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;InstrI32Add&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nx"&gt;i32Adds&lt;/span&gt;&lt;span class="o"&gt;++&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Printf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;module-defined funcs: %d\n&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nx"&gt;m&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Funcs&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Printf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;i32 params: %d\n&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;i32Params&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Printf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;local.get instructions: %d\n&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;localGets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nx"&gt;fmt&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Printf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;i32.add instructions: %d\n&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;i32Adds&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;One important note: the WAT format supports several syntactic niceties that
+are flattened / canonicalized when lowered to &lt;tt class="docutils literal"&gt;wasmir&lt;/tt&gt;. For example, all folded
+instructions are lowered to unfolded ones (linear form), function &amp;amp; type
+names are resolved to numeric indices, etc. This matches the validation and
+execution semantics of WASM and its binary representation.&lt;/p&gt;
+&lt;p&gt;These syntactic details are present in watgo in the &lt;tt class="docutils literal"&gt;textformat&lt;/tt&gt; package
+(which parses WAT into an AST) and are removed when this is lowered to &lt;tt class="docutils literal"&gt;wasmir&lt;/tt&gt;.
+The &lt;tt class="docutils literal"&gt;textformat&lt;/tt&gt; package is kept internal at this time, but in the future I
+may consider exposing it publicly - if there's interest.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="testing-strategy"&gt;
+&lt;h2&gt;Testing strategy&lt;/h2&gt;
+&lt;p&gt;Even though it's still early days for watgo, I'm reasonably confident in its
+correctness due to a strategy of very heavy testing right from the start.&lt;/p&gt;
+&lt;p&gt;WebAssembly comes with a &lt;a class="reference external" href="https://github.com/WebAssembly/spec/"&gt;large official test suite&lt;/a&gt;,
+which is perfect for end-to-end testing of new implementations.
+The core test suite includes almost 200K lines of WAT files that carry several
+modules with expected execution semantics and a variety of error scenarios
+exercised. These live in specially designed &lt;a class="reference external" href="https://github.com/WebAssembly/spec/tree/main/interpreter#scripts"&gt;.wast files&lt;/a&gt; and
+leverage a custom spec interpreter.&lt;/p&gt;
+&lt;p&gt;watgo hijacks this approach by using the official test suite for its own
+testing. A custom harness parses .wast files and uses watgo to convert the WAT
+in them to binary WASM, which is then executed by Node.js &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;; this harness is
+a significant effort in itself, but it's very much worth it - the result is
+excellent testing coverage. watgo passes the entire WASM spec core test suite.&lt;/p&gt;
+&lt;p&gt;Similarly, we leverage &lt;a class="reference external" href="https://github.com/WebAssembly/wabt/tree/main/test/interp"&gt;wabt's interp test suite&lt;/a&gt; which also
+includes end-to-end tests, using a simpler Node-based harness to test them
+against watgo.&lt;/p&gt;
+&lt;p&gt;Finally, I maintain a collection of realistic program samples written in
+WAT in the &lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples"&gt;wasm-wat-samples repository&lt;/a&gt;;
+these are also used by watgo to test itself.&lt;/p&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;Though not all of wasm-tools's functionality is supported yet.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;To stick to a pure-Go approach also for testing, I originally tried
+using wazero for this, but had to give up because wazero doesn't support
+some of the recent WASM proposals that have already made it into the
+standard (most notably Garbage Collection).&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-04-09:/2026/watgo-a-webassembly-toolkit-for-go/</guid>
+      <pubDate>Thu, 09 Apr 2026 19:28:00 -0700</pubDate>
+    </item>
     <item>
       <title>Summary of reading: January - March 2026</title>
       <link>https://eli.thegreenplace.net/2026/summary-of-reading-january-march-2026/</link>
@@ -1020,167 +1172,6 @@ the lexer should be easy. That assumption turned out to be correct.&lt;/td&gt;&l
 </description>
       <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-04:/2026/rewriting-pycparser-with-the-help-of-an-llm/</guid>
       <pubDate>Wed, 04 Feb 2026 19:35:00 -0800</pubDate>
-    </item>
-    <item>
-      <title>Compiling Scheme to WebAssembly</title>
-      <link>https://eli.thegreenplace.net/2026/compiling-scheme-to-webassembly/</link>
-      <description>&lt;p&gt;One of my oldest open-source projects - &lt;a class="reference external" href="https://github.com/eliben/bobscheme"&gt;Bob&lt;/a&gt;
-- has &lt;a class="reference external" href="https://eli.thegreenplace.net/2010/11/06/bob-a-scheme-interpreter-compiler-and-vm-in-python"&gt;celebrated 15 a couple of months ago&lt;/a&gt;.
-Bob is a suite of implementations of the Scheme programming language in Python,
-including an interpreter, a compiler and a VM. Back then I was doing some hacking
-on CPython internals and was very curious about how CPython-like bytecode VMs
-work; Bob was an experiment to find out, by implementing one from scratch for
-R5RS Scheme.&lt;/p&gt;
-&lt;p&gt;Several months later I &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/04/09/a-c-vm-added-to-bob"&gt;added a C++ VM to Bob&lt;/a&gt;,
-as an exercise to learn how such VMs are implemented in a low-level language
-without all the runtime support Python provides; most importantly, without the
-built-in GC. The C++ VM in Bob implements its own mark-and-sweep GC.&lt;/p&gt;
-&lt;p&gt;After many quiet years (with just a sprinkling of cosmetic changes, porting to
-GitHub, updates to Python 3, etc), I felt the itch to work on Bob again just
-before the holidays. Specifically, I decided to add another compiler to the
-suite - this one from Scheme directly to WebAssembly.&lt;/p&gt;
-&lt;p&gt;The goals of this effort were two-fold:&lt;/p&gt;
-&lt;ol class="arabic simple"&gt;
-&lt;li&gt;Experiment with lowering a real, high-level language like Scheme to
-WebAssembly. Experiments like the recent &lt;a class="reference external" href="https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/"&gt;Let's Build a Compiler&lt;/a&gt;
-compile toy languages that are at the C level (no runtime). Scheme has built-in
-data structures, lexical closures, garbage collection, etc. It's much more challenging.&lt;/li&gt;
-&lt;li&gt;Get some hands-on experience with the WASM GC extension &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;. I have several
-samples of using WASM GC in the &lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples"&gt;wasm-wat-samples repository&lt;/a&gt;,
-but I really wanted to try it for something &amp;quot;real&amp;quot;.&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;Well, it's done now; here's an updated schematic of the Bob project:&lt;/p&gt;
-&lt;img alt="Bob project diagram with all the components it includes" class="align-center" src="https://eli.thegreenplace.net/images/2026/bob_toplevel.png" /&gt;
-&lt;p&gt;The new part is the rightmost vertical path. A &lt;a class="reference external" href="https://github.com/eliben/bobscheme/blob/main/bob/wasmcompiler.py"&gt;WasmCompiler&lt;/a&gt;
-class lowers parsed Scheme expressions all the way down to WebAssembly text,
-which can then be compiled to a binary and executed using standard WASM tools &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;.&lt;/p&gt;
-&lt;div class="section" id="highlights"&gt;
-&lt;h2&gt;Highlights&lt;/h2&gt;
-&lt;p&gt;The most interesting aspect of this project was working with WASM GC to
-represent Scheme objects. As long as we properly box/wrap all values in
-&lt;tt class="docutils literal"&gt;ref&lt;/tt&gt;s, the underlying WASM execution environment will take care of the
-memory management.&lt;/p&gt;
-&lt;p&gt;For Bob, here's how some key Scheme objects are represented:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;;; PAIR holds the car and cdr of a cons cell.
-(type $PAIR (struct (field (mut (ref null eq))) (field (mut (ref null eq)))))
-
-;; BOOL represents a Scheme boolean. zero -&amp;gt; false, nonzero -&amp;gt; true.
-(type $BOOL (struct (field i32)))
-
-;; SYMBOL represents a Scheme symbol. It holds an offset in linear memory
-;; and the length of the symbol name.
-(type $SYMBOL (struct (field i32) (field i32)))
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;&lt;tt class="docutils literal"&gt;$PAIR&lt;/tt&gt; is of particular interest, as it may contain arbitrary objects in
-its fields; &lt;tt class="docutils literal"&gt;(ref null eq)&lt;/tt&gt; means &amp;quot;a nullable reference to something that
-has identity&amp;quot;. &lt;tt class="docutils literal"&gt;ref.test&lt;/tt&gt; can be used to check - for a given
-reference - the run-time type of the value it refers to.&lt;/p&gt;
-&lt;p&gt;You may wonder - what about numeric values? Here WASM has a trick - the &lt;tt class="docutils literal"&gt;i31&lt;/tt&gt;
-type can be used to represent a reference to an integer, but without
-actually boxing it (one bit is used to distinguish such an object from a
-real reference). So we don't need a separate type to hold references to numbers.&lt;/p&gt;
-&lt;p&gt;Also, the &lt;tt class="docutils literal"&gt;$SYMBOL&lt;/tt&gt; type looks unusual - how is it represented with two
-numbers? The key to the mystery is that WASM has no built-in support for
-strings; they should be implemented manually using offsets to linear memory.
-The Bob WASM compiler emits the string values of all symbols encountered into
-linear memory, keeping track of the offset and length of each one; these are
-the two numbers placed in &lt;tt class="docutils literal"&gt;$SYMBOL&lt;/tt&gt;. This also allows to fairly easily
-implement the string interning feature of Scheme; multiple instances of the
-same symbol will only be allocated once.&lt;/p&gt;
-&lt;p&gt;Consider this trivial Scheme snippet:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;write&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;20&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;foo&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;The compiler emits the symbols &amp;quot;foo&amp;quot; and &amp;quot;bar&amp;quot; into linear memory as follows &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt;:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(data (i32.const 2048) &amp;quot;foo&amp;quot;)
-(data (i32.const 2051) &amp;quot;bar&amp;quot;)
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;And looking for one of these addresses in the rest of the emitted code, we'll
-find:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(struct.new $SYMBOL (i32.const 2051) (i32.const 3))
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;As part of the code for constructing the constant &lt;tt class="docutils literal"&gt;cons&lt;/tt&gt; list representing the
-argument to &lt;tt class="docutils literal"&gt;write&lt;/tt&gt;; address 2051 and length 3: this is the symbol &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt;.&lt;/p&gt;
-&lt;p&gt;Speaking of &lt;tt class="docutils literal"&gt;write&lt;/tt&gt;, implementing this builtin was quite interesting. For
-compatibility with the other Bob implementations in my repository, &lt;tt class="docutils literal"&gt;write&lt;/tt&gt;
-needs to be able to print recursive representations of arbitrary Scheme values,
-including lists, symbols, etc.&lt;/p&gt;
-&lt;p&gt;Initially I was reluctant to implement all of this functionality by hand in
-WASM text, but all alternatives ran into challenges:&lt;/p&gt;
-&lt;ol class="arabic simple"&gt;
-&lt;li&gt;Deferring this to the host is difficult because the host environment has
-no access to WASM GC references - they are completely opaque.&lt;/li&gt;
-&lt;li&gt;Implementing it in another language (maybe C?) and lowering to WASM is also
-challenging for a similar reason - the other language is unlikely to have
-a good representation of WASM GC objects.&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;So I bit the bullet and - with some AI help for the tedious parts - just wrote
-an implementation of &lt;tt class="docutils literal"&gt;write&lt;/tt&gt; directly in WASM text; it wasn't really that
-bad. I import only two functions from the host:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(import &amp;quot;env&amp;quot; &amp;quot;write_char&amp;quot; (func $write_char (param i32)))
-(import &amp;quot;env&amp;quot; &amp;quot;write_i32&amp;quot; (func $write_i32 (param i32)))
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Though emitting integers &lt;a class="reference external" href="https://eli.thegreenplace.net/2023/itoa-integer-to-string-in-webassembly/"&gt;directly from WASM isn't hard&lt;/a&gt;,
-I figured this project already has enough code and some host help here would
-be welcome. For all the rest, only the lowest level &lt;tt class="docutils literal"&gt;write_char&lt;/tt&gt; is used.
-For example, here's how booleans are emitted in the canonical Scheme notation
-(&lt;tt class="docutils literal"&gt;#t&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;#f&lt;/tt&gt;):&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(func $emit_bool (param $b (ref $BOOL))
-    (call $emit (i32.const 35)) ;; &amp;#39;#&amp;#39;
-    (if (i32.eqz (struct.get $BOOL 0 (local.get $b)))
-        (then (call $emit (i32.const 102))) ;; &amp;#39;f&amp;#39;
-        (else (call $emit (i32.const 116))) ;; &amp;#39;t&amp;#39;
-    )
-)
-&lt;/pre&gt;&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class="section" id="conclusion"&gt;
-&lt;h2&gt;Conclusion&lt;/h2&gt;
-&lt;p&gt;This was a really fun project, and I learned quite a bit about realistic code
-emission to WASM. Feel free to check out the source code of &lt;a class="reference external" href="https://github.com/eliben/bobscheme/blob/main/bob/wasmcompiler.py"&gt;WasmCompiler&lt;/a&gt; - it's
-very well documented. While it's a bit over 1000 LOC in total &lt;a class="footnote-reference" href="#footnote-4" id="footnote-reference-4"&gt;[4]&lt;/a&gt;, more than half
-of that is actually WASM text snippets that implement the builtin types and
-functions needed by a basic Scheme implementation.&lt;/p&gt;
-&lt;hr class="docutils" /&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The GC proposal &lt;a class="reference external" href="https://github.com/WebAssembly/gc"&gt;is documented here&lt;/a&gt;.
-It was officially added to the WASM spec in Oct 2023.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;p class="first"&gt;In Bob this is currently done with &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;bytecodealliance/wasm-tools&lt;/span&gt;&lt;/tt&gt; for the
-text-to-binary conversion and Node.js for the execution environment, but
-this can change in the future.&lt;/p&gt;
-&lt;p class="last"&gt;I actually wanted to use Python bindings to wasmtime, but these don't
-appear to support WASM GC yet.&lt;/p&gt;
-&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;2048 is just an arbitrary offset the compiler uses as the beginning of
-the section for symbols in memory. We could
-also use the multiple memories feature of WASM and dedicate a separate
-linear memory just for symbols.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-4" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-4"&gt;[4]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;To be clear, this is just the WASM compiler class; it uses the &lt;tt class="docutils literal"&gt;Expr&lt;/tt&gt;
-representation of Scheme that is created by Bob's parser (and lexer);
-the code of these other components is shared among all Bob
-implementations and isn't counted here.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-01-17:/2026/compiling-scheme-to-webassembly/</guid>
-      <pubDate>Sat, 17 Jan 2026 14:37:00 -0800</pubDate>
     </item>
   </channel>
 </rss>
