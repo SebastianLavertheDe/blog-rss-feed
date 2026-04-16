@@ -9,7 +9,33 @@ http://antirez.com
 </link>
     <description>Description pending</description>
     <language>en</language>
-    <lastBuildDate>Thu, 16 Apr 2026 10:19:50 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 16 Apr 2026 12:01:26 +0000</lastBuildDate>
+    <item>
+      <title>
+AI cybersecurity is not proof of work
+</title>
+      <link>
+http://antirez.com/news/163
+</link>
+      <description>The proof of work is the wrong analogy: finding hash collisions, while exponentially harder with N, is guaranteed to find, with enough work, some S so that H(S) satisfies N, so an asymmetry of resources used will see the side with more "work ability" eventually winning.
+&lt;br&gt;
+&lt;br&gt;But bugs are different:
+&lt;br&gt;
+&lt;br&gt;1. Different LLMs executions take different branches, but eventually the possible branches based on the code possible states are saturated.
+&lt;br&gt;
+&lt;br&gt;2. If we imagine sampling the model for a bug in a given code M times, with M large, eventually the cap becomes not "M" (because of saturated state of the code AND the LLM sampler meaningful paths), but "I", the model intelligence level.
+&lt;br&gt;
+&lt;br&gt;The OpenBSD SACK bug easily shows that: you can run an inferior model for an infinite number of tokens, and it will never realize(*) that the lack of validation of the start window, if put together with the integer overflow, then put together with the fact the branch where the node should never be NULL is entered regardless, will produce the bug.
+&lt;br&gt;
+&lt;br&gt;So, cyber security of tomorrow will not be like proof of work in the sense of "more GPU wins"; instead, better models, and faster access to such models, will win.
+&lt;br&gt;
+&lt;br&gt;* Don't trust who says that weak models can find the OpenBSD SACK bug. I tried it myself. What happens is that weak models hallucinate (sometimes causally hitting a real problem) that there is a lack of validation of the start of the window (which is in theory harmless because of the start &lt; end validation) and the integer overflow problem without understanding why they, if put together, create an issue. It's just pattern matching of bug classes on code that looks may have a problem, totally lacking the true ability to understand the issue and write an exploit. Test it yourself, GPT 120B OSS is cheap and available.
+&lt;br&gt;
+&lt;br&gt;BTW, this is why with this bug, the stronger the model you pick (but not enough to discover the true bug), the less likely it is it will claim there is a bug. Stronger models hallucinate less, so they can't see the problem in any side of the spectrum: the hallucination side of small models, and the real understanding side of Mythos.
+&lt;a href="http://antirez.com/news/163"&gt;Comments&lt;/a&gt;</description>
+      <guid isPermaLink="true">http://antirez.com/news/163</guid>
+      <pubDate>Thu, 16 Apr 2026 12:46:46 +0200</pubDate>
+    </item>
     <item>
       <title>
 GNU and the AI reimplementations
@@ -7642,139 +7668,6 @@ http://antirez.com/news/64
 &lt;a href="http://antirez.com/news/64"&gt;Comments&lt;/a&gt;</description>
       <guid isPermaLink="true">http://antirez.com/news/64</guid>
       <pubDate>Sun, 01 Dec 2013 16:48:37 +0100</pubDate>
-    </item>
-    <item>
-      <title>
-Finally Redis collections are iterable
-</title>
-      <link>
-http://antirez.com/news/63
-</link>
-      <description>Redis API for data access is usually limited, but very direct and straightforward.
-&lt;br&gt;
-&lt;br&gt;It is limited because it only allows to access data in a natural way, that is, in a data structure obvious way. Sorted sets are easy to access by score ranges, while hashes by field name, and so forth.
-&lt;br&gt;This API “way” has profound effects on what Redis is and how users organize data into it, because an API that is data-obvious means fast operations, less code and less bugs in the implementation, but especially forcing the application layer to make meaningful choices: the database as a system in which you are responsible of organizing data in a way that makes sense in your application, versus a database as a magical object where you put data inside, and then it will be able to fetch and organize data for you in any format.
-&lt;br&gt;
-&lt;br&gt;However most Redis data types, including the outer key-value shell if we want to consider it a data type for a moment (it is a dictionary after all), are collections of elements. The key-value space is a collection of keys mapped to values, as Sets are collections of unordered elements, and so forth.
-&lt;br&gt;
-&lt;br&gt;In most application logic using Redis the idea is that you know what member is inside a collection, or at least you know what member you should test for existence. But life is not always that easy, and sometimes you need something more, that is, to scan the collection in order to retrieve all the elements inside. And yes, since this is a common need, we have commands like SMEMBERS or HGETALL, or even KEYS, in order to retrieve everything there is inside a collection, but those commands are always a last-resort kind of deal, because they are O(N) operations.
-&lt;br&gt;
-&lt;br&gt;Your collection is very small? Fine, use SMEMBERS and you get Redis-alike performances anyway. Your collection is big? Don’t use O(N) commands if not for “debugging” purposes. A popular example is the misused KEYS command, source of troubles for non-experts, and top hit among the Redis slow log entries.
-&lt;br&gt;
-&lt;br&gt;Black holes
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;The problem is that because of O(N) operations, Redis collections, (excluding Sorted Sets that can be accessed by rank, in ranges, and in many other different ways), tend to be black holes where you put things inside, and you can hardly explore them again.
-&lt;br&gt;
-&lt;br&gt;And there are plenty of reasons to explore what is inside. For example garbage collection tasks, schema migration, or even fixing what is inside keys after an application bug corrupted some data.
-&lt;br&gt;
-&lt;br&gt;What we really needed was an iterator. Pieter Noordhuis and I were very aware of this problem since the early days of Redis, but it was a major design challenge because traditionally the deal is, you want a data structure to be iterable? Well, this is going to be a sorted tree-like data structure, with the concept of previous and next element.
-&lt;br&gt;
-&lt;br&gt;Instead most Redis data types are based on hash tables, and Redis hash tables are even of the most particular kind, as them automatically and incrementally resize, so sometime you even have two tables at the same time slowly exchanging elements from one to the other.
-&lt;br&gt;
-&lt;br&gt;Hash tables are cool because they have a good memory efficiency, and the constant-time access property. What we use is power-of-two sized hash tables, with chaining for collision handling, and this has worked pretty well so far. An indirect indicator is that sorted sets, the only data structure we have that is based on a tree-alike structure (skip lists) is measurably slower than others once elements start to pile up. While Log(N) is small, with million of elements it starts to be a big enough number that cache misses summed together make a difference.
-&lt;br&gt;
-&lt;br&gt;There was no easy way to say goodbye to hash tables.
-&lt;br&gt;
-&lt;br&gt;However eventually Pieter applied one of the most powerful weapons the designer has in its hands: sacrifice, and send me a pull request for a new SCAN command.
-&lt;br&gt;
-&lt;br&gt;The command was able to walk the key space incrementally, using a cursor that is returned back to the user after every call to SCAN, so it is a completely stateless affair. It is something like that:
-&lt;br&gt;
-&lt;br&gt;redis 127.0.0.1:6379&gt; flushall
-&lt;br&gt;OK
-&lt;br&gt;redis 127.0.0.1:6379&gt; debug populate 33
-&lt;br&gt;OK
-&lt;br&gt;redis 127.0.0.1:6379&gt; scan 0
-&lt;br&gt;1) "52"
-&lt;br&gt;2)  1) "key:29"
-&lt;br&gt;    2) "key:13"
-&lt;br&gt;    3) "key:9"
-&lt;br&gt;    4) "key:12"
-&lt;br&gt;    5) "key:28"
-&lt;br&gt;    6) "key:30"
-&lt;br&gt;    7) "key:26"
-&lt;br&gt;    8) "key:14"
-&lt;br&gt;    9) "key:21"
-&lt;br&gt;   10) "key:20"
-&lt;br&gt;redis 127.0.0.1:6379&gt; scan 52
-&lt;br&gt;1) "9"
-&lt;br&gt;2)  1) "key:16"
-&lt;br&gt;    2) "key:31"
-&lt;br&gt;    3) "key:3"
-&lt;br&gt;    4) "key:0"
-&lt;br&gt;    5) "key:32"
-&lt;br&gt;    6) "key:17"
-&lt;br&gt;    7) "key:24"
-&lt;br&gt;    8) "key:8"
-&lt;br&gt;    9) "key:15"
-&lt;br&gt;   10) "key:11"
-&lt;br&gt;
-&lt;br&gt;… and so forth until the returned cursor is 0 again …
-&lt;br&gt;
-&lt;br&gt;This is possible because SCAN does not make big promises, hence the sacrifice: it guarantees to return all the elements that are in the collection from the start to the end of the iteration, at least one time.
-&lt;br&gt;
-&lt;br&gt;This means, for example, that:
-&lt;br&gt;
-&lt;br&gt;1) Elements may be returned multiple times.
-&lt;br&gt;2) Elements added during the iteration may be returned, or not, at random.
-&lt;br&gt;
-&lt;br&gt;It turns out that this is a perfectly valid compromise, and that at application level you can almost always do what is needed to play well with this properties. Sometimes the operation you are doing on every element are simply safe to re-apply, some other times you can just put a flag in your (for example) Hash in order to mark it as processed, or a timestamp perhaps, and so forth.
-&lt;br&gt;
-&lt;br&gt;Eventually merged
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;Pieter did an excellent work, but the pull request remained pending forever (more than one year), because it relied on a complex to understand implementation. Basically in order to guarantee the previous properties with tables that can change from one SCAN call to the other, Pieter used a cursor that is incremented inverting the bits, in order to count starting from the most significant bits first. This is why in the example you see the returned cursor jumping forward and backward.
-&lt;br&gt;
-&lt;br&gt;This has different advantages, including the fact that it returns a small number of duplicates when possible (by checking less slots than a more naive implementation). Eventually I studied his code and tried to find a simpler algorithm with the same properties without success, so what I did is to document the algorithm. You can read the description here in the
-&lt;br&gt;dict.c file: https://github.com/antirez/redis/blob/unstable/src/dict.c#L663
-&lt;br&gt;
-&lt;br&gt;After you do some whiteboard reasoning, it is not too hard to see how it works, but it is neither trivial, however it works definitely very well.
-&lt;br&gt;
-&lt;br&gt;So with the code merged into unstable, I tried to generalize the implementation in order to work with all the other types in Redis that can be iterated this way, that are Hashes, Sets and Sorted Sets, in the form of additional commands named HSCAN, SSCAN, ZSCAN.
-&lt;br&gt;
-&lt;br&gt;You may wonder why to have a ZSCAN. The reason is that while sorted sets are iterable in other ways, the specific properties of the SCAN iterator are not trivial to simulate by scanning elements by rank or score. Moreover sorted sets are internally implemented by a skiplist and an hash table, so we already had the hash table and to extend SCAN to sorted sets was trivial.
-&lt;br&gt;
-&lt;br&gt;Patterns too!
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;SCAN and its variants can be used with the MATCH option in order to only return elements matching a pattern. I’m also implementing the TYPE option in order to only return keys of a specific type.
-&lt;br&gt;
-&lt;br&gt;This is almost for free, since SCAN does not guarantees to return elements at all, so what happens is that it scans something like 10 buckets of the hash table per call (by default, you can change this) and later filters the output. Even if the return value contains no elements, you keep iterating as soon as the returned cursor is non-zero.
-&lt;br&gt;
-&lt;br&gt;As you can see this is something you could do client-side as well, by matching the returned elements with a pattern, but it is much faster to do it server side given that is a very common pattern, and one that users are already used to because of the KEYS command. And it requires less I/O of course, if the pattern only matches a small number of elements.
-&lt;br&gt;
-&lt;br&gt;This is an example:
-&lt;br&gt;
-&lt;br&gt;edis 127.0.0.1:6379&gt; scan 0 MATCH key:1*
-&lt;br&gt;1) "52"
-&lt;br&gt;2) 1) "key:13"
-&lt;br&gt;   2) "key:12"
-&lt;br&gt;   3) "key:14"
-&lt;br&gt;redis 127.0.0.1:6379&gt; scan 52 MATCH key:1*
-&lt;br&gt;1) "9"
-&lt;br&gt;2) 1) "key:16"
-&lt;br&gt;   2) "key:17"
-&lt;br&gt;   3) "key:15"
-&lt;br&gt;   4) "key:11"
-&lt;br&gt;redis 127.0.0.1:6379&gt; scan 9 MATCH key:1*
-&lt;br&gt;1) "59"
-&lt;br&gt;2) 1) "key:10"
-&lt;br&gt;   2) "key:1"
-&lt;br&gt;   3) "key:18"
-&lt;br&gt;redis 127.0.0.1:6379&gt; scan 59 MATCH key:1*
-&lt;br&gt;1) "0"
-&lt;br&gt;2) 1) "key:19"
-&lt;br&gt;
-&lt;br&gt;In the last call the returned cursor is 0, so we ended the iteration.
-&lt;br&gt;
-&lt;br&gt;Excited about it? I’ve good news, this is going to be back ported into 2.8 since it is completely self contained code so if it is broken, it does not affect other stuff. Well not just that, there are very big companies that are using SCAN for some time now, so I’m confident it’s pretty stable.
-&lt;br&gt;
-&lt;br&gt;Enjoy iterating!
-&lt;br&gt;
-&lt;br&gt;Discuss this blog post on Hacker News: https://news.ycombinator.com/item?id=6633091
-&lt;a href="http://antirez.com/news/63"&gt;Comments&lt;/a&gt;</description>
-      <guid isPermaLink="true">http://antirez.com/news/63</guid>
-      <pubDate>Sun, 27 Oct 2013 16:47:10 +0100</pubDate>
     </item>
   </channel>
 </rss>
