@@ -5,7 +5,183 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 17 Apr 2026 21:51:14 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 17 Apr 2026 22:47:48 +0000</lastBuildDate>
+    <item>
+      <title>How an LLM becomes more coherent as we train it</title>
+      <link>https://www.gilesthomas.com/2026/04/how-an-llm-becomes-more-coherent-over-training</link>
+      <description>&lt;p&gt;I remember finding it interesting when, back
+in 2015, Andrej Karpathy posted about RNNs and
+&lt;a href="https://karpathy.github.io/2015/05/21/rnn-effectiveness/#the-evolution-of-samples-while-training"&gt;gave an example of how their output improves over the course of a training run&lt;/a&gt;.
+What might that look like for a (relatively) modern transformers-based LLM?&lt;/p&gt;
+
+&lt;p&gt;I recently trained a GPT-2-small-style LLM, with 163 million parameters, on about
+3.2 billion tokens (that's about 12.8 GiB of text) from the Hugging Face
+&lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb"&gt;FineWeb&lt;/a&gt; dataset, and
+over the course of that training run, I saved the current model periodically
+-- 57 checkpoints over two days.&lt;/p&gt;
+
+&lt;p&gt;Here's what it looked like -- the start, the end, and some interesting waypoints
+in between.&lt;/p&gt;
+&lt;p&gt;For each checkpoint, I asked it to generate a completion to the words "Every effort
+moves you". &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;  When the model was first created, before any training had been done, it
+came up with this:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves youhhhh esoteric Suns 1896ricia enormous initially
+speculative arenaelse anth Zimmerman Insight Sketch demonstr despicable
+capitalists clamp flung condemnation
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;If you've read the Karpathy essay, you'll see one important difference -- it's already got words in there.
+His RNNs were generating complete noise at this stage.
+Even by the 100th iteration, he gives an example like this:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;tyntd-iafhatawiaoihrdemot  lytdws  e ,tfti, astai f ogoh eoase rrranbyne
+'nhthnee e plia tklrgd t o idoe ns,smtt   h ne etie h,hregtrs nigtike,aoaenns lng
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;That's an important difference between the RNNs he was talking about, which were
+character-based and had to learn about words and the like, and LLMs like this one,
+where the text is input and then output one token at a time.
+(&lt;a href="/2025/08/what-ai-chatbots-are-doing-under-the-hood"&gt;More info here&lt;/a&gt;).&lt;/p&gt;
+
+&lt;p&gt;Still, even though it has what looks like words, it's essentially content-free token
+salad with no structure or coherence &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;.  Let's see what happens if we train it more.&lt;/p&gt;
+
+&lt;p&gt;In my training loop, it sees 96 sequences of 1,024 tokens, and then we update it
+based on its loss (an index of how wrong it was at predicting next tokens), so that's 98,304 tokens for each step.
+After 617 of these &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt; it seems to have mostly learned something about which
+tokens are most common:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you and to was, in the, a, The
+ your of- and
+| to the The
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;By the next checkpoint at step 1234, we've got
+something that's starting to come together.
+It doesn't make sense, but there's some kind of glimmering of meaning:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you’ll take the rest of the mainstay in all of his team. This
+year with a
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And just a little while later, at the checkpoint at step 2468, we have something
+that actually makes some kind of sense (at least at the start)!&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you to a different country. For all the most part, a world
+map can only see the world map
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Now, the training data I'm using was scraped from the Internet, and unsurprisingly
+there's a lot of somewhat cheesy business content there.  By step 9255, we're starting
+to get a lot of stuff like this:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you forward and it is important to make sure that your
+clients are satisfied. A number of people have
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;...or even more cheesy self-help stuff (step 10489):&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you to be the best that you will ever have. To be your best,
+you should be able to
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;To be fair, the starting point of "Every effort moves you" is probably biasing things
+a bit there.&lt;/p&gt;
+
+&lt;p&gt;But let's be clear: by this point it's seen 1,031,110,656 tokens -- that is, it's about
+one third trained.  And it's coming up with pretty coherent text!  The rest of the training
+run is more about refining things -- the loss chart for this training run looks like this:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation/interventions-loss-chart.png" alt="The loss chart for the local interventions train" title="The loss chart for the local interventions train" /&gt;&lt;/p&gt;
+
+&lt;p&gt;Loosely speaking, the lower the loss number, the better the model is, so you can see that the bulk of the improvement had happened by this point.
+From here on, I'll just give a few of the more interesting samples:&lt;/p&gt;
+
+&lt;p&gt;By step 14191, it's started using bullet points...&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you towards your goals.
+- Develop meaningful habits or habits that promote your business
+- Keep personal and
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Step 24680 -- more motivational stuff:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you forward and keeps you motivated. You make sure you don’t
+leave it alone.
+A
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Step 25297 -- small models like this do like repeating themselves.  You might remember
+seeing ChatGPT output back in 2023 or so that had tics like this:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you from a simple position to a complex issue of complexity
+and complexity.
+As soon as the book takes
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And again at step 26531&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you, the company, the company, the community and all those
+involved. I will be pleased to say
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;At step 27765 it decides that it has had enough after generating just a couple of
+words and tries to start a new document:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you to the next level.&amp;lt;|endoftext|&amp;gt;Hip Hop: The New York
+Times, April 23, 2017
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;But step 28382 is actually rather good.  I particularly like the "however":&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you, however, towards a better future, and that’s what counts
+as a win.
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And finally, the training run finishes at step 33164 with these wise words of caution:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you, and you’re rewarded, but not to your potential. You’ve
+got to
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Well worth remembering, I'm sure we can all agree.  I wonder what deep wisdom
+we'd have gained if I had asked it to generate more than 20 new tokens...&lt;/p&gt;
+
+&lt;p&gt;What I found most surprising when I first
+started playing with this is how &lt;em&gt;fast&lt;/em&gt; even simple LLMs got to a stage where they could generate
+plausible text.  Just one third of the way through the training run, this model
+was making some kind of sense.&lt;/p&gt;
+
+&lt;p&gt;The problem, of course, is that we don't just want generators of plausible content --
+we want that content to make sense and be correct.  And that's why it's worth
+grinding through the other two thirds -- in the hope that when you ask it to complete
+"The capital of France is", it will reply with "Paris" rather than a coherent but
+wrong answer like "Rouen".&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;Technical details: 20 GPT-2 tokens generated on top of the initial text, with
+a temperature of 1.  I've added line breaks to make it easier to read the samples.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;Well, it mentions " despicable capitalists", but I suspect that's just randomness
+rather than some kind of primitive political consciousness.  Including the
+space at the start, that's tokens 47034 and 32663 in the GPT-2 tokeniser.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;So, 60,653,568 tokens seen.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/04/how-an-llm-becomes-more-coherent-over-training</guid>
+      <pubDate>Fri, 17 Apr 2026 23:30:00 +0000</pubDate>
+    </item>
     <item>
       <title>Writing an LLM from scratch, part 32k -- Interventions: training a better model locally with gradient accumulation</title>
       <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation</link>
@@ -745,6 +921,8 @@ that made a number go down, or whether it actually improved the usefulness of th
 on and off since December, and I think a summary of what I did would be quite nice!&lt;/p&gt;
 
 &lt;p&gt;I'll post soon; don't touch that dial :-)&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
 
 &lt;div class="footnotes"&gt;
 &lt;hr /&gt;
@@ -5086,168 +5264,6 @@ post late next week, or perhaps even later.  I'm sure you can't wait ;-)&lt;/p&g
 </description>
       <guid isPermaLink="true">/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias</guid>
       <pubDate>Fri, 06 Feb 2026 23:55:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 32c -- Interventions: removing dropout</title>
-      <link>https://www.gilesthomas.com/2026/02/llm-from-scratch-32c-interventions-removing-dropout</link>
-      <description>&lt;p&gt;This is the second in my series of attempts to improve the loss on my test dataset
--- interventions, as I'm calling them --
-for a from-scratch GPT-2 small base model, trained on code based on
-&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".&lt;/p&gt;
-
-&lt;p&gt;Last time around I saw &lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;what gradient clipping can do&lt;/a&gt; --
-it improved loss over &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;the baseline&lt;/a&gt;
-by 0.014, bringing it down from 3.692 to 3.678.  Not much, but it's something!&lt;/p&gt;
-
-&lt;p&gt;This time, I wanted to see what happened if we trained without dropout.  Would removing it make
-the test loss worse, or better?&lt;/p&gt;
-&lt;h3 id="background"&gt;Background:&lt;/h3&gt;
-
-&lt;p&gt;In a blog post last summer about
-&lt;a href="https://magazine.sebastianraschka.com/i/170506328/21-removing-dropout"&gt;architectural advances in LLMs since GPT-2&lt;/a&gt;,
-Sebastian Raschka wrote:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Dropout (2012) is a traditional technique to prevent overfitting by randomly
-  "dropping out" (i.e., setting to zero) a fraction of the layer activations or
-  attention scores (Figure 3) during training. However, dropout is rarely used
-  in modern LLMs, and most models after GPT-2 have dropped it (no pun intended).&lt;/p&gt;
-  
-  &lt;p&gt;I assume that dropout was originally used in GPT-2 because it was inherited
-  from the original transformer architecture. Researchers likely noticed that
-  it does not really improve LLM performance (I observed the same in my
-  small-scale GPT-2 replication runs). This is likely because LLMs are typically
-  trained for only a single epoch over massive datasets, which is in contrast to
-  the multi-hundred-epoch training regimes for which dropout was first
-  introduced. So, since LLMs see each token only once during training, there is
-  little risk of overfitting.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;That makes quite a lot of sense.  My own understanding of dropout was that it was
-a bit broader than just preventing overfitting -- it seemed to me to be similar
-to the
-&lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;mandatory vacation policies that financial firms user to prevent over-dependence on individuals&lt;/a&gt;.
-My instinct was that having knowledge distributed across different weights in the
-model was good in and of itself, even beyond its benefit on multiple-epoch training.&lt;/p&gt;
-
-&lt;p&gt;But it is quite a high price to pay.
-With the training parameters we've been using we're literally discarding 10% of our calculations' results --
-attention weights, feed-forward neuron activations, and so on -- as we do the forward pass.
-It's easy to see why it would harm training.&lt;/p&gt;
-
-&lt;p&gt;Let's give it a go.&lt;/p&gt;
-
-&lt;h3 id="the-training-run"&gt;The training run&lt;/h3&gt;
-
-&lt;p&gt;The nice thing about this one is that, unlike the gradient clipping experiment,
-I didn't have to write any new code.  The dropout level was already controlled by
-a setting in the &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/main/runs/8xa100m40-remove-dropout/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt; file&lt;/a&gt;,
-so by setting that to zero for this run, I could just kick it off and let it
-do its thing while I worked on something else:&lt;/p&gt;
-
-&lt;p&gt;Here's what the training run chart looked like (please disregard the stuff about
-grad norms in the title and the axis -- I'll remove that for the next train):&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32c-interventions-removing-dropout/training-chart.png" alt="Training chart for zero-dropout run" title="Training chart for zero-dropout run" /&gt;&lt;/p&gt;
-
-&lt;p&gt;As you can see, we still have loss spikes, including one just after global step 20,000
-that lasts for several checkpoint periods of 617 steps.  I imagine gradient clipping
-might have helped with that, but I'm very deliberately testing each intervention in
-isolation.&lt;/p&gt;
-
-&lt;p&gt;At the end of the training run, we got this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 11,376.067 seconds&lt;/span&gt;
-&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
-&lt;span class="go"&gt;Throughput: 286,589 tokens/second&lt;/span&gt;
-&lt;span class="go"&gt;Final train loss: 3.621&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So, interestingly, it took 967 seconds -- about 16 minutes -- less time than the
-gradient clipping run, and about 15 minutes less than the baseline train.  So
-while gradient clipping added on a small amount of time (or maybe that was just noise),
-dropping dropout certainly seems to speed things up!  I guess there's quite a lot of
-work involved in generating and applying the random masks that drop things out as we're
-doing the forward pass.&lt;/p&gt;
-
-&lt;p&gt;Anyway, with the model trained, it was time to download it,
-&lt;a href="https://huggingface.co/gpjt/8xa100m40-remove-dropout"&gt;upload it to Hugging Face Hub&lt;/a&gt;, and run the evals.&lt;/p&gt;
-
-&lt;h3 id="evals"&gt;Evals&lt;/h3&gt;
-
-&lt;p&gt;Firstly, the smoke test, where it just needs to continue the sequence &lt;code&gt;Every effort moves you&lt;/code&gt;,
-it came up with something reasonably coherent:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/checkpoints/best/model.safetensors
-&lt;span class="go"&gt;Every effort moves you to make the world a better place.&lt;/span&gt;
-&lt;span class="go"&gt;As an international student of the arts in the UK,&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...but it was on the test of the loss on the training set that it was most impressive:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-remove-dropout/checkpoints/best/model.safetensors
-&lt;span class="go"&gt;Fetching 4 files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00&amp;lt;00:00, 1086.75it/s]&lt;/span&gt;
-&lt;span class="go"&gt;100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3200/3200 [04:54&amp;lt;00:00, 10.87it/s]&lt;/span&gt;
-&lt;span class="go"&gt;Loss against our test dataset: 3.641&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That's a bigger improvement on the baseline train's 3.692 than gradient clipping:
-0.051, which is more than three times the improvement!&lt;/p&gt;
-
-&lt;p&gt;Let's start keeping a table of these:&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test set loss&lt;/th&gt;
-  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-baseline&lt;/td&gt;
-  &lt;td&gt;3.692&lt;/td&gt;
-  &lt;td&gt;-&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-gradient-clipping&lt;/td&gt;
-  &lt;td&gt;3.678&lt;/td&gt;
-  &lt;td&gt;0.014&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-remove-dropout&lt;/td&gt;
-  &lt;td&gt;3.641&lt;/td&gt;
-  &lt;td&gt;0.051&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;Now, of course, we don't know how these different interventions combine together --
-it would be naive to think that if we did both gradient clipping and dropout
-removal, we'd get a total loss reduction of 0.014 + 0.051 -- but, especially with that
-long-lived loss spike in our training run -- it does feel like they might play well
-together.&lt;/p&gt;
-
-&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
-
-&lt;p&gt;So, that's dropout covered.  Which one next?  I think a nice easy one that I should
-be able to get done on a Friday will be adding bias to the attention weight calculations.
-Let's give that a go and see if it makes things worse or better!&lt;/p&gt;
-
-&lt;p&gt;Stay tuned...&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">/2026/02/llm-from-scratch-32c-interventions-removing-dropout</guid>
-      <pubDate>Thu, 05 Feb 2026 23:35:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
