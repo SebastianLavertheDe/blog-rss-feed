@@ -5,7 +5,68 @@
     <link>https://buttondown.com/hillelwayne</link>
     <description>&lt;!-- buttondown-editor-mode: fancy --&gt;&lt;p&gt;Hi, I'm Hillel. This is the newsletter version of &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://www.hillelwayne.com"&gt;my website&lt;/a&gt;. I post all website updates here. I also post weekly content just for the newsletter, on topics like&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;p&gt;Formal Methods&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Software History and Culture&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Fringetech and exotic tooling&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;The philosophy and theory of software engineering&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;You can see the archive of all public essays &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://buttondown.email/hillelwayne/archive/"&gt;here&lt;/a&gt;.&lt;/p&gt;</description>
     <language>en</language>
-    <lastBuildDate>Tue, 21 Apr 2026 17:10:53 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 21 Apr 2026 19:20:33 +0000</lastBuildDate>
+    <item>
+      <title>People get confused when language implementations break language guarantees</title>
+      <link>https://buttondown.com/hillelwayne/archive/people-get-confused-when-language-implementations/</link>
+      <description>
+&lt;p&gt;Take the following Python program:&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="c1"&gt;# x = 1, y = 2&lt;/span&gt;
+&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;
+&lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;It'll print &lt;code&gt;[0, 0]&lt;/code&gt;. If we swapped the two assignments, it'd instead print &lt;code&gt;[0, 1]&lt;/code&gt;. Each assignment happens in a separate temporal step. Pretty much all imperative languages behave this way.&lt;/p&gt;
+&lt;p&gt;Now take the following TLA+ snippet:&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;\* x = 1, y = 2
+/\ x&amp;#39; = 0
+/\ y&amp;#39; = x
+/\ PrintT(&amp;lt;&amp;lt;x&amp;#39;, y&amp;#39;&amp;gt;&amp;gt;)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This'll print &lt;code&gt;&amp;lt;&amp;lt;0, 1&amp;gt;&amp;gt;&lt;/code&gt;. Unlike in imperative languages, TLA+ separates the notion of update and temporal step. We read &lt;code&gt;x' = 0&lt;/code&gt; as "in the &lt;em&gt;next&lt;/em&gt; state, &lt;code&gt;x&lt;/code&gt; will be 0, but it still has the same value in the current state". So in every state &lt;code&gt;x&lt;/code&gt; and &lt;code&gt;x'&lt;/code&gt; are essentially separate variables. As a consequence of this, the order of statements don't matter in TLA+ semantics and swapping the two assignments doesn't change the printed output. The language is really clever like that! This means, among other things that there's basically no intrastep race conditions. One function can update a variable without affecting how any other function uses it.&lt;/p&gt;
+&lt;p&gt;Okay so now beginners inevitably run into a problem with this:&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;\* x = 1, y = 2
+/\ x&amp;#39; = y&amp;#39;
+/\ y&amp;#39; = x
+/\ PrintT(&amp;lt;&amp;lt;x&amp;#39;, y&amp;#39;&amp;gt;&amp;gt;)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This'll crash because &lt;code&gt;y'&lt;/code&gt; isn't defined yet. But if we swap the two assignments this works fine and prints &lt;code&gt;&amp;lt;&amp;lt;1, 1&amp;gt;&amp;gt;&lt;/code&gt;. So clearly that whole thing about nonordering is a pack of bunk. &lt;/p&gt;
+&lt;p&gt;Well, not exactly. TLA+ semantics still guarantee nonordering. The problem is that verifiers don't perfectly implement the TLA+ semantics. &lt;code&gt;y' &amp;gt; 0&lt;/code&gt; is a totally reasonable "assignment" but there's an infinite number of possible next states! So the main model checker (TLC) instead requires that &lt;code&gt;y' = some_value&lt;/code&gt; comes before any other use of &lt;code&gt;y'&lt;/code&gt;, which means ordering now matters.&lt;/p&gt;
+&lt;p&gt;The bigger problem is with &lt;code&gt;PrintT&lt;/code&gt;. The TLA+ semantics guarantee nonordering because the semantics don't allow for side effects. The model checker adds in effectful operators like &lt;code&gt;PrintT&lt;/code&gt; and &lt;code&gt;Assert&lt;/code&gt; and &lt;code&gt;IOExec&lt;/code&gt;. This can cause a problem with guard statements. Theoretically speaking these two script blocks are equivalent:&lt;/p&gt;
+&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;/\ x = 0 \* guard statement
+/\ P()
+/\ x&amp;#39; = x + 1
+
+/\ x&amp;#39; = x + 1
+/\ P()
+/\ x = 0 \* guard statement
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;When &lt;code&gt;x = 1&lt;/code&gt;, these don't lead to a new state due to the guard clause. But the model checker evaluates each line one at a time, meaning in block 2 it will run &lt;code&gt;x' = x + 1&lt;/code&gt; and &lt;code&gt;P()&lt;/code&gt; before getting to &lt;code&gt;x = 0&lt;/code&gt; and discarding the state. If &lt;code&gt;P&lt;/code&gt; is a proper TLA+ operator, this isn't a problem, but if it's &lt;code&gt;PrintT&lt;/code&gt; or &lt;code&gt;Assert&lt;/code&gt; it will take its effect first, leading to weird ghost prints that don't correspond with any next states.&lt;/p&gt;
+&lt;p&gt;This difference between "what TLA+ semantics guarantees" and "the specific ways TLC can break those guarantees" is a huge source of confusion for people! On top of that many of these operators, like &lt;code&gt;IOExec&lt;/code&gt; and &lt;code&gt;TLCSet&lt;/code&gt;, are meant as escape hatches. So if you need them you're already doing something pretty weird, and that makes it even more confusing. &lt;/p&gt;
+&lt;p&gt;And on top of that is that there's no syntactic or visual distinguishing between a guarantee-breaking TLC operator and a regular safe TLA+ operator. In compiled languages you got pragmas and preprocessors, which let the compiler do things the language can't. But those usually have a visually distinct syntax, so you know from looking that here be dragons. &lt;/p&gt;
+&lt;p&gt;I'm reminded of Neel Krishnaswami's incredible post &lt;a href="https://semantic-domain.blogspot.com/2013/07/what-declarative-languages-are.html" target="_blank"&gt;What Declarative Languages Are&lt;/a&gt;&lt;sup id="fnref:laurie"&gt;&lt;a class="footnote-ref" href="#fn:laurie"&gt;1&lt;/a&gt;&lt;/sup&gt;:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;This also lets us make the prediction that the least-loved features of any declarative language will be the ones that expose the operational model, and break the declarative semantics. So we can predict that people will dislike (a) backreferences in regular expressions, (b) ordered choice in grammars, (c) row IDs in query languages, (d) cut in Prolog, (e) constraint priorities in constraint languages. &lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Prolog cuts have a visually distinct syntax, but a predicate that uses a cut isn't visually distinct from a &lt;a href="https://www.metalevel.at/prolog/purity" target="_blank"&gt;logically pure&lt;/a&gt; predicate. But that's also a little less tricky than what we got in TLA+, since the cut is still part of the language semantics.&lt;/p&gt;
+&lt;p&gt;(Then again, different Prolog dialects have different ways of &lt;a href="https://eu.swi-prolog.org/pldoc/man?section=printmsg" target="_blank"&gt;printing strings&lt;/a&gt;, which add side effects to Prolog, and they're not visually distinct from other predicates. So the same problem!)&lt;/p&gt;
+&lt;p&gt;I don't actually have any fix for this. I just find it a fascinating example of a &lt;a href="https://en.wikipedia.org/wiki/Leaky_abstraction" target="_blank"&gt;leaky abstraction&lt;/a&gt;. Maybe we could write a code highlighter that highlights all functions that transitively use a "weird" function or something.&lt;/p&gt;
+&lt;div class="footnote"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn:laurie"&gt;
+&lt;p&gt;&lt;a href="https://tratt.net/laurie/blog/2013/relative_and_absolute_levels.html" target="_blank"&gt;Obligatory response post&lt;/a&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:laurie" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/people-get-confused-when-language-implementations/</guid>
+      <pubDate>Tue, 21 Apr 2026 17:40:17 +0000</pubDate>
+    </item>
     <item>
       <title>A sufficiently comprehensive spec is not (necessarily) code</title>
       <link>https://buttondown.com/hillelwayne/archive/a-sufficiently-comprehensive-spec-is-not/</link>
@@ -1479,65 +1540,6 @@ Day -&amp;gt; Whatever(
 </description>
       <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/logic-for-programmers-turns-one/</guid>
       <pubDate>Tue, 08 Jul 2025 18:18:52 +0000</pubDate>
-    </item>
-    <item>
-      <title>Logical Quantifiers in Software</title>
-      <link>https://buttondown.com/hillelwayne/archive/logical-quantifiers-in-software/</link>
-      <description>
-&lt;p&gt;I realize that for all I've talked about &lt;a href="https://leanpub.com/logic/" target="_blank"&gt;Logic for Programmers&lt;/a&gt; in this newsletter, I never once explained basic logical quantifiers. They're both simple and incredibly useful, so let's do that this week! &lt;/p&gt;
-&lt;h3&gt;Sets and quantifiers&lt;/h3&gt;
-&lt;p&gt;A &lt;strong&gt;set&lt;/strong&gt; is a collection of unordered, unique elements. &lt;code&gt;{1, 2, 3, …}&lt;/code&gt; is a set, as are "every programming language", "every programming language's Wikipedia page", and "every function ever defined in any programming language's standard library". You can put whatever you want in a set, with some very specific limitations to avoid certain paradoxes.&lt;sup id="fnref:paradox"&gt;&lt;a class="footnote-ref" href="#fn:paradox"&gt;2&lt;/a&gt;&lt;/sup&gt; &lt;/p&gt;
-&lt;p&gt;Once we have a set, we can ask "is something true for all elements of the set" and "is something true for at least one element of the set?" IE, is it true that every programming language has a &lt;code&gt;set&lt;/code&gt; collection type in the core language? We would write it like this:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;# all of them
-all l in ProgrammingLanguages: HasSetType(l)
-
-# at least one
-some l in ProgrammingLanguages: HasSetType(l)
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;This is the notation I use in the book because it's easy to read, type, and search for. Mathematicians historically had a few different formats; the one I grew up with was &lt;code&gt;∀x ∈ set: P(x)&lt;/code&gt; to mean &lt;code&gt;all x in set&lt;/code&gt;, and &lt;code&gt;∃&lt;/code&gt; to mean &lt;code&gt;some&lt;/code&gt;. I use these when writing for just myself, but find them confusing to programmers when communicating.&lt;/p&gt;
-&lt;p&gt;"All" and "some" are respectively referred to as "universal" and "existential" quantifiers.&lt;/p&gt;
-&lt;h3&gt;Some cool properties&lt;/h3&gt;
-&lt;p&gt;We can simplify expressions with quantifiers, in the same way that we can simplify &lt;code&gt;!(x &amp;amp;&amp;amp; y)&lt;/code&gt; to &lt;code&gt;!x || !y&lt;/code&gt;.&lt;/p&gt;
-&lt;p&gt;First of all, quantifiers are commutative with themselves. &lt;code&gt;some x: some y: P(x,y)&lt;/code&gt; is the same as &lt;code&gt;some y: some x: P(x, y)&lt;/code&gt;. For this reason we can write &lt;code&gt;some x, y: P(x,y)&lt;/code&gt; as shorthand. We can even do this when quantifying over different sets, writing &lt;code&gt;some x, x' in X, y in Y&lt;/code&gt; instead of &lt;code&gt;some x, x' in X: some y in Y&lt;/code&gt;. We can &lt;em&gt;not&lt;/em&gt; do this with "alternating quantifiers":&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;all p in Person: some m in Person: Mother(m, p)&lt;/code&gt; says that every person has a mother.&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;some m in Person: all p in Person: Mother(m, p)&lt;/code&gt; says that someone is every person's mother.&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;Second, existentials distribute over &lt;code&gt;||&lt;/code&gt; while universals distribute over &lt;code&gt;&amp;amp;&amp;amp;&lt;/code&gt;. "There is some url which returns a 403 or 404" is the same as "there is some url which returns a 403 or some url that returns a 404", and "all PRs pass the linter and the test suites" is the same as "all PRs pass the linter and all PRs pass the test suites".&lt;/p&gt;
-&lt;p&gt;Finally, &lt;code&gt;some&lt;/code&gt; and &lt;code&gt;all&lt;/code&gt; are &lt;em&gt;duals&lt;/em&gt;: &lt;code&gt;some x: P(x) == !(all x: !P(x))&lt;/code&gt;, and vice-versa. Intuitively: if some file is malicious, it's not true that all files are benign.&lt;/p&gt;
-&lt;p&gt;All these rules together mean we can manipulate quantifiers &lt;em&gt;almost&lt;/em&gt; as easily as we can manipulate regular booleans, putting them in whatever form is easiest to use in programming. &lt;/p&gt;
-&lt;p&gt;Speaking of which, how &lt;em&gt;do&lt;/em&gt; we use this in in programming?&lt;/p&gt;
-&lt;h2&gt;How we use this in programming&lt;/h2&gt;
-&lt;p&gt;First of all, people clearly have a need for directly using quantifiers in code. If we have something of the form:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;for x in list:
-    if P(x):
-        return true
-return false
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;That's just &lt;code&gt;some x in list: P(x)&lt;/code&gt;. And this is a prevalent pattern, as you can see by using &lt;a href="https://github.com/search?q=%2Ffor+.*%3A%5Cn%5Cs*if+.*%3A%5Cn%5Cs*return+%28False%7CTrue%29%5Cn%5Cs*return+%28True%7CFalse%29%2F+language%3Apython+NOT+is%3Afork&amp;amp;type=code" target="_blank"&gt;GitHub code search&lt;/a&gt;. It finds over 500k examples of this pattern in Python alone! That can be simplified via using the language's built-in quantifiers: the Python would be &lt;code&gt;any(P(x) for x in list)&lt;/code&gt;.&lt;/p&gt;
-&lt;p&gt;(Note this is not quantifying over sets but iterables. But the idea translates cleanly enough.)&lt;/p&gt;
-&lt;p&gt;More generally, quantifiers are a key way we express higher-level properties of software. What does it mean for a list to be sorted in ascending order? That &lt;code&gt;all i, j in 0..&amp;lt;len(l): if i &amp;lt; j then l[i] &amp;lt;= l[j]&lt;/code&gt;. When should a &lt;a href="https://qntm.org/ratchet" target="_blank"&gt;ratchet test fail&lt;/a&gt;? When &lt;code&gt;some f in functions - exceptions: Uses(f, bad_function)&lt;/code&gt;. Should the image classifier work upside down? &lt;code&gt;all i in images: classify(i) == classify(rotate(i, 180))&lt;/code&gt;. These are the properties we verify with tests and types and &lt;a href="https://www.hillelwayne.com/post/constructive/" target="_blank"&gt;MISU&lt;/a&gt; and whatnot;&lt;sup id="fnref:misu"&gt;&lt;a class="footnote-ref" href="#fn:misu"&gt;1&lt;/a&gt;&lt;/sup&gt; it helps to be able to make them explicit!&lt;/p&gt;
-&lt;p&gt;One cool use case that'll be in the book's next version: database invariants are universal statements over the set of all records, like &lt;code&gt;all a in accounts: a.balance &amp;gt; 0&lt;/code&gt;. That's enforceable with a &lt;a href="https://sqlite.org/lang_createtable.html#check_constraints" target="_blank"&gt;CHECK&lt;/a&gt; constraint. But what about something like &lt;code&gt;all i, i' in intervals: NoOverlap(i, i')&lt;/code&gt;? That isn't covered by CHECK, since it spans two rows.&lt;/p&gt;
-&lt;p&gt;Quantifier duality to the rescue! The invariant is equivalent to &lt;code&gt;!(some i, i' in intervals: Overlap(i, i'))&lt;/code&gt;, so is preserved if the &lt;em&gt;query&lt;/em&gt; &lt;code&gt;SELECT COUNT(*) FROM intervals CROSS JOIN intervals …&lt;/code&gt; returns 0 rows. This means we can test it via a &lt;a href="https://sqlite.org/lang_createtrigger.html" target="_blank"&gt;database trigger&lt;/a&gt;.&lt;sup id="fnref:efficiency"&gt;&lt;a class="footnote-ref" href="#fn:efficiency"&gt;3&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-&lt;hr/&gt;
-&lt;p&gt;There are a lot more use cases for quantifiers, but this is enough to introduce the ideas! Next week's the one year anniversary of the book entering early access, so I'll be writing a bit about that experience and how the book changed. It's &lt;em&gt;crazy&lt;/em&gt; how crude v0.1 was compared to the current version.&lt;/p&gt;
-&lt;div class="footnote"&gt;
-&lt;hr/&gt;
-&lt;ol&gt;
-&lt;li id="fn:misu"&gt;
-&lt;p&gt;MISU ("make illegal states unrepresentable") means using data representations that rule out invalid values. For example, if you have a &lt;code&gt;location -&amp;gt; Optional(item)&lt;/code&gt; lookup and want to make sure that each item is in exactly one location, consider instead changing the map to &lt;code&gt;item -&amp;gt; location&lt;/code&gt;. This is a means of &lt;em&gt;implementing&lt;/em&gt; the property &lt;code&gt;all i in item, l, l' in location: if ItemIn(i, l) &amp;amp;&amp;amp; l != l' then !ItemIn(i, l')&lt;/code&gt;. &lt;a class="footnote-backref" href="#fnref:misu" title="Jump back to footnote 1 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:paradox"&gt;
-&lt;p&gt;Specifically, a set can't be an element of itself, which rules out constructing things like "the set of all sets" or "the set of sets that don't contain themselves". &lt;a class="footnote-backref" href="#fnref:paradox" title="Jump back to footnote 2 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:efficiency"&gt;
-&lt;p&gt;Though note that when you're inserting or updating an interval, you already &lt;em&gt;have&lt;/em&gt; that row's fields in the trigger's &lt;code&gt;NEW&lt;/code&gt; keyword. So you can just query &lt;code&gt;!(some i in intervals: Overlap(new, i'))&lt;/code&gt;, which is more efficient. &lt;a class="footnote-backref" href="#fnref:efficiency" title="Jump back to footnote 3 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/logical-quantifiers-in-software/</guid>
-      <pubDate>Wed, 02 Jul 2025 19:44:22 +0000</pubDate>
     </item>
   </channel>
 </rss>
