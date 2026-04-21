@@ -5,7 +5,100 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Tue, 21 Apr 2026 15:19:06 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 21 Apr 2026 17:10:44 +0000</lastBuildDate>
+    <item>
+      <title>Writing an LLM from scratch, part 32m -- Interventions: conclusion</title>
+      <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-32m-interventions-conclusion</link>
+      <description>&lt;p&gt;Last November, when I finished the main body of
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
+I &lt;a href="/2025/11/llm-from-scratch-27-whats-left-and-whats-next"&gt;set myself a number of follow-on goals&lt;/a&gt;.
+One was "training the full GPT-2 base model myself".&lt;/p&gt;
+
+&lt;p&gt;I've reached the end of that journey, with a model that is almost -- if not quite
+-- as good as GPT-2 small, trained in 44 hours on my own machine,
+so I thought it would be worth summarising
+how it went.&lt;/p&gt;
+&lt;p&gt;In December, &lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;I trained my first model&lt;/a&gt;,
+taking two days,
+but was disappointed to see that it was worse in terms of loss, and in terms
+of how well it could be fine-tuned to follow instructions, than the original GPT-2 model.&lt;/p&gt;
+
+&lt;p&gt;I expected that a chunk of that difference was likely to be due to the original model having
+been trained for longer, but also noticed that there were a number of changes -- interventions -- that
+I could make to the model and the training run, and I thought they might help.&lt;/p&gt;
+
+&lt;p&gt;In January, I &lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud"&gt;got a DDP training system together&lt;/a&gt;
+that would allow me to iterate on those interventions without having to wait for
+two days for each result.&lt;/p&gt;
+
+&lt;p&gt;In February, I got started by &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;training a baseline model in the cloud&lt;/a&gt;,
+and
+I've since ground through all of the interventions, and come up with
+a set that lowered the loss nicely, both &lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;in the cloud&lt;/a&gt;,
+and &lt;a href="/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation"&gt;locally&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Along the way, I've learned about, or refined my knowledge of, a bunch of ML concepts.
+In increasing order of how they helped with the loss (with the first two actually making
+it slightly worse):&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;Weight tying&lt;/a&gt;, which
+I found made the loss worse, but it was interesting how simple it was to implement.&lt;/li&gt;
+&lt;li&gt;PyTorch's &lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;Automated Mixed Precision&lt;/a&gt;,
+which also harmed the loss a tiny bit, but
+had the benefit of making training twice as fast, and 66% cheaper in the cloud
+-- well worth the loss penalty.&lt;/li&gt;
+&lt;li&gt;&lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;Gradient clipping&lt;/a&gt; -- a cheap,
+but (somewhat to my surprise) not particularly effective intervention for this model.&lt;/li&gt;
+&lt;li&gt;&lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;QKV bias&lt;/a&gt; -- that is,
+adding bias to the attention weight matrices -- which also helped a tiny bit, though
+I later felt that this might have been in the noise.&lt;/li&gt;
+&lt;li&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;Weight decay&lt;/a&gt; -- more effective,
+and something
+that's simple enough to understand with simple gradient descent.  I still need to
+learn more about it in
+the context of optimisers, though -- particularly with AdamW.&lt;/li&gt;
+&lt;li&gt;&lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;Dropout&lt;/a&gt;, which
+seems to be less than useful for single-epoch training: removing it
+helped the model quite a lot.&lt;/li&gt;
+&lt;li&gt;&lt;a href="/2026/03/llm-from-scratch-32e-interventions-learning-rate"&gt;The learning rate&lt;/a&gt;,
+which I built up quite a lot of new knowledge about, and by both increasing it
+and scheduling it, I got the biggest bang for the buck.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;I've also learned how to &lt;a href="/2026/01/custom-automodelforcausallm-frompretrained-models-on-hugging-face"&gt;upload my custom models to Hugging Face&lt;/a&gt;,
+found out some &lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;interesting things about how random noise affects training&lt;/a&gt;,
+and come up with improvements in the setup I have for using an
+&lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;LLM as a judge for instruction fine-tuned models&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;There was a bit of a mystery when I tried out the instruction fine-tuning tests,
+though.  Although two of my models were very close to GPT-2 small in terms of loss,
+&lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests"&gt;I found&lt;/a&gt;
+that while one of them had an instruction fine-tuning result that was likewise close
+to GPT-2 small, the other was &lt;em&gt;much&lt;/em&gt; worse!  A mystery to dig into later, I think.&lt;/p&gt;
+
+&lt;p&gt;But it was still very satisfying that my best model -- trained locally in 44 hours
+-- was almost as good as GPT-2 small, even if it did fall somewhat short.  So on that
+positive note, I'm going to wrap up this "Interventions" series-within-a-series, and move
+on to the two other things I wanted to do before wrapping up the "LLM from scratch" series
+as a whole:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;Going through the appendices in the book to see if there's anything I want
+to highlight there.&lt;/li&gt;
+&lt;li&gt;The final test as to whether I've really understood everything: building my own
+LLM from scratch without reference to the book.  I want to do that in a different
+framework, not PyTorch, to minimise the risk of just regurgitating code --
+I asked people on X/Twitter which one I should use, and
+&lt;a href="https://x.com/gpjt/status/1985434030880293004"&gt;the winner was JAX&lt;/a&gt; -- so it should be interesting to see how that goes!&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;The appendices first, I think -- I'll post about them shortly.  But I think the big
+one will be the JAX implementation -- really looking forward to that.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">/2026/04/llm-from-scratch-32m-interventions-conclusion</guid>
+      <pubDate>Tue, 21 Apr 2026 20:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Writing an LLM from scratch, part 32l -- Interventions: updated instruction fine-tuning results</title>
       <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests</link>
@@ -922,6 +1015,8 @@ In some cases, it seems likely that lower-loss models can be worse for actual us
 
 &lt;p&gt;Coming up next: I'm going to wrap up this "interventions" mini-series, and move
 on to the final steps in my LLM from scratch journey.  See you then!&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/04/llm-from-scratch-32m-interventions-conclusion"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests</guid>
       <pubDate>Mon, 20 Apr 2026 20:00:00 +0000</pubDate>
@@ -4994,914 +5089,6 @@ tests to do when we try to put this all together.&amp;#160;&lt;a href="#fnref-7"
 </description>
       <guid isPermaLink="true">/2026/03/llm-from-scratch-32f-interventions-weight-decay</guid>
       <pubDate>Mon, 23 Mar 2026 23:55:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 32e -- Interventions: the learning rate</title>
-      <link>https://www.gilesthomas.com/2026/03/llm-from-scratch-32e-interventions-learning-rate</link>
-      <description>&lt;p&gt;I'm still working on improving the test loss for a from-scratch GPT-2 small base model, trained on code based on
-&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".&lt;/p&gt;
-
-&lt;p&gt;In my training code, I have this code to create the optimiser:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;optimizer&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optim&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;AdamW&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;
-        &lt;span class="n"&gt;lr&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.0004&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;weight_decay&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.1&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;The values in there -- &lt;code&gt;0.0004&lt;/code&gt; for the learning rate, and &lt;code&gt;0.1&lt;/code&gt; for the weight
-decay -- were just copied from the tiny training run that we do in section 5.2 of
-the book.&lt;/p&gt;
-
-&lt;p&gt;What do those values actually mean, and are those really the right values for them?&lt;/p&gt;
-
-&lt;p&gt;I felt I had a good handle on the learning rate, at least -- it's one of the first
-things you learn when you start looking at machine learning of any kind -- but how would
-you go about working out what the correct value for it was?
-On top of that, when
-I was reading &lt;a href="https://arxiv.org/abs/2203.15556"&gt;the Chinchilla paper&lt;/a&gt; a while back,
-I noticed they repeatedly referred to a "cosine cycle" for the learning rate, which didn't
-fit into anything I'd learned about before.&lt;/p&gt;
-
-&lt;p&gt;The weight decay was pretty much an unknown for me -- I know it is a parameter
-controlling the behaviour of the optimiser, but I don't know how it does that.&lt;/p&gt;
-
-&lt;p&gt;In this post I want to look into the learning rate, and these mysterious cosines;
-I'll write a follow-up about the weight decay later.&lt;/p&gt;
-&lt;h3 id="the-learning-rate-a-refresher"&gt;The learning rate: a refresher&lt;/h3&gt;
-
-&lt;p&gt;If you're reading this blog, you almost certainly know what the learning rate is,
-but let's go over it briefly to build a solid foundation.&lt;/p&gt;
-
-&lt;p&gt;The way it's normally explained, using simple gradient descent, goes something like this.  Let's assume that we're
-training a model with just one parameter, and it starts off set to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;5&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.  We run some training data through, and get
-a loss, let's say 44.44:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot1.png" alt="First loss point" title="First loss point" /&gt;&lt;/p&gt;
-
-&lt;p&gt;We don't know what shape our loss curve is (if we did, we might be able to find the
-lowest loss algebraically), but we do know the differential of the parameter versus
-the loss at the point we've measured; it happens to be -13.  That is reasonably
-large and negative:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot2.png" alt="First loss point with gradient" title="First loss point with gradient" /&gt;&lt;/p&gt;
-
-&lt;p&gt;We use that information to say that we want to move in the direction of a larger
-value for our parameter -- that is, in our case where the gradient is negative, so
-we have a downhill slope towards the right, we
-want to increase the parameter to move rightwards on that chart, whereas if it
-were positive (an uphill slope) we'd want to decrease the parameter to move leftwards.&lt;/p&gt;
-
-&lt;p&gt;Simply subtracting the gradient from the parameter would lead to an update in the right
-direction, but it would be a very large one in this case --
-we'd move 13 units to the right -- so we multiply the gradient by a small positive number,
-the learning rate (often written as a lower-case eta, like this: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;), to move a small
-distance in that direction.  Let's say &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.3&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.  That means we want to update our
-parameter:&lt;/p&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;p&lt;/mi&gt;&lt;mtext&gt;new&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;p&lt;/mi&gt;&lt;mtext&gt;old&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mtext&gt;gradient&lt;/mtext&gt;&lt;mo&gt;&amp;#x0002A;&lt;/mo&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;5&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;13&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;0.3&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;5&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3.9&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1.1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;p&gt;So now we run that through and get a new loss -- let's say it's 9.06 -- and a new gradient,
-which happens to be -5.2.&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot3.png" alt="Two loss points with gradients" title="Two loss points with gradients" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Now we can do another update, and our parameter will become 0.46, so we use that and
-work out another loss and gradient, which come to 3.3816 and -2.08.&lt;/p&gt;
-
-&lt;p&gt;Let's plot that one, but this time we'll draw back the veil and show the actual loss
-curve.&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot4.png" alt="Three loss points with gradients, showing loss function" title="Three loss points with gradients, showing loss function" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Now, it's worth reiterating that while we're training this model we don't know what
-that curve looks like -- we're just finding points on it, along with its gradient
-at those points, and using that information to work out which parameter value to explore next.&lt;/p&gt;
-
-&lt;p&gt;But it's pretty clear that as we continue, if the learning rate is set correctly, we'll
-get to the minimum eventually if the learning rate is the right kind of size, because --
-due to the nice smooth U-shape of the curve, the gradient gets smaller the closer we get
-to the minimum &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
-
-&lt;p&gt;It's also pretty clear that if the learning rate is smaller than an optimal value,
-in this simple case we will still find the right point, but it will take more steps because each one is
-smaller:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot5.png" alt="Slow learning with a low learning rate" title="Slow learning with a low learning rate" /&gt;&lt;/p&gt;
-
-&lt;p&gt;And, of course, if the learning rate is too high, we might never converge -- we'd
-"bounce out of" the dip, and wind up with a parameter value that endlessly cycles
-between increasingly smaller and increasingly larger values, zooming off to infinity:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot6.png" alt="No convergence with a too-high learning rate" title="No convergence with a too-high learning rate" /&gt;&lt;/p&gt;
-
-&lt;p&gt;OK, that's the basics.  Why might we want to change from something that seems so logical
-and simple?&lt;/p&gt;
-
-&lt;h3 id="when-a-fixed-learning-rate-fails"&gt;When a fixed learning rate fails&lt;/h3&gt;
-
-&lt;p&gt;A few paragraphs back I said:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;due to the nice smooth U-shape of the curve, the gradient gets smaller the closer we get
-  to the minimum&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;What if it doesn't?  Imagine if we had something more like a V-shaped curve, like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot7.png" alt="A V-shaped loss curve" title="A V-shaped loss curve" /&gt;&lt;/p&gt;
-
-&lt;p&gt;The gradient does not decrease as we get closer to the minimum, and so while we're
-in the downward-sloping part, each update is exactly the same distance:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot8.png" alt="Two updates on a V-shaped learning curve" title="Two updates on a V-shaped learning curve" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Now, eventually we'll jump over the minimum:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot9.png" alt="Crossing the minimum on a V-shaped learning curve" title="Crossing the minimum on a V-shaped learning curve" /&gt;&lt;/p&gt;
-
-&lt;p&gt;In this example, I've used a gradient of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;8.33&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; on the downward-sloping part of the
-curve, and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;8.33&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; on the upward-sloping part, so that means that our next
-update just bounces us back to where we were before!&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot10.png" alt="Bounce-back on a V-shaped learning curve" title="Bounce-back on a V-shaped learning curve" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Because the gradient isn't decreasing the closer we get to the minimum, we wind
-up just oscillating around it.  That's not very helpful.&lt;/p&gt;
-
-&lt;p&gt;That's a slightly contrived example (though not entirely -- intuitively, with functions like ReLU
-or GELU in our real LLMs, it's easy to imagine crazy loss landscapes).  But
-it does show that perhaps we might want to add in our own "artificial" way to
-decrease the size of the steps we take over the course of training our model rather than
-just relying on the gradients naturally flattening out for us.&lt;/p&gt;
-
-&lt;p&gt;Another way of looking at things is that as the model gets trained, we don't want
-batches of very new-looking data to cause big updates, taking us away from what was
-a good part of the loss landscape in terms of what we've seen so far.  For example,
-imagine you've been training an LLM on a bunch of documents, which have so far been in English.  Halfway through,
-it encounters a document in Byzantine Greek, the loss
-skyrockets, and you do a big update.  That would be a problem!  You might want it to learn a bit
-from it to push it slightly in a "the world is multi-lingual" direction, but you don't
-want it to lose a big chunk of the value from its previous training.&lt;/p&gt;
-
-&lt;p&gt;You might also see a kind of connection to the way that people learn over the course of
-their lives -- for babies, everything is new and they "update their parameters" constantly
-as they try to understand the world.  Children are still pretty flexible, but as we
-get older we tend to update our beliefs less and less.  That's not always optimal, but
-as a heuristic it's pretty adaptive.&lt;/p&gt;
-
-&lt;p&gt;Anyway, in general: for most training runs, we're going to want the learning rate to adjust
-over time.  Most of the time this will be by reducing it, though there can be cases
-for increasing it again for periods.  The general case of doing this is called
-"learning rate scheduling".&lt;/p&gt;
-
-&lt;h3 id="learning-rate-scheduling"&gt;Learning rate scheduling&lt;/h3&gt;
-
-&lt;p&gt;There are a bunch of ways that people adjust the learning rate over the course
-of a train; here are a few that cropped up a lot while I was researching this.&lt;/p&gt;
-
-&lt;h4 id="step-decay"&gt;Step decay&lt;/h4&gt;
-
-&lt;p&gt;If we want the learning rate to go down over time, and we know how many steps we're
-training for, we can just set it to (say) 0.0004 for the first quarter of our train, then
-0.0002 for the next, then 0.0001, then finish off with 0.00005, like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_step_decay.png" alt="LR step decay" title="LR step decay" /&gt;&lt;/p&gt;
-
-&lt;p&gt;That can work pretty well!  But there is one obvious oddity -- the big step changes
-in learning rate mean that the exact placement of the drops and the training data
-before and after can matter.  Why are we treating the data and the state of the model
-immediately before and immediately after so differently?  It would make more sense
-to have a smoother schedule.&lt;/p&gt;
-
-&lt;p&gt;What functions decay smoothly like that?&lt;/p&gt;
-
-&lt;h4 id="exponential-decay"&gt;Exponential decay&lt;/h4&gt;
-
-&lt;p&gt;An exponential curve does: let's say we just multiply the learning rate by a number
-that is a little smaller than one every step, so that it drops smoothly like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_exp_decay.png" alt="LR exponential decay" title="LR exponential decay" /&gt;&lt;/p&gt;
-
-&lt;p&gt;But there are lots of other curves like that, and one is particularly interesting:&lt;/p&gt;
-
-&lt;h4 id="cosine-decay"&gt;Cosine decay&lt;/h4&gt;
-
-&lt;p&gt;As you change &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003B8;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003C0;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, the value of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;cos&lt;/mi&gt;&lt;mi&gt;&amp;#x003B8;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; goes smoothly
-from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;, so it's easy enough to rescale that so that our learning rate follows
-the same curve:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_cosine_decay.png" alt="LR cosine decay" title="LR cosine decay" /&gt;&lt;/p&gt;
-
-&lt;p&gt;This is called a "cosine annealing" or "cosine decay" schedule, and was apparently inspired by the
-algorithms used for simulated annealing (an optimisation algorithm that was in turn inspired
-by how the atomic structures form in metals as they cool -- another one for the list
-of things to look into in the future...)&lt;/p&gt;
-
-&lt;p&gt;That solves the mystery from earlier: the cosine that the Chinchilla paper was talking about was exactly
-this.  As it turns out, the cosine decay scheduling curve is quite popular
-in deep learning, because it has what amounts to two well-defined phases -- an initial
-high learning rate where lots of exploration of the loss landscape can happen, followed
-by a smooth transition to something more like fine-tuning to optimise the location in
-whatever part of the loss landscape we've wound up in.&lt;/p&gt;
-
-&lt;h4 id="cyclical-schedules"&gt;Cyclical schedules&lt;/h4&gt;
-
-&lt;p&gt;Now, all of the above are assuming that we want the learning rate to start high and
-finish low, so that we can mimic the textbook gradient descent that we had at the
-start of this post.&lt;/p&gt;
-
-&lt;p&gt;Intuitively that feels nice, but on further thought, the important thing is really
-that we have a low learning rate at the end of the train, so that we can find as
-close a point as possible for the minimum at the part of the loss landscape we've
-found ourselves in.&lt;/p&gt;
-
-&lt;p&gt;But perhaps there's a case for having both high and low periods
-during the train, so that we don't get stuck in a local minimum -- something to
-jolt us out of where we were every now and then? &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;With a step function, that's easy: you could, for example, do this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_cyclic_step.png" alt="LR cyclic step" title="LR cyclic step" /&gt;&lt;/p&gt;
-
-&lt;p&gt;With an exponential, you could do something like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_cyclic_exp.png" alt="LR cyclic exp" title="LR cyclic exp" /&gt;&lt;/p&gt;
-
-&lt;p&gt;With cosine decay, of course, things are even easier, because the cosine function is
-inherently cyclical, so we can just do this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_cyclic_cosine.png" alt="LR cyclic cosine" title="LR cyclic cosine" /&gt;&lt;/p&gt;
-
-&lt;p&gt;However, at least for our purposes, training an LLM using a
-Chinchilla-optimal number of training tokens, it makes sense to be guided
-by what the authors of the Chinchilla paper did.  Appendix B says:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;We find that setting the cosine cycle length too much longer than the
-  target number of training steps results in sub-optimally trained
-  models, as shown in Figure A1. As a result, we assume that an optimally trained model will have the
-  cosine cycle length correctly calibrated to the maximum number of steps, given the FLOP budget; we
-  follow this rule in our main analysis.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;So, at this point, I think we have one important part of the intervention we want
-to make: we want to use a cosine learning rate scheduler, going from high near the
-start of the training run, down to low at the end over one cycle.  Additionally,
-and also from appendix B in the paper:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;we use a 10x learning rate decay in line with Rae et al.
-  (2021)&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;...which means that if our learning rate starts at &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, then we want it to
-decay down to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; by the end.&lt;/p&gt;
-
-&lt;p&gt;So, we just need to work out an initial value for &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, and let it rip, right?&lt;/p&gt;
-
-&lt;p&gt;Well, not so fast...&lt;/p&gt;
-
-&lt;h3 id="learning-rate-warmup"&gt;Learning rate warmup&lt;/h3&gt;
-
-&lt;p&gt;When our model is uninitialised, right at the start of the train, gradients are going
-to be pretty wild.  It's going to be making random errors all of the time, and we'll
-be making huge jumps across the loss landscape.  That sounds bad.&lt;/p&gt;
-
-&lt;p&gt;Additionally those kind of wild jumps can get the optimiser into a -- well, sub-optimal -- state.
-I haven't read enough about optimisers yet to have a solid handle on that, but that can wait --
-intuitively it makes some kind of sense that erratic gradient updates might confuse it.&lt;/p&gt;
-
-&lt;p&gt;So, it makes a certain amount of sense to start off with a low learning rate
-so that we don't do that, and then to increase it gradually to the peak, and only then
-to schedule the gradual cosine decay.  According to this (rather nice looking)
-&lt;a href="https://apxml.com/courses/how-to-build-a-large-language-model/chapter-17-optimization-algorithms-llms/learning-rate-scheduling-strategies"&gt;masterclass on LLM training&lt;/a&gt;,
-it's typical to do this over "a few thousand steps or a small percentage (e.g., 1-10%) of the total training steps,
-depending on the dataset size and batch size",
-and we would just use a linear increase over that period:&lt;/p&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;mi&gt;t&lt;/mi&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;mtext&gt;peak&lt;/mtext&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mi&gt;t&lt;/mi&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mtext&gt;warmup_steps&lt;/mtext&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;p&gt;I think we should do that; a simple linear warmup
-at the start -- let's relatively arbitrarily say 5% of our training steps going up
-to our desired peak learning rate.  So our learning rate schedule should look
-something like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_warmup_cosine.png" alt="LR cosine after warmup" title="LR cosine after warmup" /&gt;&lt;/p&gt;
-
-&lt;h3 id="the-initial-learning-rate-value"&gt;The initial learning rate value&lt;/h3&gt;
-
-&lt;p&gt;So far I've written a lot about how we vary the learning rate over time, and that's all
-been very useful.  But we still need to know what the value should be initially!  In
-smaller-scale experiments you might just try a bunch of different numbers to see what
-worked well, but at more than US$30 per train, that's not practical here.&lt;/p&gt;
-
-&lt;p&gt;Unfortunately it's really quite hard to find good suggestions published anywhere.  The GPT-2 paper is (as usual)
-reticent:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;The learning rate of each model was manually tuned for the best perplexity on a 5%
-  held-out sample of WebText&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;...and if you search for
-"learning rate training llm", you'll see lots of results for when people are fine-tuning
-existing LLMs (&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; comes up a lot), but almost nothing about when you're training one from scratch.&lt;/p&gt;
-
-&lt;p&gt;I eventually came across this (long!) &lt;a href="https://huggingface.co/spaces/HuggingFaceTB/smol-training-playbook"&gt;post from Hugging Face&lt;/a&gt;,
-which I definitely
-need to spend time going through in the future, because it covers a &lt;em&gt;lot&lt;/em&gt; of
-the ground I've been going over in this post series.  But for this post, I think
-the most relevant part is in the section "&lt;a href="https://huggingface.co/spaces/HuggingFaceTB/smol-training-playbook#scaling-laws-for-hyperparameters"&gt;Scaling Laws for Hyperparameters&lt;/a&gt;",
-where they include a figure from &lt;a href="https://arxiv.org/abs/2401.02954"&gt;this DeepSeek paper&lt;/a&gt;.
-Here it is, with some of the (also relevant) surrounding text:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/deepseek-scaling-laws.png" alt="DeepSeek hyperparameter optimisation" title="DeepSeek hyperparameter optimisation" /&gt;&lt;/p&gt;
-
-&lt;p&gt;In our trains &lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch#flops"&gt;we're using&lt;/a&gt; something
-like &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;5&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mn&gt;18&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; total FLOPs.  Now, they are specifically charting things in
-terms of non-embedding FLOPs, but I'm going to play a little fast and loose here and
-ignore that, so reading off their chart, that looks like we should
-be using about &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1.4&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; as our learning rate.  We can double-check that
-against their formula, where &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;C&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is the compute budget:&lt;/p&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;&amp;#x003B7;&lt;/mi&gt;&lt;mtext&gt;opt&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.3118&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mi&gt;C&lt;/mi&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;0.1250&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.3118&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;5&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/msup&gt;&lt;mn&gt;8&lt;/mn&gt;&lt;msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;0.1250&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.3118&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;0.004598632978267703&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.00143385376262387&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;p&gt;Nice, a close match!&lt;/p&gt;
-
-&lt;p&gt;However, it's definitely worth noting that we're using a simple
-GPT-2 architecture, and they are using something quite different -- RMSNorm instead
-of LayerNorm, SwiGLU as the activation function on the feed-forward networks, Rotary Position
-Embedding rather than the fixed ones we're using, and so on.&lt;/p&gt;
-
-&lt;p&gt;As a sanity check: you can see that they also give a formula for the optimal batch size
-in terms of tokens.  For our FLOP budget, that comes in at 381,782, which is about 373
-of our 1,024-token sequences.  That is quite a lot higher than the 97-or-so
-sequences that we appeared to be optimal in our &lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud"&gt;earlier experiments&lt;/a&gt;.
-That is a little concerning, though of course the 97 number came out of a very
-ad-hoc bit of curve-fitting.&lt;/p&gt;
-
-&lt;p&gt;For now, I'm going to hope that that doesn't matter too much for the learning rate.  This may come back
-to bite me; if the results of a train with &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1.4&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; are radically worse than
-the existing rate of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;, I'll have to do a bit more investigation.&lt;/p&gt;
-
-&lt;p&gt;So, now I think we have all of the theoretical pieces in place to do a train.  Let's
-move on to the practicalities.&lt;/p&gt;
-
-&lt;h3 id="the-code"&gt;The code&lt;/h3&gt;
-
-&lt;p&gt;We started by looking at this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;optimizer&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optim&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;AdamW&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;
-        &lt;span class="n"&gt;lr&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.0004&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;weight_decay&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.1&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;What should we change -- disregarding the &lt;code&gt;weight_decay&lt;/code&gt; until the next post?&lt;/p&gt;
-
-&lt;p&gt;Based on the above, we want to do
-a linear warmup of about 5% of our steps, going up to a learning rate of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1.4&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;, followed
-by a cosine decay down to one tenth of that, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1.4&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
-
-&lt;p&gt;What does that look like in code?&lt;/p&gt;
-
-&lt;h4 id="basic-learning-rate-scheduling"&gt;Basic learning rate scheduling&lt;/h4&gt;
-
-&lt;p&gt;The relevant API for scheduling the learning rate in PyTorch is, logically enough,
-in the &lt;a href="https://docs.pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate"&gt;&lt;code&gt;torch.optim.lr_scheduler&lt;/code&gt;&lt;/a&gt;
-module, and there are a bunch of different scheduling classes.  You create your
-optimiser, then create a scheduler for the shape
-you want, and then you can call &lt;code&gt;step&lt;/code&gt; on the scheduler (after the &lt;code&gt;step&lt;/code&gt; on the optimiser)
-to adjust the optimiser's learning rate over time.&lt;/p&gt;
-
-&lt;p&gt;Let's make that more concrete;
-one of the schedulers is &lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.LinearLR.html#torch.optim.lr_scheduler.LinearLR"&gt;&lt;code&gt;LinearLR&lt;/code&gt;&lt;/a&gt;,
-which is what we'll need for our linear warmup period.  It takes as its parameters:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;optimizer&lt;/code&gt;, which is the optimiser we're applying it to.&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;start_factor&lt;/code&gt;, which the optimiser's learning rate is multiplied by to work out where
-we want to start up.&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;end_factor&lt;/code&gt;, which is likewise applied to the optimiser's learning rate to work out
-the value we're heading for.&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;total_iters&lt;/code&gt;, which is the number of steps over which it should go from the initial learning rate
-to the final one.&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;last_epoch&lt;/code&gt;, which lets the scheduler know how many steps into its schedule it currently
-is -- this defaults to &lt;code&gt;-1&lt;/code&gt;, meaning it hasn't started yet.  This can be useful if
-you're resuming from a checkpoint, but for our purposes we can ignore it.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;Let's say that we want to go from almost-zero to our optimiser's learning
-rate over 1,600 steps -- we'd create our scheduler like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;scheduler&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optim&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;lr_scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;LinearLR&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;start_factor&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.00001&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;end_factor&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;total_iters&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;1600&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...then in our training loop, after we've done the scaled step of the optimiser,
-we'd also step the scheduler:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="n"&gt;scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;This confused me a little bit the first time I saw it; after all, if the scheduler
-hasn't been "triggered" when we step the optimiser, how does the optimiser know what
-learning rate to use?  Surely it would just use whatever it was initialised with?&lt;/p&gt;
-
-&lt;p&gt;The answer is that when you create the optimiser, it stores away the learning rate
-that you give it in two places -- an "initial learning rate" and a "current learning rate".
-Next, when you create your scheduler, it uses the initial learning rate to work out the start and end values,
-and then sets the current one to the start value immediately.  Just by creating
-a scheduler, you're changing the optimiser's current learning rate -- but not the
-initial one, which is important, as we'll see in a moment.&lt;/p&gt;
-
-&lt;p&gt;So, we have a scheduler that handles our warmup period nicely.
-Another scheduler that's relevant to our interests is the
-&lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.CosineAnnealingLR.html#torch.optim.lr_scheduler.CosineAnnealingLR"&gt;CosineAnnealingLR&lt;/a&gt;.
-This takes:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;optimizer&lt;/code&gt;, which is the same as the &lt;code&gt;LinearLR&lt;/code&gt;'s.&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;T_max&lt;/code&gt;, which is the number of steps before it reaches its minimum&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;eta_min&lt;/code&gt;, the minimum learning rate we want to get to.&lt;/li&gt;
-&lt;li&gt;&lt;code&gt;last_epoch&lt;/code&gt;, again the same as the &lt;code&gt;LinearLR&lt;/code&gt;'s.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;On creation, this scheduler will read in the optimiser's initial learning rate -- note, not the
-&lt;em&gt;current&lt;/em&gt; one -- and then the first
-time it's stepped, it will set the current learning rate to that value, and then
-for steps after that it will reduce it so that it follows a nice cosine decay, reaching
-&lt;code&gt;eta_min&lt;/code&gt; after &lt;code&gt;T_max&lt;/code&gt; steps.&lt;/p&gt;
-
-&lt;p&gt;So those two cover the two regimes that we want -- the warmup and then the cosine
-decay.  But now we need to put them together; we want to do one and then the other.&lt;/p&gt;
-
-&lt;h4 id="chaining-learning-rate-schedulers"&gt;Chaining learning rate schedulers&lt;/h4&gt;
-
-&lt;p&gt;There's a very useful class,
-&lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.SequentialLR.html#torch.optim.lr_scheduler.SequentialLR"&gt;&lt;code&gt;SequentialLR&lt;/code&gt;&lt;/a&gt;,
-which allows you to chain schedulers and tell it when each one takes over from the
-previous one.&lt;/p&gt;
-
-&lt;p&gt;Let's sketch out some code to use that to do a train with our new peak learning
-rate of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1.4&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msup&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;, a warmup of 1,600 steps, followed by a cosine decay
-for the next 32,000 steps to one tenth of the peak learning rate:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;peak_lr&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mf"&gt;0.0014&lt;/span&gt;
-    &lt;span class="n"&gt;warmup_period&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;1600&lt;/span&gt;
-    &lt;span class="n"&gt;decay_period&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;32000&lt;/span&gt;
-    &lt;span class="n"&gt;optimizer&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optim&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;AdamW&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;
-        &lt;span class="n"&gt;lr&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;peak_lr&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;weight_decay&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.1&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;warmup_scheduler&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optim&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;lr_scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;LinearLR&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;start_factor&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.00001&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;end_factor&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;total_iters&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;warmup_period&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;cosine_scheduler&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optim&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;lr_scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;CosineAnnealingLR&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;T_max&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;decay_period&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;eta_min&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;peak_lr&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;scheduler&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;optim&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;lr_scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;SequentialLR&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-        &lt;span class="n"&gt;schedulers&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;warmup_scheduler&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;cosine_scheduler&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
-        &lt;span class="n"&gt;milestones&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;warmup_period&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-
-    &lt;span class="o"&gt;...&lt;/span&gt;
-
-        &lt;span class="c1"&gt;# In the training loop&lt;/span&gt;
-        &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="n"&gt;scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That actually works quite nicely!  I wrote a dummy training loop to plot the
-current learning rate over a fake train using
-&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/0d179c3815cca111ba50d5f7833f9269ad511f14/test_lr_schedulers.py"&gt;code like the above&lt;/a&gt;,
-and got this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_actual_schedule.png" alt="LR schedule from PyTorch code" title="LR schedule from PyTorch code" /&gt;&lt;/p&gt;
-
-&lt;p&gt;...with the output confirming that the values were good at the "milestone" point, the
-start and the end:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Initial learning rate:  1.4000000000000001e-08&lt;/span&gt;
-&lt;span class="go"&gt;Step 1596 learning rate:  0.0013965000350000011&lt;/span&gt;
-&lt;span class="go"&gt;Step 1597 learning rate:  0.001397375026250001&lt;/span&gt;
-&lt;span class="go"&gt;Step 1598 learning rate:  0.0013982500175000012&lt;/span&gt;
-&lt;span class="go"&gt;Step 1599 learning rate:  0.0013991250087500011&lt;/span&gt;
-&lt;span class="go"&gt;Step 1600 learning rate:  0.0014&lt;/span&gt;
-&lt;span class="go"&gt;Step 1601 learning rate:  0.00139999999696394&lt;/span&gt;
-&lt;span class="go"&gt;Step 1602 learning rate:  0.0013999999878557604&lt;/span&gt;
-&lt;span class="go"&gt;Step 1603 learning rate:  0.0013999999726754609&lt;/span&gt;
-&lt;span class="go"&gt;Step 1604 learning rate:  0.0013999999514230418&lt;/span&gt;
-&lt;span class="go"&gt;Step 33596 learning rate:  0.00014000004857695852&lt;/span&gt;
-&lt;span class="go"&gt;Step 33597 learning rate:  0.00014000002732453932&lt;/span&gt;
-&lt;span class="go"&gt;Step 33598 learning rate:  0.00014000001214423973&lt;/span&gt;
-&lt;span class="go"&gt;Step 33599 learning rate:  0.00014000000303605992&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;I was initially a bit surprised by that, as at
-the time I ran it, I didn't realise that there was that split between the initial
-and the current learning rates on the optimiser, so I thought that the cosine scheduler
-would pick up whatever tiny starting value the warmup scheduler had overwritten the
-optimiser's learning rate with -- but that split saves the day.&lt;/p&gt;
-
-&lt;p&gt;That means that now we have the outline of how to schedule our learning rate.  But
-before we can put that into the code, we need to think about how it affects our checkpoints.&lt;/p&gt;
-
-&lt;h4 id="checkpoints"&gt;Checkpoints&lt;/h4&gt;
-
-&lt;p&gt;Just like the scheduler and the optimiser, the learning rate scheduler -- or, indeed,
-our two schedulers here -- contain information about the state of the train.  That means
-that if we recover from a checkpoint, we need to provide them with the information they
-need.  If we just created them afresh, they'd start from the beginning -- for
-example, if we restarted from step 20,000 in a train like the one above, we'd start
-a new warmup from pretty much zero, and then start a fresh cosine decay.  That would be bad:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot_actual_schedule_no_checkpointing.png" alt="LR schedule with no scheduler checkpointing" title="LR schedule with no scheduler checkpointing" /&gt;&lt;/p&gt;
-
-&lt;p&gt;(Dummy test code &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/8c9f15630d5253c3b4d21d3596a7091f23b8f48c/test_lr_schedulers.py"&gt;here&lt;/a&gt;.)&lt;/p&gt;
-
-&lt;p&gt;Now, we could use the &lt;code&gt;last_epoch&lt;/code&gt; parameter to initialize them with the correct
-current global step.  But they have a state dict, like most other PyTorch objects, so
-the simplest thing to do is just to write that to another checkpoint file:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;save&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;state_dict&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;checkpoint_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;scheduler.pt&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...and then load it likewise:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;scheduler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load_state_dict&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;checkpoint_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;scheduler.pt&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;(Dummy test code &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/b443fd9e0abed1a52731221a79ff30d6138822db/test_lr_schedulers.py"&gt;here&lt;/a&gt;.)&lt;/p&gt;
-
-&lt;p&gt;Conveniently, if you save the state dict of a &lt;code&gt;SequentialLR&lt;/code&gt;, it will also include the
-state of all of its component schedulers, and likewise if you reload it, it will load the
-components' states back in too.&lt;/p&gt;
-
-&lt;p&gt;The one thing you have to be careful about is what they warn about in the PyTorch docs:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Initializing a scheduler overwrites its optimizer’s &lt;code&gt;param_group["lr"]&lt;/code&gt;s. When
-  restoring a checkpoint, initialize the scheduler before calling your optimizer's
-  &lt;code&gt;load_state_dict()&lt;/code&gt; to avoid overwriting the loaded learning rates.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Luckily enough, in our code as it stands, we create all of the things that are checkpointed
--- the optimiser and the scaler so far, but shortly the scheduler as well -- before we load
-in the state dicts, so that drops out quite nicely.&lt;/p&gt;
-
-&lt;p&gt;So, we have some sketched-out code -- it's time to put it in place for the real training
-run.&lt;/p&gt;
-
-&lt;h4 id="the-actual-code"&gt;The actual code&lt;/h4&gt;
-
-&lt;p&gt;I won't go through the details of the changes to my existing DDP training code, though you can
-&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/a1c2f428fb5579a121021d3b81948fc5f050b0f9"&gt;see the diff here&lt;/a&gt; if you're interested.&lt;/p&gt;
-
-&lt;p&gt;Much of the complexity was due to keeping backward compatibility so that we don't
-have to always use a learning rate scheduler; remember that in this mini-series,
-I'm trying making various changes ("interventions") to the training loop in isolation,
-seeing whether each one improves things.  So it's important to be able to easily
-train with or without learning rate scheduling; I did that with a flag &lt;code&gt;schedule_learning_rate&lt;/code&gt;
-in the &lt;code&gt;train.json&lt;/code&gt;&lt;/p&gt;
-
-&lt;p&gt;Implementation-wise, initially I was thinking that it would
-be easiest to always have a scheduler, and in the "non-scheduled" case to just set it to a linear one that didn't
-change the value over the course of the train.  But in the end it turned out to be
-easier to use &lt;code&gt;scheduler == None&lt;/code&gt; as being the switch to tell the training loop
-which "mode" it was in.&lt;/p&gt;
-
-&lt;p&gt;The placement of the code to create the schedulers was also a little tricky; the "natural"
-place was just after the optimiser is created, like it is in the example code above.
-However, at that point, we don't know how many global steps we're going to have in the
-train, because we don't have the dataset -- which means that working out the numbers to
-pass in to the schedulers for the warmup and decay steps would be impossible.  It turned out to be easiest to put it in the
-function &lt;code&gt;load_datasets_and_train&lt;/code&gt;, just after the datasets are loaded, as at that
-point we have all of the information we need.&lt;/p&gt;
-
-&lt;p&gt;Anyway, that's the code done, so let's see what happens!&lt;/p&gt;
-
-&lt;h3 id="the-training-run-part-1-scheduling-the-learning-rate"&gt;The training run, part 1: scheduling the learning rate&lt;/h3&gt;
-
-&lt;p&gt;I wanted to do two trains; one with the learning rate scheduling, and one with just
-the new value for the learning rate, &lt;code&gt;0.0014&lt;/code&gt; instead of &lt;code&gt;0.0004&lt;/code&gt;.  I was expecting
-the updated learning rate alone to be too high and to cause a very choppy train, but had
-high hopes for the train with the scheduling.  Here's how it did; the scheduled learning
-rate train first:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 12,270.413 seconds&lt;/span&gt;
-&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
-&lt;span class="go"&gt;Throughput: 265,700 tokens/second&lt;/span&gt;
-&lt;span class="go"&gt;Final train loss: 3.654&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Here's what the training loss looked like over that:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/loss-chart-lr-scheduling.png" alt="Loss for training run with learning rate scheduling" title="Loss for training run with learning rate scheduling" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Quite a few loss spikes early on in the train when the learning rate is at its peak,
-but nothing unmanageable -- and, as you'd expect, things calmed down quite a lot
-later on.&lt;/p&gt;
-
-&lt;p&gt;I also charted the learning rate, to make sure it really was doing what I thought it was doing:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/learning-rate-chart-lr-scheduling.png" alt="Learning rate for training run with learning rate scheduling" title="Learning rate for training run with learning rate scheduling" /&gt;&lt;/p&gt;
-
-&lt;p&gt;So, a pretty smooth train, and we definitely did the right learning rate scheduling.
-Time to &lt;a href="https://huggingface.co/gpjt/8xa100m40-schedule-learning-rate"&gt;upload it to Hugging Face&lt;/a&gt;, and see what the evals look like.&lt;/p&gt;
-
-&lt;h3 id="evals-for-the-scheduled-learning-rate"&gt;Evals for the scheduled learning rate:&lt;/h3&gt;
-
-&lt;p&gt;Firstly, the smoke test:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-schedule-learning-rate/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-schedule-learning-rate/checkpoints/best/model.safetensors
-&lt;span class="go"&gt;Every effort moves you closer to the fact they will not see or use their product if you are using a computer or notebook&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Reasonably coherent, at least, though it's not super-impressive.  On to the loss on
-our test set:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/ddp-base-model-from-scratch (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-schedule-learning-rate/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-schedule-learning-rate/checkpoints/best/model.safetensors
-&lt;span class="go"&gt;Fetching 4 files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00&amp;lt;00:00, 4681.14it/s]&lt;/span&gt;
-&lt;span class="go"&gt;100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3200/3200 [05:00&amp;lt;00:00, 10.66it/s]&lt;/span&gt;
-&lt;span class="go"&gt;Loss against our test dataset: 3.602&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That's our best loss so far!  Let's put it into the table:&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test set loss&lt;/th&gt;
-  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-baseline&lt;/td&gt;
-  &lt;td&gt;3.692&lt;/td&gt;
-  &lt;td&gt;-&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-gradient-clipping&lt;/td&gt;
-  &lt;td&gt;3.678&lt;/td&gt;
-  &lt;td&gt;0.014&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-qkv-bias&lt;/td&gt;
-  &lt;td&gt;3.669&lt;/td&gt;
-  &lt;td&gt;0.023&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-remove-dropout&lt;/td&gt;
-  &lt;td&gt;3.641&lt;/td&gt;
-  &lt;td&gt;0.051&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-schedule-learning-rate&lt;/td&gt;
-  &lt;td&gt;3.602&lt;/td&gt;
-  &lt;td&gt;0.09&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;So, it definitely looked like it was worth it.  But was it the scheduling of the
-learning rate that helped, or just the change from 0.0004 to 0.0014?&lt;/p&gt;
-
-&lt;h3 id="the-training-run-part-2-just-updating-the-learning-rate"&gt;The training run, part 2: just updating the learning rate&lt;/h3&gt;
-
-&lt;p&gt;I kicked off a second run with no scheduling, just a learning rate of 0.0014, to see what would happen.  After
-about an hour, I noticed that the loss chart had stopped updating.  The last point
-had a maximum and minimum loss but no average -- but after that, nothing:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/loss-chart-lr-update.png" alt="Loss for training run with learning rate updated" title="Loss for training run with learning rate updated" /&gt;&lt;/p&gt;
-
-&lt;p&gt;However, the learning rate was still being charted, so the train was definitely running:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/learning-rate-chart-lr-update.png" alt="Learning rate for training run with learning rate updated" title="Learning rate for training run with learning rate updated" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Looking at the checkpoint metadata showed what had happened.  At global step 1851,
-we had this &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;min_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mf"&gt;6.198999881744385&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;max_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mf"&gt;7.729835510253906&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;avg_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;NaN&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...and at the next checkpoint at step 2468, we had this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;min_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;NaN&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;max_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;NaN&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;avg_train_loss&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="err"&gt;NaN&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...and the same for all checkpoints thereafter.&lt;/p&gt;
-
-&lt;p&gt;Clearly the parameters had gone off the rails -- exactly what we'd expect with
-an excessive learning rate:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32e-interventions-learning-rate/plot6.png" alt="No convergence with a too-high learning rate" title="No convergence with a too-high learning rate" /&gt;&lt;/p&gt;
-
-&lt;p&gt;There was no point in continuing the train, as it was pretty much certainly unrecoverable,
-so I stopped it.  Out of interest, I downloaded the model, but I couldn't even
-run the smoke test on it:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-update-learning-rate/model.json&lt;span class="w"&gt; &lt;/span&gt;runs/8xa100m40-update-learning-rate/checkpoints/latest/model.safetensors
-/pytorch/aten/src/ATen/native/cuda/TensorCompare.cu:112:&lt;span class="w"&gt; &lt;/span&gt;_assert_async_cuda_kernel:&lt;span class="w"&gt; &lt;/span&gt;block:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;,0,0&lt;span class="o"&gt;]&lt;/span&gt;,&lt;span class="w"&gt; &lt;/span&gt;thread:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;,0,0&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;Assertion&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="sb"&gt;``&lt;/span&gt;probability&lt;span class="w"&gt; &lt;/span&gt;tensor&lt;span class="w"&gt; &lt;/span&gt;contains&lt;span class="w"&gt; &lt;/span&gt;either&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="sb"&gt;``&lt;/span&gt;inf&lt;span class="sb"&gt;``&lt;/span&gt;,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="sb"&gt;``&lt;/span&gt;nan&lt;span class="sb"&gt;``&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;or&lt;span class="w"&gt; &lt;/span&gt;element&lt;span class="w"&gt; &lt;/span&gt;&amp;lt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;&lt;span class="sb"&gt;``&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;failed.
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So it was pretty clear that just updating the learning rate to 0.0014 was actively harmful.
-No need to upload that one to HF!  And time to wrap up this experiment.&lt;/p&gt;
-
-&lt;h3 id="conclusion"&gt;Conclusion&lt;/h3&gt;
-
-&lt;p&gt;While this has been quite a long post, I've really only scratched the surface of
-how learning rates are set.  If I were doing things in more detail, the best
-would probably be to do a "sweep" over multiple values to try to at least approximate the
-best possible rate for this model.&lt;/p&gt;
-
-&lt;p&gt;That would be pretty expensive for me, though, so I decided to stick with the DeepSeek
-number. It might not be ideal for the specific architecture that I'm using, given how
-different that is to theirs, but given the results, it's a decent one compared to
-what I was using.  &lt;sup class="footnote-ref" id="fnref-4"&gt;&lt;a href="#fn-4"&gt;4&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;Something that I found interesting is that exactly how to schedule your learning
-rate is still an area being actively researched.  Even in my relatively minimal
-research, I came across three alternatives to the mainstream warmup-cosine decay pattern:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Per the Hugging Face paper, some people do warmup, then pause at a set level for
-a while, then start the cosine decay (warmup-stable-decay).&lt;/li&gt;
-&lt;li&gt;DeepSeek use a relatively simple stepped function after a warmup. &lt;sup class="footnote-ref" id="fnref-5"&gt;&lt;a href="#fn-5"&gt;5&lt;/a&gt;&lt;/sup&gt;&lt;/li&gt;
-&lt;li&gt;I came across a 2025 paper "&lt;a href="https://arxiv.org/abs/2502.15938"&gt;Straight to Zero: Why Linearly Decaying the Learning Rate to Zero Works Best for LLMs&lt;/a&gt;"
-which says that a linear decay (after a warmup) outperforms cosine.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I'm sure there are many more.  But for this train, I decided to stick to the
-mainstream, and the results were pretty good!  To reiterate, this has been the
-most positive intervention so far:&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test set loss&lt;/th&gt;
-  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-baseline&lt;/td&gt;
-  &lt;td&gt;3.692&lt;/td&gt;
-  &lt;td&gt;-&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-gradient-clipping&lt;/td&gt;
-  &lt;td&gt;3.678&lt;/td&gt;
-  &lt;td&gt;0.014&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-qkv-bias&lt;/td&gt;
-  &lt;td&gt;3.669&lt;/td&gt;
-  &lt;td&gt;0.023&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-remove-dropout&lt;/td&gt;
-  &lt;td&gt;3.641&lt;/td&gt;
-  &lt;td&gt;0.051&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-schedule-learning-rate&lt;/td&gt;
-  &lt;td&gt;3.602&lt;/td&gt;
-  &lt;td&gt;0.09&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;So I'll stick with that, and move on to the next thing: what is the
-&lt;code&gt;weight_decay&lt;/code&gt; parameter that we're passing in to the AdamW optimiser?
-Tune in next time :-)&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;Yes, I am foreshadowing here.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-2"&gt;
-&lt;p&gt;To make my earlier analogy about learning rate decaying over time in people
-as they age even more dubious, we can imagine this as being rather like someone
-middle-aged going on an ayahuasca retreat ;-)&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-3"&gt;
-&lt;p&gt;If you're wondering how we had a valid maximum and minimum in that first checkpoint
-when the average was NaN, here's why:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;max&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;nan&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-&lt;span class="mi"&gt;3&lt;/span&gt;
-&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;min&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;nan&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-&lt;span class="mi"&gt;1&lt;/span&gt;
-&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;nan&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-&lt;span class="n"&gt;nan&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-4"&gt;
-&lt;p&gt;You might wonder how large labs work out the right learning rate given their
-training runs run to millions of dollars.  The answer is there in that
-DeepSeek paper, as that's one of the things they were doing.  They scaled their
-model down from the billions of parameters that they wanted to train to various
-smaller models, and worked out the optimal learning rate for each of the smaller
-models by doing full trains on them.  Once they had a mapping from model size
-to the ideal learning rate for their architecture, they could extrapolate that
-to the large ones that they wanted to train.&lt;/p&gt;
-
-&lt;p&gt;The problem is that those "smaller" models are actually quite a lot larger than
-the one we're training here!  And while we could potentially scale it down even
-further, I suspect that such truly tiny models (say, 1M parameters) wouldn't train well enough to give
-any meaningful results.&amp;#160;&lt;a href="#fnref-4" class="footnoteBackLink" title="Jump back to footnote 4 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-5"&gt;
-&lt;p&gt;From the paper:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Specifically, the learning rate of the model reaches its maximum value after
-  2000 warmup steps, and then decreases to 31.6% of the maximum value after processing 80% of
-  the training tokens. It further reduces to 10% of the maximum value after 90% of the tokens.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;&lt;a href="#fnref-5" class="footnoteBackLink" title="Jump back to footnote 5 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/03/llm-from-scratch-32e-interventions-learning-rate</guid>
-      <pubDate>Tue, 10 Mar 2026 23:55:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
