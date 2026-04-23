@@ -7,7 +7,107 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Wed, 22 Apr 2026 23:52:06 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 23 Apr 2026 03:19:28 +0000</lastBuildDate>
+    <item>
+      <title>Debugging WASM in Chrome DevTools</title>
+      <link>https://eli.thegreenplace.net/2026/debugging-wasm-in-chrome-devtools/</link>
+      <description>&lt;p&gt;When I was working on the &lt;a class="reference external" href="https://eli.thegreenplace.net/2026/compiling-scheme-to-webassembly/"&gt;WASM backend for my Scheme compiler&lt;/a&gt;,
+I ran into several tricky situations with debugging generated WASM code. It
+turned out that Chrome has a very capable WASM debugger in its DevTools, so in
+this brief post I want to share how it can be used.&lt;/p&gt;
+&lt;div class="section" id="the-setup-and-harness"&gt;
+&lt;h2&gt;The setup and harness&lt;/h2&gt;
+&lt;p&gt;I'll be using an example from my &lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples"&gt;wasm-wat-samples project&lt;/a&gt; for this post. In fact,
+everything is already in place in the &lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples/tree/main/gc-print-scheme-pairs"&gt;gc-print-scheme-pairs&lt;/a&gt;
+sample. This sample shows how to construct Scheme-like s-exprs in WASM using gc
+references and print them out recursively. The sample supports nested pairs
+of integers, booleans and symbols.&lt;/p&gt;
+&lt;p&gt;To see this in action, we have to first compile the WAT file to WASM, for
+example using &lt;a class="reference external" href="https://github.com/eliben/watgo"&gt;watgo&lt;/a&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;$ cd gc-print-scheme-pairs
+$ watgo parse gc-print-scheme-pairs.wat -o gc-print-scheme-pairs.wasm
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;browser-loader.html&lt;/span&gt;&lt;/tt&gt; file in that directory already expects to load
+&lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;gc-print-scheme-pairs.wasm&lt;/span&gt;&lt;/tt&gt;. But we can't just open it
+directly from the file-system; since it loads WASM, this file needs to be
+served with a local HTTP server. I personally use &lt;a class="reference external" href="https://github.com/eliben/static-server/"&gt;static-server&lt;/a&gt;
+for this, but you can use anything else - like Python's built-in &lt;tt class="docutils literal"&gt;http.server&lt;/tt&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;$ static-server
+2026/04/10 08:55:20.244096 Serving directory &amp;quot;.&amp;quot; on http://127.0.0.1:8080
+...
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Now it can be opened in the browser by following the printed link and selecting
+the &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;browser-loader.html&lt;/span&gt;&lt;/tt&gt; file.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-debugging-process"&gt;
+&lt;h2&gt;The debugging process&lt;/h2&gt;
+&lt;p&gt;Open the Chrome DevTools, and in &lt;em&gt;Sources&lt;/em&gt;, open the &lt;em&gt;Page&lt;/em&gt; view on the left.
+It should have one entry under &lt;em&gt;wasm&lt;/em&gt;, which will show the decompiled WAT
+code for our module. Note: this code is disassembled from the binary WASM, so
+it will lose some WAT syntactic sugar (like folded instructions):&lt;/p&gt;
+&lt;img alt="Screenshot showing where WASM source is in DevTools" class="align-center" src="https://eli.thegreenplace.net/images/2026/wasm-debug-screenshot1.png" /&gt;
+&lt;p&gt;You can set a breakpoint by clicking on the address column to the left of the
+code, and then refresh the page. The DevTools debugger will run the program
+again and stop at the breakpoint:&lt;/p&gt;
+&lt;img alt="Screenshot showing debugger stopping on the breakpoint line" class="align-center" src="https://eli.thegreenplace.net/images/2026/wasm-debug-screenshot2.png" /&gt;
+&lt;p&gt;Here you can step over, into, see local values and call stack, etc - a real
+debugger!&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="debugging-unexpected-exceptions"&gt;
+&lt;h2&gt;Debugging unexpected exceptions&lt;/h2&gt;
+&lt;p&gt;The most important use case for me while developing the compiler was debugging
+unexpected exceptions (coming from instructions like &lt;tt class="docutils literal"&gt;ref.cast&lt;/tt&gt;). Notice
+the checkboxes saying &amp;quot;Pause on ... exceptions&amp;quot; on the right-hand side of the
+previous screenshot. With these selected, the DevTools debugger will
+automatically stop on an exception and show where it is coming from. Let's
+modify the &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;gc-print-scheme-pairs.wat&lt;/span&gt;&lt;/tt&gt; sample to see this in action. The
+&lt;tt class="docutils literal"&gt;$emit_value&lt;/tt&gt; function performs a set of &lt;tt class="docutils literal"&gt;ref.test&lt;/tt&gt; checks to see which kind
+of reference it's dealing with before casting; let's add this line at the
+very start:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(call $emit_bool (ref.cast (ref $Bool) (local.get $v)))
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;It's clearly wrong to assume that &lt;tt class="docutils literal"&gt;$v&lt;/tt&gt; is a bool reference without first
+testing it; this is just for demonstration purposes.&lt;/p&gt;
+&lt;p&gt;Without setting any breakpoints, recompiling this code with &lt;tt class="docutils literal"&gt;watgo&lt;/tt&gt; and
+reloading the page, we get:&lt;/p&gt;
+&lt;img alt="Screenshot showing debugger stopping on an exception" class="align-center" src="https://eli.thegreenplace.net/images/2026/wasm-debug-screenshot3.png" /&gt;
+&lt;p&gt;The debugger stopped at the instruction causing the exception; moreover, in the
+&lt;em&gt;Scope&lt;/em&gt; pane on the right we can see that the actual type of &lt;tt class="docutils literal"&gt;$v&lt;/tt&gt; is
+&lt;tt class="docutils literal"&gt;(ref $Pair)&lt;/tt&gt;, so it's immediately clear what's going on.&lt;/p&gt;
+&lt;p&gt;I've found this capability extremely valuable when writing (or emitting from
+a compiler) non-trivial chunks of WASM code using gc types and instructions.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="debugger-vs-printfs-in-wasm"&gt;
+&lt;h2&gt;Debugger vs. printfs in wasm&lt;/h2&gt;
+&lt;p&gt;&amp;quot;Should I use a debugger or just printfs&amp;quot; is a common topic of debate among
+programmers. While I'm usually in the &amp;quot;printf debugging&amp;quot;
+camp, I'm not dogmatic, and will certainly reach for a debugger when
+the situation calls for it.&lt;/p&gt;
+&lt;p&gt;Specifically, when investigating reference exceptions in WASM, two strong
+factors tilt the decision towards using a debugger:&lt;/p&gt;
+&lt;ol class="arabic"&gt;
+&lt;li&gt;&lt;p class="first"&gt;In general, WASM's printf capabilities aren't great. We can import print-like
+functions from the host (and - in fact - our sample does just that), but
+they're not very flexible and dealing with strings in WASM is painful in
+general. This is compounded even more when working with gc types, because
+these aren't even visible to the host (they're opaque references). If we want
+to do printf debugging of gc values, we have to build &lt;em&gt;a lot&lt;/em&gt; of scaffolding
+first.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;p class="first"&gt;Exception debugging - in general - is much easier with a supportive debugger
+in hand. Our &lt;tt class="docutils literal"&gt;ref.cast&lt;/tt&gt; exception from the example above could have
+happened &lt;em&gt;anywhere&lt;/em&gt; in the code. Imagine having to debug a very large
+WASM program (emitted by a compiler) to find the source of a failed
+&lt;tt class="docutils literal"&gt;ref.cast&lt;/tt&gt;; the debugger takes you right to the spot!&lt;/p&gt;
+&lt;p&gt;In fact, even for C programming, I've always found &lt;tt class="docutils literal"&gt;gdb&lt;/tt&gt; most useful for
+pinpointing the source of segmentation faults and similar crashes.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-04-22:/2026/debugging-wasm-in-chrome-devtools/</guid>
+      <pubDate>Wed, 22 Apr 2026 19:23:00 -0700</pubDate>
+    </item>
     <item>
       <title>watgo - a WebAssembly Toolkit for Go</title>
       <link>https://eli.thegreenplace.net/2026/watgo-a-webassembly-toolkit-for-go/</link>
@@ -853,325 +953,6 @@ monomials are orthogonal.&lt;/td&gt;&lt;/tr&gt;
 </description>
       <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-25:/2026/notes-on-linear-algebra-for-polynomials/</guid>
       <pubDate>Wed, 25 Feb 2026 18:34:00 -0800</pubDate>
-    </item>
-    <item>
-      <title>Rewriting pycparser with the help of an LLM</title>
-      <link>https://eli.thegreenplace.net/2026/rewriting-pycparser-with-the-help-of-an-llm/</link>
-      <description>&lt;p&gt;&lt;a class="reference external" href="https://github.com/eliben/pycparser"&gt;pycparser&lt;/a&gt; is my most widely used open
-source project (with ~20M daily downloads from PyPI &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;). It's a pure-Python
-parser for the C programming language, producing ASTs inspired by &lt;a class="reference external" href="https://docs.python.org/3/library/ast.html"&gt;Python's
-own&lt;/a&gt;. Until very recently, it's
-been using &lt;a class="reference external" href="https://www.dabeaz.com/ply/ply.html"&gt;PLY: Python Lex-Yacc&lt;/a&gt; for
-the core parsing.&lt;/p&gt;
-&lt;p&gt;In this post, I'll describe how I collaborated with an LLM coding agent (Codex)
-to help me rewrite pycparser to use a hand-written recursive-descent parser and
-remove the dependency on PLY. This has been an interesting experience and the
-post contains lots of information and is therefore quite long; if you're just
-interested in the final result, check out the latest code of pycparser - the
-&lt;tt class="docutils literal"&gt;main&lt;/tt&gt; branch already has the new implementation.&lt;/p&gt;
-&lt;img alt="meme picture saying &amp;quot;can't come to bed because my AI agent produced something slightly wrong&amp;quot;" class="align-center" src="https://eli.thegreenplace.net/images/2026/cantcometobed.png" /&gt;
-&lt;div class="section" id="the-issues-with-the-existing-parser-implementation"&gt;
-&lt;h2&gt;The issues with the existing parser implementation&lt;/h2&gt;
-&lt;p&gt;While pycparser has been working well overall, there were a number of nagging
-issues that persisted over years.&lt;/p&gt;
-&lt;div class="section" id="parsing-strategy-yacc-vs-hand-written-recursive-descent"&gt;
-&lt;h3&gt;Parsing strategy: YACC vs. hand-written recursive descent&lt;/h3&gt;
-&lt;p&gt;I began working on pycparser in 2008, and back then using a YACC-based approach
-for parsing a whole language like C seemed like a no-brainer to me. Isn't this
-what everyone does when writing a serious parser? Besides, the K&amp;amp;R2 book
-famously carries the entire grammar of the C99 language in an appendix - so it
-seemed like a simple matter of translating that to PLY-yacc syntax.&lt;/p&gt;
-&lt;p&gt;And indeed, it wasn't &lt;em&gt;too&lt;/em&gt; hard, though there definitely were some complications
-in building the ASTs for declarations (C's &lt;a class="reference external" href="https://eli.thegreenplace.net/2008/10/18/implementing-cdecl-with-pycparser"&gt;gnarliest part&lt;/a&gt;).&lt;/p&gt;
-&lt;p&gt;Shortly after completing pycparser, I got more and more interested in compilation
-and started learning about the different kinds of parsers more seriously. Over
-time, I grew convinced that &lt;a class="reference external" href="https://eli.thegreenplace.net/tag/recursive-descent-parsing"&gt;recursive descent&lt;/a&gt; is the way to
-go - producing parsers that are easier to understand and maintain (and are often
-faster!).&lt;/p&gt;
-&lt;p&gt;It all ties in to the &lt;a class="reference external" href="https://eli.thegreenplace.net/2017/benefits-of-dependencies-in-software-projects-as-a-function-of-effort/"&gt;benefits of dependencies in software projects as a
-function of effort&lt;/a&gt;.
-Using parser generators is a heavy &lt;em&gt;conceptual&lt;/em&gt; dependency: it's really nice
-when you have to churn out many parsers for small languages. But when you have
-to maintain a single, very complex parser, as part of a large project - the
-benefits quickly dissipate and you're left with a substantial dependency that
-you constantly grapple with.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="the-other-issue-with-dependencies"&gt;
-&lt;h3&gt;The other issue with dependencies&lt;/h3&gt;
-&lt;p&gt;And then there are the usual problems with dependencies; dependencies get
-abandoned, and they may also develop security issues. Sometimes, both of these
-become true.&lt;/p&gt;
-&lt;p&gt;Many years ago, pycparser forked and started vendoring its own version of PLY.
-This was part of transitioning pycparser to a dual Python 2/3 code base when PLY
-was slower to adapt. I believe this was the right decision, since PLY &amp;quot;just
-worked&amp;quot; and I didn't have to deal with active (and very tedious in the Python
-ecosystem, where packaging tools are replaced faster than dirty socks)
-dependency management.&lt;/p&gt;
-&lt;p&gt;A couple of weeks ago &lt;a class="reference external" href="https://github.com/eliben/pycparser/issues/588"&gt;this issue&lt;/a&gt;
-was opened for pycparser. It turns out the some old PLY code triggers security
-checks used by some Linux distributions; while this code was fixed in a later
-commit of PLY, PLY itself was apparently abandoned and archived in late 2025.
-And guess what? That happened in the middle of a large rewrite of the package,
-so re-vendoring the pre-archiving commit seemed like a risky proposition.&lt;/p&gt;
-&lt;p&gt;On the issue it was suggested that &amp;quot;hopefully the dependent packages move on to
-a non-abandoned parser or implement their own&amp;quot;; I originally laughed this idea
-off, but then it got me thinking... which is what this post is all about.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="growing-complexity-of-parsing-a-messy-language"&gt;
-&lt;h3&gt;Growing complexity of parsing a messy language&lt;/h3&gt;
-&lt;p&gt;The original K&amp;amp;R2 grammar for C99 had - famously - a single shift-reduce
-conflict having to do with dangling &lt;tt class="docutils literal"&gt;else&lt;/tt&gt;s belonging to the most recent
-&lt;tt class="docutils literal"&gt;if&lt;/tt&gt; statement. And indeed, other than the famous &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Lexer_hack"&gt;lexer hack&lt;/a&gt;
-used to deal with &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/05/02/the-context-sensitivity-of-cs-grammar-revisited"&gt;C's type name / ID ambiguity&lt;/a&gt;,
-pycparser only had this single shift-reduce conflict.&lt;/p&gt;
-&lt;p&gt;But things got more complicated. Over the years, features were added that
-weren't strictly in the standard but were supported by all the industrial
-compilers. The more advanced C11 and C23 standards weren't beholden to the
-promises of conflict-free YACC parsing (since almost no industrial-strength
-compilers use YACC at this point), so all caution went out of the window.&lt;/p&gt;
-&lt;p&gt;The latest (PLY-based) release of pycparser has many reduce-reduce conflicts
-&lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;; these are a severe maintenance hazard because it means the parsing rules
-essentially have to be tie-broken by order of appearance in the code. This is
-very brittle; pycparser has only managed to maintain its stability and quality
-through its comprehensive test suite. Over time, it became harder and harder to
-extend, because YACC parsing rules have all kinds of spooky-action-at-a-distance
-effects. The straw that broke the camel's back was &lt;a class="reference external" href="https://github.com/eliben/pycparser/pull/590"&gt;this PR&lt;/a&gt; which again proposed to
-increase the number of reduce-reduce conflicts &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;This - again - prompted me to think &amp;quot;what if I just dump YACC and switch to
-a hand-written recursive descent parser&amp;quot;, and here we are.&lt;/p&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class="section" id="the-mental-roadblock"&gt;
-&lt;h2&gt;The mental roadblock&lt;/h2&gt;
-&lt;p&gt;None of the challenges described above are new; I've been pondering them for
-many years now, and yet biting the bullet and rewriting the parser didn't feel
-like something I'd like to get into. By my private estimates it'd take at least
-a week of deep heads-down work to port the gritty 2000 lines of YACC grammar
-rules to a recursive descent parser &lt;a class="footnote-reference" href="#footnote-4" id="footnote-reference-4"&gt;[4]&lt;/a&gt;. Moreover, it wouldn't be a
-particularly &lt;em&gt;fun&lt;/em&gt; project either - I didn't feel like I'd learn much new and
-my interests have shifted away from this project. In short, the &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Potential_well"&gt;Potential well&lt;/a&gt; was just too deep.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="why-would-this-even-work-tests"&gt;
-&lt;h2&gt;Why would this even work? Tests&lt;/h2&gt;
-&lt;p&gt;I've definitely noticed the improvement in capabilities of LLM coding
-agents in the past few months, and many reputable people online rave about using
-them for increasingly larger projects. That said, would an LLM agent really be
-able to accomplish such a complex project on its own? This isn't just a toy,
-it's thousands of lines of dense parsing code.&lt;/p&gt;
-&lt;p&gt;What gave me hope is the concept of &lt;a class="reference external" href="https://simonwillison.net/2025/Dec/31/the-year-in-llms/#the-year-of-conformance-suites"&gt;conformance suites mentioned by
-Simon Willison&lt;/a&gt;.
-Agents seem to do well when there's a very clear and rigid
-goal function - such as a large, high-coverage conformance test suite.&lt;/p&gt;
-&lt;p&gt;And pycparser has an &lt;a class="reference external" href="https://github.com/eliben/pycparser/blob/main/tests/test_c_parser.py"&gt;very extensive one&lt;/a&gt;.
-Over 2500 lines of test code parsing various C snippets to ASTs with expected
-results, grown over a decade and a half of real issues and bugs reported by
-users.&lt;/p&gt;
-&lt;p&gt;I figured the LLM can either succeed or fail and throw its hands up in despair,
-but it's quite unlikely to produce a &lt;em&gt;wrong&lt;/em&gt; port that would still pass all
-the tests. So I set it to run.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="the-initial-port"&gt;
-&lt;h2&gt;The initial port&lt;/h2&gt;
-&lt;p&gt;I fired up Codex in pycparser's repository, and wrote this prompt just to
-make sure it understands me and can run the tests:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;This repository implements a Python parser producing an AST. It has a very
-extensive test suite; can you first verify you successfully run all the tests?
-(with python3 -m unittest discover, from the root dir)
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Codex figured it out (I gave it the exact command, after all!); my next
-prompt was the real thing &lt;a class="footnote-reference" href="#footnote-5" id="footnote-reference-5"&gt;[5]&lt;/a&gt;:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;pycparser uses the PLY library for its lexer and parser, and its own AST
-package for the ASTs created by the parser. I want to explore replacing the
-Parser component (leaving the Lexer alone for now) with a hand written
-recursive descent parser that will pass all the same tests. Can you try that?
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Here Codex went to work and churned &lt;em&gt;for over an hour&lt;/em&gt;. Having never
-observed an agent work for nearly this long, I kind of assumed it went off
-the rails and will fail sooner or later. So I was rather surprised and skeptical
-when it eventually came back with:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;Replaced the PLY parse path with a handwritten recursive‑descent parser while
-keeping the existing lexer and AST helpers intact; CParser now points to the
-new RD implementation, with the old PLY version preserved as PLYCParser in
-pycparser/c_parser.py. The RD parser includes a token stream, declarator/type
-parsing, expression precedence handling, pragmas, and statement parsing to
-match the previous AST output and coordinate behavior.
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;It took me a while to poke around the code and run it until I was convinced - it
-had actually done it! It wrote a new recursive descent parser with only
-ancillary dependencies on PLY, and that parser passed the test suite. After a
-few more prompts, we've removed the ancillary dependencies and made the
-structure clearer. I hadn't looked too deeply into code quality at this point,
-but at least on the functional level - it succeeded. This was very impressive!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="a-quick-note-on-reviews-and-branches"&gt;
-&lt;h2&gt;A quick note on reviews and branches&lt;/h2&gt;
-&lt;p&gt;A change like the one described above is impossible to code-review as one PR in
-any meaningful way; so I used a different strategy. Before embarking on this
-path, I created a new branch and once Codex finished the initial rewrite, I
-committed this change, knowing that I will review it in detail, piece-by-piece
-later on.&lt;/p&gt;
-&lt;p&gt;Even though coding agents have their own notion of history and can &amp;quot;revert&amp;quot;
-certain changes, I felt much safer relying on Git. In the worst case if all of
-this goes south, I can nuke the branch and it's as if nothing ever happened.
-I was determined to only merge this branch onto &lt;tt class="docutils literal"&gt;main&lt;/tt&gt; once I was fully
-satisfied with the code. In what follows, I had to &lt;tt class="docutils literal"&gt;git reset&lt;/tt&gt; several times
-when I didn't like the direction in which Codex was going. In hindsight, doing
-this work in a branch was absolutely the right choice.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="the-long-tail-of-goofs"&gt;
-&lt;h2&gt;The long tail of goofs&lt;/h2&gt;
-&lt;p&gt;Once I've sufficiently convinced myself that the new parser is actually working,
-I used Codex to similarly rewrite the lexer and get rid of the PLY dependency
-entirely, deleting it from the repository. Then, I started looking more deeply
-into code quality - reading the code created by Codex and trying to wrap my head
-around it.&lt;/p&gt;
-&lt;p&gt;And - oh my - this was quite the journey. Much has been written about the code
-produced by agents, and much of it seems to be true. Maybe it's a setting I'm
-missing (I'm not using my own custom &lt;tt class="docutils literal"&gt;AGENTS.md&lt;/tt&gt; yet, for instance), but
-Codex seems to be that eager programmer that wants to get from A to B whatever
-the cost. Readability, minimalism and code clarity are very much secondary
-goals.&lt;/p&gt;
-&lt;p&gt;Using &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;raise...except&lt;/span&gt;&lt;/tt&gt; for control flow? Yep. Abusing Python's weak typing
-(like having &lt;tt class="docutils literal"&gt;None&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;false&lt;/tt&gt; and other values all mean different things
-for a given variable)? For sure. Spreading the logic of a complex function
-all over the place instead of putting all the key parts in a single switch
-statement? You bet.&lt;/p&gt;
-&lt;p&gt;Moreover, the agent is hilariously &lt;em&gt;lazy&lt;/em&gt;. More than once I had to convince it
-to do something it initially said is impossible, and even insisted again in
-follow-up messages. The anthropomorphization here is mildly concerning, to be
-honest. I could never imagine I would be writing something like the following to
-a computer, and yet - here we are: &amp;quot;Remember how we moved X to Y before? You
-can do it again for Z, definitely. Just try&amp;quot;.&lt;/p&gt;
-&lt;p&gt;My process was to see how I can instruct Codex to fix things, and intervene
-myself (by rewriting code) as little as possible. I've &lt;em&gt;mostly&lt;/em&gt; succeeded in
-this, and did maybe 20% of the work myself.&lt;/p&gt;
-&lt;p&gt;My branch grew &lt;em&gt;dozens&lt;/em&gt; of commits, falling into roughly these categories:&lt;/p&gt;
-&lt;ol class="arabic simple"&gt;
-&lt;li&gt;The code in X is too complex; why can't we do Y instead?&lt;/li&gt;
-&lt;li&gt;The use of X is needlessly convoluted; change Y to Z, and T to V in all
-instances.&lt;/li&gt;
-&lt;li&gt;The code in X is unclear; please add a detailed comment - with examples - to
-explain what it does.&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;Interestingly, after doing (3), the agent was often more effective in giving
-the code a &amp;quot;fresh look&amp;quot; and succeeding in either (1) or (2).&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="the-end-result"&gt;
-&lt;h2&gt;The end result&lt;/h2&gt;
-&lt;p&gt;Eventually, after many hours spent in this process, I was reasonably pleased
-with the code. It's far from perfect, of course, but taking the essential
-complexities into account, it's something I could see myself maintaining (with
-or without the help of an agent). I'm sure I'll find more ways to improve it
-in the future, but I have a reasonable degree of confidence that this will be
-doable.&lt;/p&gt;
-&lt;p&gt;It passes all the tests, so I've been able to release a new version (3.00)
-without major issues so far. The only issue I've discovered is that some of
-CFFI's tests are overly precise about the phrasing of errors reported by
-pycparser; this was &lt;a class="reference external" href="https://github.com/python-cffi/cffi/pull/224"&gt;an easy fix&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;The new parser is also faster, by about 30% based on my benchmarks! This is
-typical of recursive descent when compared with YACC-generated parsers, in my
-experience. After reviewing the initial rewrite of the lexer, I've spent a while
-instructing Codex on how to make it faster, and it worked reasonably well.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="followup-static-typing"&gt;
-&lt;h2&gt;Followup - static typing&lt;/h2&gt;
-&lt;p&gt;While working on this, it became quite obvious that static typing would make the
-process easier. LLM coding agents really benefit from closed loops with strict
-guardrails (e.g. a test suite to pass), and type-annotations act as such.
-For example, had pycparser already been type annotated, Codex would probably not
-have overloaded values to multiple types (like &lt;tt class="docutils literal"&gt;None&lt;/tt&gt; vs. &lt;tt class="docutils literal"&gt;False&lt;/tt&gt; vs.
-others).&lt;/p&gt;
-&lt;p&gt;In a followup, I asked Codex to type-annotate pycparser (running checks using
-&lt;tt class="docutils literal"&gt;ty&lt;/tt&gt;), and this was also a back-and-forth because the process exposed some
-issues that needed to be refactored. Time will tell, but hopefully it will make
-further changes in the project simpler for the agent.&lt;/p&gt;
-&lt;p&gt;Based on this experience, I'd bet that coding agents will be somewhat more
-effective in strongly typed languages like Go, TypeScript and especially Rust.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="conclusions"&gt;
-&lt;h2&gt;Conclusions&lt;/h2&gt;
-&lt;p&gt;Overall, this project has been a really good experience, and I'm impressed with
-what modern LLM coding agents can do! While there's no reason to expect that
-progress in this domain will stop, even if it does - these are already very
-useful tools that can significantly improve programmer productivity.&lt;/p&gt;
-&lt;p&gt;Could I have done this myself, without an agent's help? Sure. But it would have
-taken me &lt;em&gt;much&lt;/em&gt; longer, assuming that I could even muster the will and
-concentration to engage in this project. I estimate it would take me at least
-a week of full-time work (so 30-40 hours) spread over who knows how long to
-accomplish. With Codex, I put in an order of magnitude less work into this
-(around 4-5 hours, I'd estimate) and I'm happy with the result.&lt;/p&gt;
-&lt;p&gt;It was also &lt;em&gt;fun&lt;/em&gt;. At least in one sense, my professional life can be described
-as the pursuit of focus, deep work and &lt;em&gt;flow&lt;/em&gt;. It's not easy for me to get into
-this state, but when I do I'm highly productive and find it very enjoyable.
-Agents really help me here. When I know I need to write some code and it's
-hard to get started, asking an agent to write a prototype is a great catalyst
-for my motivation. Hence the meme at the beginning of the post.&lt;/p&gt;
-&lt;div class="section" id="does-code-quality-even-matter"&gt;
-&lt;h3&gt;Does code quality even matter?&lt;/h3&gt;
-&lt;p&gt;One can't avoid a nagging question - does the quality of the code produced
-by agents even matter? Clearly, the agents themselves can understand it (if not
-today's agent, then at least next year's). Why worry about future
-maintainability if the agent can maintain it? In other words, does it make sense
-to just go full vibe-coding?&lt;/p&gt;
-&lt;p&gt;This is a fair question, and one I don't have an answer to. Right now, for
-projects I maintain and &lt;em&gt;stand behind&lt;/em&gt;, it seems obvious to me that the code
-should be fully understandable and accepted by me, and the agent is just a tool
-helping me get to that state more efficiently. It's hard to say what the future
-holds here; it's going to interesting, for sure.&lt;/p&gt;
-&lt;hr class="docutils" /&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;pycparser has a fair number of &lt;a class="reference external" href="https://deps.dev/pypi/pycparser/3.0.0/dependents"&gt;direct dependents&lt;/a&gt;,
-but the majority of downloads comes through &lt;a class="reference external" href="https://github.com/python-cffi/cffi"&gt;CFFI&lt;/a&gt;,
-which itself is a major building block for much of the Python ecosystem.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The table-building report says 177, but that's certainly an
-over-dramatization because it's common for a single conflict to
-manifest in several ways.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;It didn't help the PR's case that it was almost certainly vibe coded.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-4" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-4"&gt;[4]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;&lt;p class="first"&gt;There was also the lexer to consider, but this seemed like a much
-simpler job. My impression is that in the early days of computing,
-&lt;tt class="docutils literal"&gt;lex&lt;/tt&gt; gained prominence because of strong regexp support which wasn't
-very common yet. These days, with excellent regexp libraries
-existing for pretty much every language, the added value of &lt;tt class="docutils literal"&gt;lex&lt;/tt&gt; over
-a &lt;a class="reference external" href="https://eli.thegreenplace.net/2013/06/25/regex-based-lexical-analysis-in-python-and-javascript"&gt;custom regexp-based lexer&lt;/a&gt;
-isn't very high.&lt;/p&gt;
-&lt;p class="last"&gt;That said, it wouldn't make much sense to embark on a journey to rewrite
-&lt;em&gt;just&lt;/em&gt; the lexer; the dependency on PLY would still remain, and besides,
-PLY's lexer and parser are designed to work well together. So it wouldn't
-help me much without tackling the parser beast.&lt;/p&gt;
-&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-5" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-5"&gt;[5]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;I've decided to ask it to the port the parser first, leaving the lexer
-alone. This was to split the work into reasonable chunks. Besides, I
-figured that the parser is the hard job anyway - if it succeeds in that,
-the lexer should be easy. That assumption turned out to be correct.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-04:/2026/rewriting-pycparser-with-the-help-of-an-llm/</guid>
-      <pubDate>Wed, 04 Feb 2026 19:35:00 -0800</pubDate>
     </item>
   </channel>
 </rss>
