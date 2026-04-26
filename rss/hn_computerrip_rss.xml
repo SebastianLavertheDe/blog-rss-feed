@@ -5,7 +5,529 @@
     <link>https://computer.rip</link>
     <description>A newsletter on technology and its problems and also whatever else</description>
     <language>en</language>
-    <lastBuildDate>Sun, 26 Apr 2026 21:44:38 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 26 Apr 2026 22:45:40 +0000</lastBuildDate>
+    <item>
+      <title>voice modems</title>
+      <link>https://computer.rip/2026-04-26-voice-modems.html</link>
+      <description>  &lt;p&gt;If you've done much with modern cellphones, you've probably noticed just how odd
+the architecture can be around audio. Specifically, I mean call audio: modern
+smartphones have made call audio less of a special case (mostly by just becoming
+more complicated in general), but in older phones you would often find
+arrangements where the cellular modem &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt; had direct analog audio to the
+microphone and speaker, perhaps via some switching to share amplifiers. That
+design meant that the cellular modem functioned basically as a completely
+independent device, a fully-capable &amp;quot;cellular phone&amp;quot; with the ability to
+make and receive voice calls. The role of the rest of the smartphone, and its
+operating system, was just to provide control messages for starting and ending
+calls.&lt;/p&gt;
+&lt;p&gt;In modern phones the audio path to and from the modem is digital and it's more
+integrated into the operating system audio service, but still not fully. You
+might have noticed, for example, that it is excessively difficult to record
+call audio on most phones. Regulatory and liability pressures are one reason for
+this, but another is that it's actually kind of difficult: there may not be any
+physical way for software running on the main processor to receive audio from
+the cellular modem. The designer has to put in explicit effort to make that
+work, effort that only became common more recently to facilitate automatic
+transcription—and VoLTE, a whole complication that I will simply ignore for the
+sake of a cleaner historical narrative. You come here to read about old phones,
+not new ones.&lt;/p&gt;
+&lt;p&gt;You've probably read enough of my writing to know where this is going: the
+design of cellular radios, which assume call audio to be part of Their Exclusive
+Domain, is a legacy of an age-old architectural decision traceable to the
+original Hayes Smartmodem. It relates to a feature of modems that was widely
+available, but sparsely used, for much of the PC revolution. The details are
+odd!&lt;/p&gt;
+&lt;p&gt;First, for context, let's recede into our mind palaces and travel back to the
+1980s. AT&amp;amp;T-designed modems like the Bell 103 had created a standardized
+family of protocols for data over voice lines, and a company called Hayes
+introduced a Bell 103-like implementation called the Smartmodem. The Smartmodem
+was quite successful on its own, but it was more significant for having
+introduced a common control interface between the modem and the computer.
+Previous modems had acted as transparent devices that expected Something Else to
+perform call setup tasks, while the Hayes Smartmodem could pick up the line and
+dial all on its own. That required that the computer send commands to the modem
+to configure and start a call.&lt;/p&gt;
+&lt;p&gt;Hayes designed a simple scheme for sending commands to the modem and switching
+it in and out of transparent data mode, and that protocol was then widely copied
+by other modem manufacturers. You could call it the &amp;quot;Hayes command set,&amp;quot; and
+older documents often do, but these days it's more commonly known by the two
+characters that prefix most commands: the AT protocol.&lt;/p&gt;
+&lt;p&gt;From its origin in 1981, AT has shown remarkable staying power. Virtually all
+computer-connected modems, to this very day, continue to use AT commands for
+basic configuration. Likewise, the basic architecture of the Smartmodem
+persists: the Smartmodem connected to the host computer using a single RS-232
+link that switched between carrying control messages and data. The very latest
+5G modems still work the same way, complicated by the addition of multiple
+separate UART serial channels (so that, for example, control commands, data, and
+GNSS data can each have their own separate channel) and the adoption of the USB
+communications device class &amp;quot;Abstract Control Model,&amp;quot; a standard UART-over-USB
+implementation mostly intended to simplify modems. Plug a modern 5G modem into
+a Linux machine and you can easily observe this: virtually all cellular modems
+are USB-attached and will appear as a USB composite device with multiple serial
+adapters, usually attached as /dev/ttyACM* due to the USB-CDC ACM class.&lt;/p&gt;
+&lt;p&gt;Courtesy of the V.250 standard (a formalization of AT commands) and considerable
+effort by driver implementers, USB-attached modems &amp;quot;Just Work&amp;quot; as network
+interfaces on modern Linux—but under the hood, the kernel is communicating
+with the modem over separate serial interfaces. Back in the olden days, it was
+common to run PPP (point-to-point protocol) over one of the serial interfaces to
+use the actual data (bearer) channel, but now PPP has mostly given way to
+&amp;quot;Direct IP&amp;quot; where you just push packets over the serial link.&lt;/p&gt;
+&lt;p&gt;Just to complicate things a touch more, there are vendor-specific standards like
+QMI (Qualcomm) that completely replace AT and find use in modern smartphones, but
+they're messy with regards to Linux support. If you are personally interacting
+at this layer, messing with modems or writing communications software or
+whatever, you are almost certainly going to stick to AT commands. Modem vendors
+continue to build on AT. If you look at LTE modems made for IoT applications,
+for example, it's common for them to provide a complete HTTP implementation (and
+sometimes MQTT, and sometimes some kind of proprietary message broker protocol)
+accessible via AT commands. That means you can implement an IoT device without a
+network stack at all, deferring all network operations to the modem itself. With
+a JSON-over-HTTP backend, for example, you might send AT commands with JSON
+payloads over the serial control channel and then get JSON back. You never
+interact with the network at all, the modem is a completely self-contained
+system. At the extreme, you might implement your entire device using exclusively
+the modem. This is a common approach for telematics devices like GPS trackers:
+they consist of nothing &lt;em&gt;but&lt;/em&gt; a cellular modem, the telemetry application is
+built for the modem using an SDK from its vendor, and you interact with it using
+AT commands. IoT-class modems frequently provide GPIO and user flash for just
+this purpose.&lt;/p&gt;
+&lt;p&gt;None of that is actually what this article is about, but I want to make clear
+how profound the implications of the Smartmodem heritage are. In 1981, the
+Smartmodem was a standalone device controlled over serial because the
+limitations of the era's computer made that a practical necessity. Processors
+weren't fast enough to run the modem DSP alongside other workloads,
+certification requirements for telephone-connected devices were stricter, etc.
+Despite the late-'90s detour into &amp;quot;winmodems,&amp;quot; most of those constraints still
+exist, just in the different forms of the cellular network. Today's modems are
+less v.54 and more 5G, but they still act as standalone devices controlled over
+serial channels.&lt;/p&gt;
+&lt;p&gt;Most telephone modems of the 1980s were exclusively data modems. You could use
+AT commands to make a call, switch into data mode, and then you basically had a
+very long serial cable from your device to the computer on the other end of the
+call. That was all these modems did; their only interaction with &amp;quot;The Telephone
+System&amp;quot; besides as a pair of wires was for basic call control like detecting
+dial tone and sending DTMF dialing. That was quite natural considering their
+evolution from acoustic coupler modems (where you dialed the phone yourself and
+then set the handset on the modem), but by the late '80s, as devices like the
+Smartmodem with their own call control were common, it started to feel
+primitive. With Carterfone and the breakup of the AT&amp;amp;T monopoly, computers were
+starting to feel like first-class citizens on the telephone system. Shouldn't
+they have more complete support for, well, telephone things?&lt;/p&gt;
+&lt;p&gt;From a modern perspective, it might seem odd that fax came to modems before
+voice, but it makes technical sense. Fax machines use a digital protocol that
+is loosely derived from Bell 103 and belongs to the same extended family as
+other telephone modems, so modems already had the hardware. Implementing
+fax support was just a matter of software. With some extensions to the AT
+command set, your computer became a fax machine. By the late 1980s, fax support
+was common in modems, usually distinguished by marketing the modem as
+&amp;quot;data/fax.&amp;quot;&lt;/p&gt;
+&lt;p&gt;For example, the command AT+FCLASS=1.0 changed the modem to T.31 fax mode (fax
+class 1.0). T.31/EIA-578 is a standard for sending and receiving faxes using a
+serial connection to a telephone modem, and it was widely implemented by
+commercial software packages. There were so many &amp;quot;PC fax&amp;quot; packages available in
+the 1990s that you could stock half an aisle of an OfficeMax with them, and
+indeed that's what happened. The legacy of this industry is that there are still
+dozens of &amp;quot;fax server&amp;quot; products built around data/fax modems, like the open
+source Hylafax.&lt;/p&gt;
+&lt;p&gt;Fax modems also made a more general contribution to the modem state of the art:
+the concept of distinct modes. &amp;quot;Fax class 0&amp;quot; was data mode, while values like
+1 and 2 and, oddly, 1.0 and 2.0 were used for different fax implementations.
+There was an obvious, and tantalizing, opportunity: more modes. Maybe, even, a
+modem mode for that most classic application of the telephone: voice. Could you
+use your computer for &lt;em&gt;telephone calls?&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;The idea is obvious, so it's no surprise that several vendors were working on it
+all at once. Early efforts at telephone-on-computer could be quite comical,
+consisting of a telephone that was more or less glued to a computer, no
+electrical connectivity between them. The IBM Palm Top PC 110 is my favorite
+example of this form, a Japanese-market miniature laptop with a speaker and
+microphone on the front edge so that you could hold it up to your face to make a
+call. Besides amusement, it illustrates a fundamental challenge of merging
+computers with telephony: real-time media is hard.&lt;/p&gt;
+&lt;p&gt;It seems very funny to build a telephone into a computer because computers are
+general-purpose devices defined by software. Putting a phone in the computer
+should not mean &lt;em&gt;physically&lt;/em&gt; putting a phone in the computer; the phone should
+obviously be a software application. Well, obviously from our modern perspective,
+but real-time media has always been difficult for computers (which, for
+architectural reasons, are mostly seen today as fundamentally asynchronous,
+non-real-time devices). Modern computers get away with it by brute force;
+they're just so fast that they can be wildly inefficient with media and still
+keep up to real-time. But things were different in the 1990s. Real-time audio
+processing was a fairly demanding application and most of the computer industry
+preferred to leave it to hardware.&lt;/p&gt;
+&lt;p&gt;Still, the voice modem was an inevitability. In 1991, the &lt;em&gt;Los Angeles Times&lt;/em&gt;
+reported that at least three companies were working on some form of &amp;quot;modem with
+voice support&amp;quot; for 1992. They focused mainly on Rockwell International, which
+proved the right call. We don't remember Rockwell as a semiconductor company
+today, but in the 1990s they very much were—Rockwell Semiconductor later spun
+out into Conexant, now part of Synaptics. At the time, Rockwell was a major
+player in semiconductors, especially for communications.&lt;/p&gt;
+&lt;p&gt;Rockwell had particular expertise in answering telephones. During the 1970s,
+the Rockwell Galaxy Automatic Call Distributor just about invented the modern
+call center. It was the first digitally-controlled system that answered calls
+on a pool of telephone lines, placed them on hold, and distributed them to a
+pool of operators. The flexibility and efficiency of Rockwell's computer-controlled
+system, which was specifically designed to cut costs by presenting calls to
+operators as rapidly as possible, displaced AT&amp;amp;T's contact center systems (like
+turrets) and Rockwell had almost complete dominance in the new world of 1-800
+customer call centers during the 1980s.&lt;/p&gt;
+&lt;p&gt;Rockwell did not manufacture complete modems, but instead chipsets that were
+integrated into modems by other manufacturers. That makes it a little tricky to
+figure out the first model that Rockwell shipped with voice support, but it was
+sometime in 1992. Rockwell's chips quickly lead to a generation of
+&amp;quot;data/fax/voice&amp;quot; modems from all the usual manufacturers. Despite competition
+from other chipset vendors like Cirrus, Rockwell's voice modems became the Hayes
+of voice. By the mid-'90s, data/fax/voice modems were widespread and the
+majority either used a Rockwell chipset or a chipset that matched Rockwell's
+control protocol.&lt;/p&gt;
+&lt;p&gt;Let's talk a bit about that protocol, and how voice modems actually worked.
+Although the v.250 standard for many AT commands was in place, there was no
+standard for voice control. To oversimplify a bit, the &amp;quot;core&amp;quot; AT commands are
+generally AT followed by one or two letters. &amp;quot;AT+&amp;quot; came to be used as a prefix
+for standardized &amp;quot;extension&amp;quot; commands, like those added for fax support.
+Manufacturer-specific extension commands used AT followed by some other
+character, and Rockwell chose AT#.&lt;/p&gt;
+&lt;p&gt;To start, voice mode was presented as just another case of fax classes.
+Specifically, Rockwell voice mode is fax class 8, so to put a modem into voice
+mode you sent AT#CLS=8 (it seems like the properly standardized AT+FCLASS=8
+also worked on many later chipsets, but I'm not sure about the early examples)
+to enter Fax Class 8. In most cases, you will also want to use the commands
+AT+VLS=?, which retrieves the modem's voice feature support, and AT+VSM=?,
+which returns the list of audio codecs supported by the modem.&lt;/p&gt;
+&lt;p&gt;Once in voice mode, you can use a set of voice-specific AT# commands to dial an
+outgoing call or answer an incoming one. The modem provides messages about call
+state, so once the call is up, you can issue the command AT#VTX to begin
+transmitting voice. This puts the modem into a mode much like a data or fax
+connection, in which everything sent over the serial connection is interpreted
+as audio data to be played onto the telephone line.&lt;/p&gt;
+&lt;p&gt;This gets into one of the ugly details of voice modems. Early voice modems had
+no audio connection to the computer, only serial, so audio data had to be sent
+over the serial connection. In keeping with telephony conventions, 8-bit PCM
+was widely supported, but practically required a fast 115200 baud serial
+connection. That's basically the limit for RS-232 and it was desirable to
+provide lower-bandwidth options, which mostly appeared as a proprietary form of
+ADPCM (adaptive differential PCM).&lt;/p&gt;
+&lt;p&gt;During transmission of voice data, the modem would indicate events ranging from
+hang-up to received DTMF digits using escape codes prefixed with DLE (ASCII
+0x10). Similarly, the computer could send the modem an escape code to indicate
+the end of voice data. Things worked much the same in reverse: AT#VRX put the
+modem in recording mode, and the modem sent audio data back to the computer over
+the same serial connection. The computer would use an escape code to stop
+recording, and could also receive a number of escape codes indicating various
+state changes from the modem during recording.&lt;/p&gt;
+&lt;p&gt;The design of voice modems is pretty simple, just about the minimum viable
+product for sending and receiving voice data over a conventional telephone
+modem, and that's probably why it stayed. Voice support appeared in most
+Rockwell chipsets by 1995, and many other chipsets had a similar (but often not
+completely compatible) proprietary voice command set. Still, due to what I
+suspect may have been some ugly industry politics, it was not until 1998 that
+voice modem behavior was standardized by V.253. V.253 voice modem commands are
+mostly the same as the Rockwell proprietary scheme, but using the AT+ prefix.
+For example, AT+VRX and AT#VRX do the same thing in the V.253 and Rockwell
+command sets respectively, and in practice many post-V.253 modems seem to have
+just recognized both.&lt;/p&gt;
+&lt;p&gt;I suspect that Rockwell's interest in voice modems has some direct heritage to
+their contact center solutions, because the Rockwell voice command set provides
+more or less exactly what you need to build a computer-based interactive voice
+response (IVR) system... IVRs being a concept that Rockwell could fairly claim
+to have invented. And indeed, that was one of the main applications.&lt;/p&gt;
+&lt;p&gt;The voice modem almost immediately spawned a whole little industry of PC-based
+small office IVRs. As The Internet came into popularity, many businesses would
+already have a computer modem connected to their phone line for internet use,
+so why not let the computer answer the phone as well? Widespread addition of
+voice support to otherwise ordinary modems meant that some people already owned
+all the hardware necessary for an automatic attendant, and for those that didn't
+the cost of telephone modems (with voice support!) was crashing in the mid '90s.&lt;/p&gt;
+&lt;p&gt;The Internet Archive has preserved two such products from the early days of
+voice modems, Super Voice 2.0 from 1994 and Phone Secretary v1.01 of the same
+year. Phone Secretary (by Unique Software) has become quite obscure, and while
+there is still a company called Unique Software in the telephony market, I think
+they might be unrelated. Super Voice, on the other hand, made it to SuperVoice
+Pro 11 in 2016 and you can still buy a license today for just $99. Both of
+these products, and many more like them, had features like multi-mailbox
+voicemail and menu trees that used to require far more expensive equipment.
+Much of the original marketing for these products emphasizes the &amp;quot;Big Business&amp;quot;
+feeling of a phone tree, and Super Voice's description still says &amp;quot;Ideal for
+individuals, professionals and businesses that want to grow or appear bigger!&amp;quot;&lt;/p&gt;
+&lt;p&gt;Given how much people hate phone menus today, it's funny to think of them as a
+feature for your business's reputation, but small businesses are often trying to
+appear larger and having a menu of departments behind your single inbound phone
+line was a great way to do it. Besides, plain digital answering machines were
+very new in the '90s, so PC-based solutions promised more features at a similar
+price.&lt;/p&gt;
+&lt;p&gt;Voice modems got a big boost in 1996, when Microsoft introduced the Voice Modem
+Extensions for Windows 95. That package extended Windows Telephony API (TAPI)
+with standardized support for voice modems. TAPI fully abstracted voice modems,
+which proved surprisingly complex and quite important. While most all voice
+modems used either the Rockwell commands or a very similar protocol, the actual
+details of audio handling were surprisingly varied. Poor handling of audio by
+the computers of the era meant that a lot of external voice modems had their
+own headset and microphone connections, and sometimes built-in speakerphone, for
+voice use.&lt;/p&gt;
+&lt;p&gt;External modems almost universally used a single RS-232 interface that switched
+in and out of audio data mode, as described previously, but by 1996, internal
+(ISA or PCI) modems were starting to use a separate UART channel for payload,
+including audio codec data &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;. Even better, some manufacturers of internal
+modems were starting to integrate them with audio cards on a single expansion
+board. This allowed the modem to &amp;quot;cheat&amp;quot; off of the sound card's ADC and DAC
+components, and the OS's audio stack, reducing hardware cost with the downside
+that TAPI had to support a bunch of different cases for how the control and
+audio channels related to each other, and whether the audio channel was
+&amp;quot;Rockwell style&amp;quot; or &amp;quot;Soundblaster style.&amp;quot; And note well that V.253 wasn't yet
+published, so while most voice modems were at least Rockwell-adjacent there were
+considerable inconsistencies from chipset to chipset when it came to the fine
+details of escape codes and behavior. A lot of software for voice modems from
+the era have noncommittal language about supporting &amp;quot;most&amp;quot; voice modems, and
+from 1996 forward that usually meant that they supported whatever voice modems
+Microsoft had special-cased in TAPI.&lt;/p&gt;
+&lt;p&gt;The latter type, of integrated modem/sound cards, is particularly important as
+the Creative Phone Blaster and Creative Modem Blaster were popular examples of
+consumer data/fax/voice modems. They were indeed Sound Blasters with modems
+added on, usually just stereo audio out, mono in, and a telephone jack. I am not
+clear on the difference between the Phone Blaster and Modem Blaster product
+lines, and I think those might just be older and newer names (respectively) for
+the same lineup. They are not special, lots of manufacturers had similar
+products, but they are good examples of just how strange consumer voice modems
+became.&lt;/p&gt;
+&lt;p&gt;The appeal of the voice modem to businesses is pretty obvious, since they were a
+far lower cost option for business phone systems. Unlike many telephony
+products, though, computer modems of the 1990s had little differentiation
+between consumer and business or &amp;quot;enterprise&amp;quot; products. Many large modem banks
+ran on the exact same modem chipsets as consumers used for dial-up connections,
+sometimes packaged in rack-mount modem banks but sometimes just as a whole lot
+of external modems taped to shelves. That meant that consumer modems tended to
+have the feature of business systems, including the infrastructure for an IVR
+system.&lt;/p&gt;
+&lt;div class="beg"&gt;
+&lt;hr /&gt;
+&lt;p&gt;I put a lot of time into writing this, and I hope that you enjoy reading
+it. If you can spare a few dollars, consider &lt;a href="https://ko-fi.com/jbcrawford"&gt;supporting me on
+ko-fi&lt;/a&gt;. You'll receive an occasional extra,
+subscribers-only post, and defray the costs of providing artisanal, hand-built
+world wide web directly from Albuquerque, New Mexico.&lt;/p&gt;
+&lt;hr /&gt;
+&lt;/div&gt;
+&lt;p&gt;The way that this manifested in commerce was... odd. Take the Creative Modem
+Blaster DI5660, described on the box as a &amp;quot;56kbps internal data fax modem with
+voice.&amp;quot; While not exactly bargain basement, this also wasn't special, it was a
+pretty standard modem for the late '90s and received revisions until at least
+2000. In the manual, after some mind-numbing complexity around integration with
+other sound cards &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;, and the customary 20 pages of screenshots of the driver
+installer, the manual gives a feature matrix that promises:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Able to record and play voice messages over the telephone line.&lt;/p&gt;
+&lt;p&gt;Multiple mailboxes using included communications software.&lt;/p&gt;
+&lt;p&gt;High performance speakerphone.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;So, the Creative Modem Blaster is not just a modem. It's not just a sound card.
+It's an &lt;em&gt;answering machine.&lt;/em&gt; Wow! Nothing else is said about voice features.
+The install CD includes Cheyenne Bitware for sending and receiving faxes, but
+I'm not sure that this modem even had voicemail software on the CD. Earlier
+Creative modems do seem to have shipped with a software voicemail
+implementation, but only a very simple one integrated into the driver. The
+short AT command reference on the CD doesn't mention the voice-related commands
+at all, and at no point in the documentation is anything about IVRs or business
+applications mentioned.&lt;/p&gt;
+&lt;p&gt;This situation is really common with consumer modems. Find the manuals or driver
+CDs from 1990s modems (the Internet Archive has tons). Flip through them, and
+you will often find mention of multi-box voicemail as a feature and then
+absolutely nothing else about voice capability. &amp;quot;Answering machine&amp;quot; was the
+exclusive consumer application to such an extent that some of the manufacturers,
+including Creative, seem to have adopted the terms &amp;quot;voice mail modem&amp;quot; or
+&amp;quot;message modem&amp;quot; as replacements for &amp;quot;voice modem.&amp;quot;&lt;/p&gt;
+&lt;p&gt;This narrowing of vision doesn't reflect any technical limitation; these modems
+all supported the full Rockwell (and later V.253) standards. You can find them
+on compatibility lists for business IVR packages, for example. Instead, it
+looks like voice mail was just the only consumer application anyone could come
+up with. The rest of the potential of the voice modem, for complete custom
+applications, was complicated and difficult to support, so it was easier to
+just not bring it up.&lt;/p&gt;
+&lt;p&gt;This is a general problem with more advanced features in modems. Telephone
+modems for internet access had all these downsides, like hogging a phone line
+that they arguably still did not fully utilize, that manufacturers kept trying
+to solve. Consumers, on the other hand, seem to have simply not cared. Computers
+of the 1990s were relatively big, loud, costly, and unstable, so people didn't
+tend to leave them running 24/7. That severely cut into the practicality of a
+modem-based voicemail package, especially for consumers, for whom the value of a
+more sophisticated inbound calling experience didn't justify much extra computer
+maintenance.&lt;/p&gt;
+&lt;p&gt;Other inroads towards unified telephone/modem features met similar adoption
+challenges. Consider &amp;quot;modem-on-hold,&amp;quot; a common feature of late-'90s modems that
+allowed for answering incoming voice calls while the modem was in use. It seemed
+like it solved one of the #1 complaints about telephone modems, but in practice
+it was tricky enough to use that hardly anyone did. Efforts like ASVD and DSVD
+provided actual multiplexing of Simultaneous Voice and Data (SVD, in Analog
+and Digital forms), meaning you could talk on the phone and exchange data at the
+very same time, but hardly anyone did.&lt;/p&gt;
+&lt;p&gt;There are a few reasons these didn't succeed. One is compatibility; voice modems
+had a rough start with the long period between the Rockwell implementation and
+the actual V.253 standard, but at least most modems were fairly similar to
+Rockwell and the incompatibilities were isolated to the computer/modem interface
+where they were easier to handle. Protocols like SVD required support in the
+modems on both ends and were seldom compatible between vendors, which became an
+even bigger issue as independent BBSs gave way ISP modem banks (which were
+fundamentally incompatible with the concepts behind SVD).&lt;/p&gt;
+&lt;p&gt;More time might have solved the compatibility problems, but consumer telephone
+modems were also proving to be a dead end. ISDN did not sweep away the modem
+by 1995 as the telcos had expected, but a few years later DSL did. DSL could do
+simultaneous voice and data much more seamlessly than even the most
+sophisticated modem SVD implementations, and with more bandwidth for both
+channels to boot.&lt;/p&gt;
+&lt;p&gt;To the modern computer user, the idea that a common telephone modem would
+casually incorporate a voicemail system is silly. Despite the obvious technical
+overlap, those are very different domains of consumer products. The window in
+which it made sense to combine them was fairly short, and the practical
+realities of the Windows 95 and 98 era severely limited the promised
+convenience. At least in the consumer realms, voice modems went pretty much
+nowhere.&lt;/p&gt;
+&lt;p&gt;Still, it is a technology with remarkable staying power. For example, you might
+assume that the late-1990s reshaping of the modem industry around thin
+&amp;quot;winmodems&amp;quot; (that eliminated most hardware in favor of software on the host CPU)
+wiped out voice support, but it didn't. By moving most of the logic to host
+software, winmodems actually tended to make voice features simpler to implement.
+V.253 voice support was quite common on winmodems.&lt;/p&gt;
+&lt;p&gt;In fact, it's still common on modems today. Consider the StarTech USB 2.0 v.92
+modem, a very common choice for anyone in need of a telephone modem today.
+StarTech titles it as &amp;quot;Computer/Laptop Fax Modem&amp;quot; and &amp;quot;USB Data Modem,&amp;quot; never
+quite invoking the traditional Data/Fax/Voice, but if you look at the feature
+list you'll find: &amp;quot;VOICE AND CALLER ID SUPPORT: Make and receive phone calls
+through your desktop / laptop computer.&amp;quot; Despite the callout in the feature
+list, the spec sheet makes no mention of any voice command set. It does tell
+us that the modem is built around a Conexant CX93010-21Z (recall that Conexant
+is the descendant of Rockwell), and the Conexant reference manual for that
+chipset describes a voice command set that is &amp;quot;based on V.253.&amp;quot;&lt;/p&gt;
+&lt;p&gt;This gets at one of the other fatal flaws of the voice modem. It's peculiar that
+a modem manual would specifically claim voice support and then list all of the
+supported data and fax modes, but not list any voice modes at all. Every single
+modem I've found after the mid-1990s is like this: they tell you that they have
+voice support, but absolutely nothing about it. You walk away with no idea how
+you would use a voice modem, or what a &amp;quot;voice modem&amp;quot; even is, outside of the one
+feature that the manufacturer &lt;em&gt;may&lt;/em&gt; have deemed fit to ship on the CD, which is
+invariably voicemail.&lt;/p&gt;
+&lt;p&gt;I think this is the manifestation of an underlying problem: the compatibility
+and standardization problems with voice modems go beyond the fact that it took
+six years for Rockwell's command set to turn into an ITU standard. It doesn't
+appear that voice modems were ever that well standardized. Despite the wide
+range of voice-compatible modems on the '90s market, and the wide range of
+software for using them, most all of those software packages come with a manual
+full of warnings, caveats, limitations, and workarounds. Despite V.253,
+different manufacturers had different opinions about the meanings of escape
+codes. Several common chipsets had outright bugs, which applications had to
+work around. As we found today, it was often the case that understanding voice
+modem compatibility required identifying the underlying chipset and getting the
+manufacturer's command set reference manual.&lt;/p&gt;
+&lt;p&gt;Modem manufacturers, the end-user brands, seldom made their own chipsets. They
+were at the mercy of companies like Conexant, who seemed uninterested in further
+evolution of voice features. No wonder that they found it easier to just not
+talk about it.&lt;/p&gt;
+&lt;p&gt;For how little it ultimately mattered, voice modems got a surprising amount of
+technical investment from the software world. I suppose that in a world before
+widespread DSL and VoIP, they seemed like a solution to two problems: the
+disconnect between computer and telephone operation on the phone line, and the
+desire to use computers to automate telephone call handling. In 1997, reviewer
+Mark Spiwak wrote for &lt;em&gt;Windows Magazine:&lt;/em&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Thanks to the Hayes Accura 288 Internal Fax Modem with Voice, small offices
+seem large to outside callers. This single expansion card from a trusted modem
+manufacturer equips a PC with a fast modem and fax capabilities, and provides
+speakerphone and voice-mail functions. The modem distinguishes among incoming
+voice, data and fax calls, and routes them accordingly. With the modem's
+speaker, you don't need a sound card (although it will work with one, and a
+cable is included). There's also a microphone in the box.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;There are ups and downs in this review. First, consider the degree of complexity
+hidden in the modem &amp;quot;distinguishing&amp;quot; voice, data, and fax calls. That's a
+longstanding hard problem in telephony that engendered a lot of hacky solutions.
+I think that what Hayes is referring to here is actually more of a Windows/TAPI
+feature than a modem feature; as part of TAPI Microsoft shipped something called
+the Microsoft Operator Agent that would answer phone calls on a voice-capable
+modem, detect modem tones or prompt the user to select a call mode as an IVR
+menu, and then invoke the specified application to handle the rest of the call.
+There was a whole generalized, registry-based routing mechanism to allow
+multiple applications to accept phone calls based on caller intent. It feels
+like a rather sophisticated piece of operating system functionality to have
+almost completely withered away.&lt;/p&gt;
+&lt;p&gt;On the other hand, there's &amp;quot;a microphone in the box&amp;quot; and the promise that the
+modem &lt;em&gt;will&lt;/em&gt; work with a sound card even if one isn't required. These are hints
+at the kind of complexity that a typical consumer would have found fairly
+impenetrable, the ugly tradeoffs involved in running a real-time media
+application on a Pentium system that would use AC'97 audio if you were lucky.&lt;/p&gt;
+&lt;p&gt;During the early '00s, Microsoft invested in fax as an OS feature in Windows,
+although I don't think it ever received that much use. It was already too late
+for voice modems, though, and Windows support for voice modems (and TAPI)
+generally declined after XP. On the Windows Server side, NT4's TAPI could
+provide a fairly complete IVR system with Windows alone, but the potential of
+COM-based TAPI business phone systems got wrapped up in Microsoft's Unified
+Communications craze and then died along with it.&lt;/p&gt;
+&lt;p&gt;Voice modems surely lasted longer in business applications, particularly since
+a number of business products like PABXs actually implemented V.253 as a bridge
+for TAPI applications. Quite a few voice-modem-based IVR products are still
+for sale, suggesting that they have enduring users. Of course, the more
+actively developed of them now all offer VoIP capabilities as well. Practically
+speaking, SIP has completely replaced the role of the voice modem, and it says
+something about voice modems that even with its many idiosyncrasies SIP is the
+simpler and better supported path.&lt;/p&gt;
+&lt;p&gt;And now, we come back to our modern era. In the course of researching voice
+modems, I ran into a 2017 blog post, &lt;a href="https://laforge.gnumonks.org/blog/20170902-cellular_modems-voice/"&gt;The sad state of voice support in cellular
+modems&lt;/a&gt;. The
+author, Harald Welte, laments that USB-attached modems do not present a USB
+audio device, but &amp;quot;instead, what some modem vendors have implemented as an ugly
+hack is the transport of 8kHz 16bit PCM samples over one of the UARTs.&amp;quot;&lt;/p&gt;
+&lt;p&gt;In the full light of history, we realize that what Welte describes as an &amp;quot;ugly
+hack&amp;quot; is, in fact, exactly the way it has always worked. In 1981, Hayes
+introduced the Smartmodem, a standalone device that abstracted every part of
+telephony into a serial channel and a simple command format. In 1992, Rockwell
+made the modem speak, by putting PCM audio over that same serial channel. In
+2017, very little had changed—Welte's post has aged poorly only in that many
+modern phones have the modem more fully integrated into the SOC and use a
+completely proprietary interface instead of the traditional serial channel.&lt;/p&gt;
+&lt;p&gt;Of course, that's for smartphone manufacturers, who have the extensive
+engineering department and the close relationship with their chipmakers to
+implement such proprietary interfaces. For the rest of us, with our USB modems
+(now universally USB, even when packaged in m.2 form), the modem is still a
+black box with a serial port. The computer does not participate in a phone call,
+that's the modem's job. If you want to say something, you better PCM encode it
+and send it to the TTY.&lt;/p&gt;
+&lt;div class="footnotes"&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;It is very common to refer to this component of a smartphone, the actual
+RF and cellular implementation, as the &amp;quot;baseband.&amp;quot; Baseband is an overloaded
+term in telephony and the connection between the word's original meaning and its
+use to refer to a smartphone component is so indirect as to verge on rhyming
+slang, so I will simply call it the &amp;quot;cellular modem&amp;quot; for clarity.&lt;a href="#fnref-1" class="footnote"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;&lt;/li&gt;
+&lt;li id="fn-2"&gt;
+&lt;p&gt;Mixing arbitrary communications data (the bearer channel) with control
+commands on a single serial channel created a heap of problems around escaping
+and mode switching that were never fully resolved. Consider, for example, that
+Rockwell modems used ASCII DLE as an escape character despite the fact that the
+0x10 byte could, and would, appear in PCM audio data. That meant that any
+instance of 0x10 in the audio data had to be replaced with 0x1010 (DLE escaping
+itself to produce a literal DLE), at the cost of some bandwidth overhead and
+implementation complexity. And that's simple and elegant compared to how the
+same problem was handled for data mode, with the infamous &amp;quot;+++&amp;quot; sequence. The
+result was that modem manufacturers started separating the bearer and control
+channels into two different UARTs as soon as it became feasible. I will save
+more depth on this for a future post but modern LTE modems, depending on
+configuration (and this is indeed configurable), may present as many as 7
+separate UARTs for different purposes. You only &lt;em&gt;need&lt;/em&gt; one of them, but using
+separate UARTs instead of switching modes on the primary one saves a whole lot
+of headache.&lt;a href="#fnref-2" class="footnote"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;&lt;/li&gt;
+&lt;li id="fn-3"&gt;
+&lt;p&gt;Some sound cards in this era had a connector for a jumper wire to a
+telephone modem, so that the sound card could exchange audio with the modem.
+That allowed you to set up the same logical architecture as integrated modem/
+sound cards, but with two different cards. It's amusing that Creative provided
+such a connector with an integrated modem/sound card, but they explain that you
+might want to use it so that you can use your computer as a speaker phone
+without having to have a &lt;em&gt;second set of speakers&lt;/em&gt; plugged into the Modem
+Blaster. Yes, in practice, things got pretty ugly. You could come up with an
+elegant setup but it would take some doing.&lt;a href="#fnref-3" class="footnote"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+  </description>
+      <guid isPermaLink="true">https://computer.rip/2026-04-26-voice-modems.html</guid>
+      <pubDate>Sun, 26 Apr 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>IrDA</title>
       <link>https://computer.rip/2026-04-11-IrDA.html</link>
@@ -4601,373 +5123,6 @@ failed to produce clear evidence that binaural beats do anything.&lt;a href="#fn
   </description>
       <guid isPermaLink="true">https://computer.rip/2025-12-08-speed-reading.html</guid>
       <pubDate>Mon, 08 Dec 2025 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>RuBee</title>
-      <link>https://computer.rip/2025-11-22-RuBee.html</link>
-      <description>  &lt;p&gt;I have at least a few readers for which the sound of a man's voice saying
-&amp;quot;government cell phone detected&amp;quot; will elicit a palpable reaction. In
-Department of Energy facilities across the country, incidences of employees
-accidentally carrying phones into secure areas are reduced through a sort of
-automated nagging. A device at the door monitors for the presence of a tag;
-when the tag is detected it plays an audio clip. Because this is the government,
-the device in question is highly specialized, fantastically expensive, and
-says &amp;quot;government cell phone&amp;quot; even though most of the phones in question are
-personal devices. Look, they already did the recording, they're not changing
-it now!&lt;/p&gt;
-&lt;p&gt;One of the things that I love is weird little wireless networks. Long ago I
-wrote about &lt;a href="https://computer.rip/2023-01-02-ANT-plus-is-PAN-for-ants.html"&gt;ANT+&lt;/a&gt;,
-for example, a failed personal area network standard designed mostly around
-fitness applications. There's tons of these, and they have a lot of
-similarities---so it's fun to think about the protocols that went down a
-completely different path. It's even better, of course, if the protocol is
-obscure outside of an important niche. And a terrible website, too? What more
-could I ask for.&lt;/p&gt;
-&lt;p&gt;The DoE's cell-phone nagging boxes, and an array of related but more critical
-applications, rely on an unusual personal area networking protocol called RuBee.&lt;/p&gt;
-&lt;p&gt;RuBee is a product of Visible Assets Inc., or VAI, founded in 2004 &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt; by John K.
-Stevens. Stevens seems a somewhat improbable founder, with a background in
-biophysics and eye health, but he's a repeat entrepreneur. He's particularly fond of companies
-called Visible: he founded Visible Assets after his successful tenure as CEO of
-Visible Genetics. Visible Genetics was an early innovator in DNA sequencing, and
-still provides a specialty laboratory service that sequences samples of HIV in
-order to detect vulnerabilities to antiretroviral medications.&lt;/p&gt;
-&lt;p&gt;Clinical trials in the early 2000s exposed Visible Genetics to one of the more
-frustrating parts of health care logistics: refrigeration. Samples being shipped
-to the lab and reagents shipped out to clinics were both temperature sensitive.
-Providers had to verify that these materials had stayed adequately cold throughout
-shipping and handling, otherwise laboratory results could be invalid or incorrect.
-Stevens became interested in technical solutions to these problems; he wanted
-some way to verify that samples were at acceptable temperatures both in storage
-and in transit.&lt;/p&gt;
-&lt;p&gt;Moreover, Stevens imagined that these sensors would be in continuous communication.
-There's a lot of overlap between this application and personal area networks (PANs),
-protocols like Bluetooth that provide low-power communications over short ranges.
-There is also clear overlap with RFID; you can buy RFID temperature sensors.
-VAI, though, coined the term &lt;em&gt;visibility network&lt;/em&gt; to describe RuBee. That's
-visibility as in asset visibility: somewhat different from Bluetooth or RFID,
-RuBee as a protocol is explicitly designed for situations where you need to
-&amp;quot;keep tabs&amp;quot; on a number of different objects. Despite the overlap with other
-types of wireless communications, the set of requirements on a visibility network
-have led RuBee down a very different technical path.&lt;/p&gt;
-&lt;p&gt;Visibility networks have to be highly reliable. When you are trying to keep
-track of an asset, a failure to communicate with it represents a fundamental
-failure of the system. For visibility networks, the ability to actually convey
-a payload is secondary: the main function is just reliably detecting that
-endpoints exist. Visibility networks have this in common with RFID, and indeed,
-despite its similarities to technologies like BLE RuBee is positioned mostly as
-a competitor to technologies like UHF RFID.&lt;/p&gt;
-&lt;p&gt;There are several differences between RuBee and RFID; for example, RuBee uses
-active (battery-powered) tags and the tags are generally powered by a complete
-4-bit microcontroller. That doesn't necessarily sound like an advantage, though.
-While RuBee tags advertise a battery life of &amp;quot;5-25 years&amp;quot;, the need for a battery seems
-mostly like a liability. The real feature is what active tags enable: RuBee
-operates in the low frequency (LF) band, typically at 131 kHz.&lt;/p&gt;
-&lt;p&gt;At that low frequency, the wavelength is very long, about 2.5 km. With such a
-long wavelength, RuBee communications all happen at much less than one wavelength
-in range. RF engineers refer to this as near-field operation, and it has some
-properties that are intriguingly different from more typical far-field RF
-communications. In the near-field, the magnetic field created by the antenna is
-more significant than the electrical field. RuBee devices are intentionally
-designed to emit very little electrical RF signal. Communications within a RuBee network are
-achieved through magnetic, not electrical fields. That's the core of RuBee's magic.&lt;/p&gt;
-&lt;p&gt;The idea of magnetic coupling is not unique to RuBee. Speaking of the near-field,
-there's an obvious comparison to NFC which works much the same way. The main difference,
-besides the very different logical protocols, is that NFC operates at 13.56 MHz.
-At this higher frequency, the wavelength is only around 20 meters. The requirement
-that near-field devices be much closer than a full wavelength leads naturally to
-NFC's very short range, typically specified as 4 cm.&lt;/p&gt;
-&lt;p&gt;At LF frequencies, RuBee can achieve magnetic coupling at ranges up to about 30
-meters. That's a range comparable to, and often much better than, RFID inventory
-tracking technologies. Improved range isn't RuBee's only benefit over RFID. The
-properties of magnetic fields also make it a more robust protocol. RuBee promises
-significantly less vulnerability to shielding by metal or water than RFID.&lt;/p&gt;
-&lt;p&gt;There are two key scenarios where this comes up: the first is equipment stored in
-metal containers or on metal shelves, or equipment that is itself metallic. In
-that scenario, it's difficult to find a location for an RFID tag that won't suffer
-from shielding by the container. The case of water might seem less important, but
-keep in mind that people are made mostly of water. RFID reading is often unreliable
-for objects carried on a person, which are likely to be shielded from the reader
-by the water content of the body.&lt;/p&gt;
-&lt;p&gt;These problems are not just theoretical. WalMart is a major adopter of RFID inventory
-technology, and in early rollouts struggled with low successful read rates. Metal,
-moisture (including damp cardboard boxes), antenna orientation, and multipath/interference
-effects could cause read failure rates as high as 33% when scanning a pallet of goods.
-Low read rates are mostly addressed by using RFID &amp;quot;portals&amp;quot; with multiple antennas.
-Eight antennas used as an array greatly increase read rate, but at a cost of over
-ten thousand dollars per portal system. Even so, WalMart seems to now target a
-success rate of only 95% during bulk scanning.&lt;/p&gt;
-&lt;p&gt;95% might sound pretty good, but there are a lot of visibility applications where
-a failure rate of even a couple percent is unacceptable. These mostly go by the
-euphemism &amp;quot;high value goods,&amp;quot; which depending on your career trajectory you may
-have encountered in corporate expense and property policies. High-value goods
-tend to be items that are both attractive to theft and where theft has particularly
-severe consequences. Classically, firearms and explosives. Throw in classified
-material for good measure.&lt;/p&gt;
-&lt;p&gt;I wonder if Stevens was surprised by RuBee's market trajectory. He came out of
-the healthcare industry and, it seems, originally developed RuBee for cold
-chain visibility... but, at least in retrospect, it's quite obvious that its
-most compelling application is in the armory.&lt;/p&gt;
-&lt;p&gt;Because RuBee tags are small and largely immune to shielding by metals, you
-can embed them directly in the frames of firearms, or as an aftermarket
-modification you can mill out some space under the grip. RuBee tags in
-weapons will read reliably when they are stored in metal cases or on
-metal shelving, as is often the case. They will even read reliably when a
-weapon is carried holstered, close to a person's body.&lt;/p&gt;
-&lt;p&gt;Since RuBee tags incorporate an active microcontroller, there are even more
-possibilities. Temperature logging is one thing, but firearm-embedded RuBee
-tags can incorporate an accelerometer (NIST-traceable, VAI likes to emphasize)
-and actually count the rounds fired.&lt;/p&gt;
-&lt;hr /&gt;
-&lt;p&gt;Sidebar time: there is a long history of political hazard around &amp;quot;smart guns.&amp;quot;
-The term &amp;quot;smart gun&amp;quot; is mostly used more specifically for firearms that
-identify their user, for example by fingerprint authentication or detection of
-an RFID fob. The idea has become vague enough, though, that mention of a
-firearm with any type of RFID technology embedded would probably raise the
-specter of the smart gun to gun-rights advocates.&lt;/p&gt;
-&lt;p&gt;Further, devices embedded in firearms that count the number of
-rounds fired have been proposed for decades, if not a century, as a means of
-accountability. The holder of a weapon could, in theory, be required to
-positively account for every round fired. That could eliminate incidents of
-unreported use of force by police, for example. In practice I think this is
-less compelling than it sounds, simple counting of rounds leaves too many
-opportunities to fudge the numbers and conceal real-world use of a weapon as
-range training, for example.&lt;/p&gt;
-&lt;p&gt;That said, the NRA has long been vehemently opposed to the incorporation of any sort of
-technology into weapons that could potentially be used as a means of state
-control or regulation. The concern isn't completely unfounded; the state of
-New Jersey did, for a time, have legislation that would have made user-identifying
-&amp;quot;smart guns&amp;quot; mandatory if they were commercially available. The result of
-the NRA's strident lobbying is that no such gun has ever become commercially
-available; &amp;quot;smart guns&amp;quot; have been such a political third rail that any firearms
-manufacturer that dared to introduce one would probably face a boycott by most
-gun stores. For better or worse, a result of the NRA's powerful political
-advocacy in this area is that the concept of embedding security or accountability
-technology into weapons has never been seriously pursued in the US. Even a
-tentative step in that direction can produce a huge volume of critical press
-for everyone involved.&lt;/p&gt;
-&lt;p&gt;I bring this up because I think it explains some of why VAI seems a bit vague
-and cagey about the round-counting capabilities of their tags. They position it
-as purely a maintenance feature, allowing the armorer to keep accurate tabs on
-the preventative maintenance schedule for each individual weapon (in armory
-environments, firearm users are often expected to report how many rounds
-they fired for maintenance tracking reasons). The resistance of RuBee tags
-to concealment is only positioned as a deterrent to theft, although the idea
-of RuBee-tagged firearms creates obvious potential for security screening.
-Probably the most profitable option for VAI would be to promote RuBee-tagged
-firearms as tool for enforcement of gun control laws, but this is
-a political impossibility and bringing it up at all could cause significant
-reputational harm, especially with the government as a key customer. The result
-is marketing copy that is a bit odd, giving a set of capabilities that imply
-an application that is never mentioned.&lt;/p&gt;
-&lt;hr /&gt;
-&lt;p&gt;VAI found an incredible niche with their arms-tracking application. Institutional
-users of firearms, like the military, police, and security forces, are relatively
-price-insensitive and may have strict accounting requirements. By the mid-'00s,
-VAI was into the long sales cycle of proposing the technology to the military.
-That wasn't entirely unsuccessful. RuBee shot-counting weapon inventory tags were
-selected by the Naval Surface Warfare Center in 2010 for installation on SCAR
-and M4 rifles. That contract had a five-year term, it's unclear to me if it was
-renewed. Military contracting opened quite a few doors to VAI, though, and
-created a commercial opportunity that they eagerly pursued.&lt;/p&gt;
-&lt;p&gt;Perhaps most importantly, weapons applications required an impressive round of
-safety and compatibility testing. RuBee tags have the fairly unique distinction
-of military approval for direct attachment to ordnance, something called &amp;quot;zero
-separation distance&amp;quot; as the tags do not require a minimum separation from
-high explosives. Central to that certification are findings of intrinsic safety
-of the tags (that they do not contain enough energy to trigger explosives) and
-that the magnetic fields involved cannot convey enough energy to heat anything
-to dangerous temperatures.&lt;/p&gt;
-&lt;p&gt;That's not the only special certification that RuBee would acquire. The military
-has a lot of firearms, but military procurement is infamously slow and mercurial.
-Improved weapon accountability is, almost notoriously, not a priority for the
-US military which has often had stolen weapons go undetected until their later
-use in crime. The Navy's interest in RuBee does not seem to have translated to
-more widespread military applications.&lt;/p&gt;
-&lt;p&gt;Then you have police departments, probably the largest institutional owners of
-firearms and a very lucrative market for technology vendors. But here we run
-into the political hazard: the firearms lobby is very influential on police
-departments, as are police unions which generally oppose technical accountability
-measures. Besides, most police departments are fairly cash-poor and are not
-likely to make a major investment in a firearms inventory system.&lt;/p&gt;
-&lt;p&gt;That leaves us with institutional security forces. And there is one category
-of security force that are particularly well-funded, well-equipped, and
-beholden to highly R&amp;amp;D-driven, almost pedantic standards of performance:
-the protection forces of atomic energy facilities.&lt;/p&gt;
-&lt;p&gt;Protection forces at privately-operated atomic energy facilities, such as
-civilian nuclear power plants, are subject to licensing and scrutiny by the
-Nuclear Regulatory Commission. Things step up further at the many facilities
-operated by the National Nuclear Security Administration (NNSA). Protection
-forces for NNSA facilities are trained at the Department of Energy's National
-Training Center, at the former Manzano Base here in Albuquerque. Concern over
-adequate physical protection of NNSA facilities has lead Sandia National
-Laboratories to become one of the premier centers for R&amp;amp;D in physical security.
-Teams of scientists and engineers have applied sometimes comical scientific rigor to &amp;quot;guns,
-gates, and guards,&amp;quot; the traditional articulation of physical security in the
-nuclear world.&lt;/p&gt;
-&lt;p&gt;That scope includes the evaluation of new technology for the management of
-protection forces, which is why Oak Ridge National Laboratory launched an
-evaluation program for the RuBee tagging of firearms in their armory. The
-white paper on this evaluation is curiously undated, but citations &amp;quot;retrieved 2008&amp;quot;
-lead me to assume that the evaluation happened right around the middle of the
-'00s. At the time, VAI seems to have been involved in some ultimately unsuccessful
-partnership with Oracle, leading to the branding of the RuBee system as Oracle
-Dot-Tag Server. The term &amp;quot;Dot-Tag&amp;quot; never occurs outside of very limited materials
-around the Oracle partnership, so I'm not sure if it was Oracle branding for
-RuBee or just some passing lark. In any case, Oracle's involvement seems to have
-mainly just been the use of the Oracle database for tracking inventory data---which
-was naturally replaced by PostgreSQL at Oak Ridge.&lt;/p&gt;
-&lt;p&gt;The Oak Ridge trial apparently went well enough, and around the same time, the Pantex
-Plant in Texas launched an evaluation of RuBee for tracking classified tools.
-Classified tools are a tricky category, as they're often metallic and often stored
-in metallic cases. During the trial period, Pantex tagged a set of sample classified
-tools with RuBee tags and then transported them around the property, testing the
-ability of the RuBee controllers to reliably detect them entering and exiting areas of
-buildings. Simultaneously, Pantex evaluated the use of RuBee tags to track containers
-of &amp;quot;chemical products&amp;quot; through the manufacturing lifecycle. Both seem to have
-produced positive results.&lt;/p&gt;
-&lt;p&gt;There are quite a few interesting and strange aspects of the RuBee system, a
-result of its purpose-built Visibility Network nature. A RuBee controller can have
-multiple antennas that it cycles through. RuBee tags remain in a deep-sleep mode
-for power savings until they detect a RuBee carrier during their periodic wake
-cycle. When a carrier is detected, they fully wake and listen for traffic. A
-RuBee controller can send an interrogate message and any number of tags can respond,
-with an interesting and novel collision detection algorithm used to ensure
-reliable reading of a large number of tags.&lt;/p&gt;
-&lt;p&gt;The actual RuBee protocol is quite simple, and can also be referred to as IEEE 1902.1
-since the decision of VAI to put it through the standards process. Packets are
-small and contain basic addressing info, but they can also contain arbitrary payload in both directions,
-perfect for data loggers or sensors. RuBee tags are identified by something that VAI
-oddly refers to as an &amp;quot;IP address,&amp;quot; causing some confusion over whether or not VAI
-uses IP over 1902.1. They don't, I am confident saying after reading a whole lot of
-documents. RuBee tags, as standard, have three different 4-byte addresses. VAI refers
-to these as &amp;quot;IP, subnet, and MAC,&amp;quot; &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt; but these names are more like analogies.
-Really, the &amp;quot;IP address&amp;quot; and &amp;quot;subnet&amp;quot; are both configurable arbitrary addresses,
-with the former intended for unicast traffic and the latter for broadcast. For example,
-you would likely give each asset a unique IP address, and use subnet addresses for
-categories or item types. The subnet address allows a controller to interrogate for
-every item within that category at once. The MAC address is a fixed, non-configurable
-address derived from the tag's serial number. They're all written in the formats
-we associate with IP networks, dotted-quad notation, as a matter of convenience.&lt;/p&gt;
-&lt;p&gt;And that's about it as far as the protocol specification, besides of course the
-physical details which are a 131,072 Hz carrier, 1024 Hz data clock, either ASK
-or BPSK modulation. The specification also describes an interesting mode called
-&amp;quot;clip,&amp;quot; in which a set of multiple controllers interrogate in exact synchronization
-and all tags then reply in exact synchronization. Somewhat counter-intuitively,
-because of the ability of RuBee controllers to separate out multiple simultaneous
-tag transmissions using an anti-collision algorithm based on random phase shifts
-by each tag, this is ideal. It allows a room, say an armory, full of RuBee
-controllers to rapidly interrogate the entire contents of the room. I think this
-feature may have been added after the Oak Ridge trials...&lt;/p&gt;
-&lt;p&gt;RuBee is quite slow, typically 1,200 baud, so inventorying a large number of assets
-can take a while (Oak Ridge found that their system could only collect data on 2-7
-tags per second per controller). But it's so robust that it an achieve a 100% read
-rate in some very challenging scenarios. Evaluation by the DoE and the military
-produced impressive results. You can read, for example, of a military experiment in
-which a RuBee antenna embedded in a roadway reliably identified rifles secured in
-steel containers in passing Humvees.&lt;/p&gt;
-&lt;p&gt;Paradoxically, then, one of the benefits of RuBee in the military/defense context
-is that it is also &lt;em&gt;difficult&lt;/em&gt; to receive. Here is RuBee's most interesting trick:
-somewhat oversimplified, the strength of an electrical radio signal goes as 1/r,
-while the strength of a magnetic field goes as 1/r^3. RuBee equipment is optimized,
-by antenna design, to produce a minimal electrical field. The result is that RuBee
-tags can very reliably be contacted at short range (say, around ten feet), but are
-virtually impossible to contact or even detect at ranges over a few hundred feet.
-To the security-conscious buyer, this is a huge feature. RuBee tags are highly
-resistant to communications or electronic intelligence collection.&lt;/p&gt;
-&lt;p&gt;Consider the logical implications of tagging the military's rifles. With
-conventional RFID, range is limited by the size and sensitivity of the antenna.
-Particularly when tags are incidentally powered by a nearby reader, an adversary
-with good equipment can detect RFID tags at very long range. VAI heavily references
-a 2010 DEFCON presentation, for example, that demonstrated detection of RFID tags
-at a range of 80 miles. One imagines that opportunistic detection by satellite is feasible for
-a state intelligence agency. That means that your rifle asset tracking is also
-revealing the movements of soldiers in the field, or at least providing a way to
-detect their approach.&lt;/p&gt;
-&lt;p&gt;Most RuBee tags have their transmit power reduced by configuration, so even the
-maximum 100' range of the protocol is not achievable. VAI suggests that typical
-RuBee tags cannot be detected by radio direction finding equipment at ranges
-beyond 20', and that this range can be made shorter by further reducing transmit
-power.&lt;/p&gt;
-&lt;p&gt;Once again, we have caught the attention of the Department of Energy. Because of
-the short range of RuBee tags, they have generally been approved as not representing
-a COMSEC or TEMPEST hazard to secure facilities. And that brings us back to the
-very beginning: why does the DoE use a specialized, technically interesting, and
-largely unique radio protocol to fulfill such a basic function as nagging people
-that have their phones? Because RuBee's security properties have allowed it to be
-approved for use adjacent to and inside of secure facilities. A RuBee tag, it is
-thought, cannot be turned into a listening device because the intrinsic range
-limitation of magnetic coupling will make it impossible to communicate with the
-tag from outside of the building. It's a lot like how infrared microphones still
-see some use in secure facilities, but so much more interesting!&lt;/p&gt;
-&lt;p&gt;VAI has built several different product lines around RuBee, with names like
-Armory 20/20 and Shot Counting Allegro 20/20 and Store 20/20. The founder started
-his career in eye health, remember. None of them are that interesting, though.
-They're all pretty basic CRUD applications built around polling multiple RuBee
-controllers for tags in their presence.&lt;/p&gt;
-&lt;p&gt;And then there's the &amp;quot;Alert 20/20 DoorGuard:&amp;quot; a metal pedestal with a RuBee
-controller and audio announcement module, perfect for detecting government
-cell phones.&lt;/p&gt;
-&lt;div class="beg"&gt;
-&lt;hr /&gt;
-&lt;p&gt;I put a lot of time into writing this, and I hope that you enjoy reading
-it. If you can spare a few dollars, consider &lt;a href="https://ko-fi.com/jbcrawford"&gt;supporting me on
-ko-fi&lt;/a&gt;. You'll receive an occasional extra,
-subscribers-only post, and defray the costs of providing artisanal, hand-built
-world wide web directly from Albuquerque, New Mexico.&lt;/p&gt;
-&lt;hr /&gt;
-&lt;/div&gt;
-&lt;p&gt;One of the strangest things about RuBee is that it's hard to tell if it's still
-a going concern. VAI's website has a press release section, where nothing has been
-posted since 2019. The whole website feels like it was last revised even longer
-ago. When RuBee was newer, back in the '00s, a lot of industry journals covered it
-with headlines like &amp;quot;the new RFID.&amp;quot; I think VAI was optimistic that RuBee could
-displace all kinds of asset tracking applications, but despite some special
-certifications in other fields (e.g. approval to use RuBee controllers and tags
-around pacemakers in surgical suites), I don't think RuBee has found much success
-outside of military applications.&lt;/p&gt;
-&lt;p&gt;RuBee's resistance to shielding is impressive, but RFID read rates have improved
-considerably with new DSP techniques, antenna array designs, and the generally
-reduced cost of modern RFID equipment. RuBee's unique advantages, its security
-properties and resistance to even intentional exfiltration, are interesting but
-not worth much money to buyers other than the military.&lt;/p&gt;
-&lt;p&gt;So that's the fate of RuBee and VAI: defense contracting. As far as I can tell,
-RuBee and VAI are about as vital as they have ever been, but RuBee is now installed
-as just one part of general defense contracts around weapons systems, armory
-management, and process safety and security. IEEE standardization has opened the
-door to use of RuBee by federal contractors under license, and indeed, Lockheed
-Martin is repeatedly named as a licensee, as are firearms manufacturers with military
-contracts like Sig Sauer.&lt;/p&gt;
-&lt;p&gt;Besides, RuBee continues to grow closer to the DoE. In 2021, VAI appointed Lisa
-Gordon-Hagerty to it board of directors. Gordon-Hagerty was undersecretary of
-Energy and had lead the NNSA until the year before. This year, the New Hampshire
-Small Business Development Center wrote a glowing profile of VAI. They described
-it as a 25-employee company with a goal of hitting $30 million in annual revenue in the
-next two years.&lt;/p&gt;
-&lt;p&gt;Despite the outdated website, VAI claims over 1,200 RuBee sites in service. I wonder
-how many of those are Alert 20/20 DoorGuards? Still, I do believe there are military
-weapons inventory systems currently in use. RuBee probably has a bright future, as a
-niche technology for a niche industry. If nothing else, they have legacy installations
-and intellectual property to lean on. A spreadsheet of VAI-owned patents on RuBee,
-with nearly 200 rows, encourages would-be magnetically coupled visibility network inventors
-not to go it on their own. I just wish I could get my hands on a controller....&lt;/p&gt;
-&lt;div class="footnotes"&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;I have found some conflicting information on the date, it could have been
-as early as 2002. 2004 is the year I have the most confidence in.&lt;a href="#fnref-1" class="footnote"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;&lt;/li&gt;
-&lt;li id="fn-2"&gt;
-&lt;p&gt;The documentation is confusing enough about these details that I am actually
-unclear on whether the RuBee &amp;quot;MAC address&amp;quot; is 4 bytes or 6. Examples show 6 byte
-addresses, but the actual 1902.1 specification only seems to allow 4 byte addresses
-in headers. Honestly all of the RuBee documentation is a mess like this. I suspect
-that part of the problem is that VAI has actually changed parts of the protocol and
-not all of their products are IEEE 1902.1 compliant.&lt;a href="#fnref-2" class="footnote"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-  </description>
-      <guid isPermaLink="true">https://computer.rip/2025-11-22-RuBee.html</guid>
-      <pubDate>Sat, 22 Nov 2025 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
