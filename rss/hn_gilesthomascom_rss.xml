@@ -5,7 +5,258 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Tue, 28 Apr 2026 17:50:53 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 28 Apr 2026 19:47:51 +0000</lastBuildDate>
+    <item>
+      <title>10Gb Ethernet: what I had to (re)learn</title>
+      <link>https://www.gilesthomas.com/2026/04/10g-ethernet-what-i-relearned</link>
+      <description>&lt;p&gt;My ISP recently started offering a 10Gb option, and my "shiny new thing!" Pavlovian
+response immediately kicked in.  So of course, I
+had to upgrade the wired networking in my home -- which meant I had to learn a few things to get
+it all working, and relearn a bunch of stuff I'd forgotten over the years.&lt;/p&gt;
+
+&lt;p&gt;Wired networking for home and small offices hasn't really moved forward that much in the last 20-odd years.
+Back in 2006, gigabit Ethernet was standard for businesses, and most home users moved
+to it not long after.  Perhaps due to the rise of WiFi for most "last few metres" connections,
+it's pretty much stagnated there, perhaps with a bit of a push towards 2.5Gb/s more
+recently.&lt;/p&gt;
+
+&lt;p&gt;But with faster ISP connections arriving, I think things are starting to become
+a bit more interesting.  Even the fastest WiFi 7 connections are only able to get up
+to around 6Gb/s to a single device -- and that's in an ideal "super-fast machine sitting right next
+to the AP in a shielded lab" setup.&lt;/p&gt;
+
+&lt;p&gt;Here's what I had to drag up from my memory, and the new stuff I had to learn, in
+order to get this all working.  I'll write about the background in this post, and
+then tomorrow I'll post about what I actually put in place.&lt;/p&gt;
+&lt;h3 id="a-bit-of-history"&gt;A bit of history&lt;/h3&gt;
+
+&lt;p&gt;Let's start with a bit of the backstory.  Bear with me, it's not just self-indulgent
+reminiscing!&lt;/p&gt;
+
+&lt;p&gt;When I first started using networked computers, back in the early 90s, the most popular
+standard was &lt;a href="https://en.wikipedia.org/wiki/10BASE2"&gt;10BASE2&lt;/a&gt;.  We had this in the first
+office that I worked in, and in the university computer labs.  In the back of your
+computer, you'd have a T-shaped connector like this:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/10g-ethernet-what-i-relearned/BNC_Tee_connector,_with_Ethernet_cable_connected-92166.jpg" alt="BNC Tee connector, with Ethernet cable connected" title="BNC Tee connector, with Ethernet cable connected" /&gt;
+&lt;small&gt;© Raimond Spekking / &lt;a href="https://creativecommons.org/licenses/by-sa/4.0/deed"&gt;CC BY-SA 4.0&lt;/a&gt; (via &lt;a href="https://commons.wikimedia.org/wiki/File:BNC_Tee_connector,_with_Ethernet_cable_connected-92166.jpg"&gt;Wikimedia Commons&lt;/a&gt;)&lt;/small&gt;&lt;/p&gt;
+
+&lt;p&gt;The end facing the camera in that photo was the bit that went into your computer.
+Computers were daisy-chained together; you might have a server connected to workstation
+one, workstation one to workstation two, and so on, until you reached the last workstation.
+You'd have to cap the unused end of the T connectors at each end of the chain with a special terminator.&lt;/p&gt;
+
+&lt;p&gt;Essentially it was a single coaxial cable, so every computer saw every
+bit that was sent along the bus.  In turn, that meant that everyone was sharing the same bandwidth, a meagre
+10Mb/s.  The cool thing about Ethernet (compared to older networking technologies) was
+that the computers shared it without any need for coordination -- if two of them started
+"speaking" at the same time, they'd notice, and stop.  They would then start again after
+a random back-off, so one of them would randomly wait for less time than the other and
+start first.  The other would notice that "the line was busy" and would wait again for another
+chance.&lt;/p&gt;
+
+&lt;p&gt;Of course, this limited the number of computers you could have on one network, as past
+around 20 or so, they'd spend all of their time interrupting each other and never actually
+be able to send anything -- and anyway, sharing 10Mb/s across a large number of computers
+would be an issue.  On top of that, there was a hard cap of 30 machines per network.
+You'd use more specialised networking equipment to link
+different networks together -- bridges, switches and routers.  More about switches later.&lt;/p&gt;
+
+&lt;p&gt;By the time we started setting up networking in a house that I shared with friends,
+in around 1996 or so &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;, the most popular option had changed: now people were using
+10BASE-T.  Still 10Mb/s, but using the RJ45 connectors and twisted-pair cables that we've come to know and love.
+All of the computers would have a single cable going to a hub, in a star topology.
+You might link multiple hubs together to build larger networks.&lt;/p&gt;
+
+&lt;p&gt;However, these
+hubs were still little more than a convenient form factor to electrically link all
+of the wires together into a single bus.  You still had the problem that every computer could see
+every bit on the bus, and the same bandwidth-sharing and limits with the number of computers that you
+could handle as a result.&lt;/p&gt;
+
+&lt;p&gt;Over the years after that, things moved on.  Switches had been relatively expensive
+things; they would be used to interlink hubs, or 10BASE2 networks.  They would learn (from seeing the
+source MAC address on incoming packets) which machines were sending to each of their ports,
+and use that to know where to send packets that came in on other ports.  If, say, a switch
+learned that addresses A, B, and C were on port 1, then if a packet for one of those machines
+came in on port 2, it would know it could just send it out on port 1 and not on the others.
+That helped to address the bandwidth-sharing and the problems with collisions.&lt;/p&gt;
+
+&lt;p&gt;Prices for switches got lower and lower, and eventually -- I think sometime between 2005 and
+2010 -- they became so cheap that
+there was little point in bothering with hubs -- you'd just connect every computer
+directly to a switch.  That meant that any two computers on the same switch
+could talk to each other at the full network speed, as packets would just be
+switched from port to port &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;.  The connections between switches were still a bottleneck, of course,
+but that was much less of a problem.&lt;/p&gt;
+
+&lt;p&gt;At the same time, speeds increased, from 10Mb/s
+to 100Mb and then finally to 1Gb/s, which was standard for business machines by 2005 or so --
+I remember that when we bought our first computers for Resolver Systems back then, that's what they
+came with by default.&lt;/p&gt;
+
+&lt;p&gt;Home computers weren't far behind -- and that's where we've been ever since. &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;h3 id="isps-and-larger-networks-the-move-to-sfp"&gt;ISPs and larger networks: the move to SFP&lt;/h3&gt;
+
+&lt;p&gt;Back to that bottleneck between the switches.  Even back in the days of 10Mb/s
+networks, if you were managing a larger network, you would want a faster network to interlink them -- so, for example, if
+two computers on the same switch both wanted to access some external resource, they
+wouldn't be competing for the same 10Mb/s uplink.  Once you went past small office-sized
+networks, that kind of thing started becoming important.  ISPs and datacenters, of course,
+had the same problem in spades.&lt;/p&gt;
+
+&lt;p&gt;What you would need was an uplink on the switch that could run at a faster data rate.
+So even when 1Gb/s Ethernet was too expensive for the connections to the computers themselves,
+you might have a switch with a 1Gb/s uplink to connect it to the larger network,
+and a bunch of 100Mb/s ports for the local stuff.&lt;/p&gt;
+
+&lt;p&gt;Additionally, for larger networks you would have another problem -- physical
+distance.  All of these RJ45-based networking technologies had a maximum cable length
+of 100m.  You could extend that by putting a repeater (or even just a switch) every 100m or so as a "signal booster" --
+but if, for example, you wanted to link two buildings, that could be tricky.  You'd
+need to run both the data cable and power, and you'd need to have some way of getting
+access to the repeaters if they went wrong.&lt;/p&gt;
+
+&lt;p&gt;Ethernet over fibre optic connections had been a standard thing for years, though, and
+it had much better range -- for single-mode, many kilometers.  So while it was too fiddly for LANs,
+it made great sense as a backbone technology.&lt;/p&gt;
+
+&lt;p&gt;What that meant, though, was that in order to set up some particular network topology,
+you might wind up having to get a whole bunch of different switches.  For short connections
+between two of them, you might use an RJ45 uplink connection, while for longer ones you
+might want fibre.  More complex topologies might need some entirely different mix of
+ports.&lt;/p&gt;
+
+&lt;p&gt;To make this worse, there were a bunch of different fibre optic standards -- multi-mode
+and single mode fibres, different connectors, and so on.&lt;/p&gt;
+
+&lt;p&gt;Rather than manufacturing a large range of different kinds of switches with all of the
+combinations that people needed, manufacturers
+separated out the physical layer of the transport from the switching hardware.  A switch,
+instead of having specific RJ45 or fibre connectors for its ports, would have Small
+Form-factor Pluggable (SFP) "cages", essentially a new kind of socket.  These allow people to mix and match different kinds of
+transceiver modules, which would slot into the cage to provide an actual usable interface  -- one for RJ45 for gigabit Ethernet, or one for the particular
+kind of fibre connection they were using -- whatever configuration worked best for them.&lt;/p&gt;
+
+&lt;p&gt;A typical switch for a larger network might have one or two of those for backbone
+connections, and then RJ45s for local connections.  Over time, gigabit backbones
+were no longer enough, and SFP was followed by SFP+, which could handle 10Gb/s.
+Since then, there have been extensions for even faster speeds, way up to hundreds of
+Gb/s.&lt;/p&gt;
+
+&lt;p&gt;Back in the day, this stuff was only important to network admins for medium-sized networks and larger,
+of course.  But now, 10Gb Ethernet means that we've now hit the point where it matters
+even for home users, and that's because of thermals.&lt;/p&gt;
+
+&lt;h3 id="10gbase-t-is-so-hot-right-now"&gt;10GBASE-T is so hot (right now)&lt;/h3&gt;
+
+&lt;p&gt;Here's the problem.  Somewhat loosely speaking, the faster a network connection on a particular
+kind of wiring, the hotter it runs.  Over an RJ45/twisted pair connection, 10Mb/s Ethernet basically shed no heat, 100Mb/s
+a little more, even gigabit Ethernet just left your switches somewhat warm.
+The jump up to 10Gb over RJ45, called 10GBASE-T, makes things decidedly toasty --
+you'll see just how toasty in tomorrow's post.&lt;/p&gt;
+
+&lt;p&gt;There's also the issue of cabling.  Because network speeds have been stable
+for some time -- Gigabit Ethernet being the standard for ~20 years --
+most buildings with structured cabling (the kind of thing where there are RJ45 sockets
+in the walls wired together) will have the standard for that -- CAT-5E.  Unfortunately 10Gb/s Ethernet
+won't officially work over it -- you might be lucky, especially with short cables,
+but in general it won't work, or if it does it won't be reliable.&lt;/p&gt;
+
+&lt;p&gt;CAT-6 cabling helps -- it can handle 10Gb/s over runs up to about 55 metres.  And
+the ideal is CAT-6A, which can handle 10Gb/s over the same 100 metre cable lengths
+that you'd expect for the older, slower setups.&lt;/p&gt;
+
+&lt;p&gt;What this meant was that an interim standard was created.  10GBASE-T is hot and needs
+cables that people don't necessarily have, especially when you're talking about what's
+installed in the walls of their building.  But if you run it a bit slower, you can
+do so over older cables and without melting them.&lt;/p&gt;
+
+&lt;p&gt;That's why I didn't mention 2.5Gb/s Ethernet earlier (or indeed the rarer 5Gb/s).
+They were introduced as slowed-down versions of 10Gb/s to get it to work on existing
+infrastructure without major upgrades.  And that's great, right up until the point
+your ISP emails you to say that they're offering 10Gb/s to your home now...&lt;/p&gt;
+
+&lt;p&gt;So, what can you do to run 10Gb/s without melting things?&lt;/p&gt;
+
+&lt;h3 id="sfp-dac-fibre"&gt;SFP+, DAC, fibre&lt;/h3&gt;
+
+&lt;p&gt;Let's think about what an SFP or SFP+ module actually is.  It slots into a cage on a
+switch.  On one side, there's an electrical connection to the switch hardware, which
+is carrying the signal -- incoming and outgoing -- using a particular protocol &lt;sup class="footnote-ref" id="fnref-4"&gt;&lt;a href="#fn-4"&gt;4&lt;/a&gt;&lt;/sup&gt;.
+The module does its magic, and on the other side we have -- say -- 10GBASE-T to an RJ45
+socket, or a blinking laser with an appropriate interface for optical fibre.&lt;/p&gt;
+
+&lt;p&gt;What would happen if you just had a dumb electrical cable to connect an SFP+ cage on
+one switch to another on another switch?  That actually works pretty well!  It's called a
+passive Direct Attach Copper (DAC) cable.  The interfacing is a little more complicated
+than just a completely dumb wire -- the switch
+will want to query the module in the cage to find out some details about it, so you need
+a tiny bit of electronics -- but it's still really simple.&lt;/p&gt;
+
+&lt;p&gt;On top of that, if you add a bit of amplification to the DAC, then you get an active
+DAC, which can double that kind of length (though these are relatively rare).&lt;/p&gt;
+
+&lt;p&gt;The neat thing about DACs is that they run &lt;em&gt;much&lt;/em&gt; cooler than 10GBASE-T, using about
+a third of the power.  Of course,
+they lose out in terms of range.  But for simple stuff within one room, and especially
+between switches in a rack, they work really well.&lt;/p&gt;
+
+&lt;p&gt;The next step on top of DACs is that you can convert the underlying SFP(+) protocol
+directly to light, and send it down an optical fibre -- normally called an Active Optical
+Cable, or an AOC for short
+(though I've seen the rather confusing terminology "optical DAC" in various places).
+With that, you can normally get up to 100m.  These are cheap and easy to use (because
+they're all-in-one units, so you don't have any fiddly alignment of the fibre to do),
+so they're the best option once you pass passive-DAC distances.&lt;/p&gt;
+
+&lt;p&gt;After that, though, you really need to switch to the official standards, and go to
+more traditional fibre-optic setups.  I've done much less research into those, so
+won't try to explain them.  Either way, for the home, anything above this level is
+probably overkill right now...&lt;/p&gt;
+
+&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
+
+&lt;p&gt;So: moving from the 2.5Gb/s networks that work smoothly with the same infrastructure
+we've been using for the last 20 years or so to 10Gb/s is a tricky step change.  Suddenly,
+things that didn't matter -- thermal management, cable lengths, and so on -- become
+important.  And there are solutions, but you need to start actually understanding things
+again rather than just plugging stuff in and assuming it will work.&lt;/p&gt;
+
+&lt;p&gt;Fun!  Time to put it into practice :-)  In my
+next post, I'll show exactly the changes I had to make to get my existing 2.5Gb/s
+network ported over to 10Gb/s -- the hardware I wound up buying, how well it works,
+and (importantly) how hot it all runs.&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;To share our blazingly fast bonded dual ISDN Internet connection -- 128Kb/s.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;I remember feeling a little sad when that happened, because it meant that what
+I felt was coolest about Ethernet -- the back-off-and-retry thing -- was no longer
+all that important.  And when the connections went full duplex (a single
+switch port could both send and receive at the same time over the same cable) it was finished.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;If you're thinking "what about 2.5Gb/s?", I'll come back to that -- it's an
+interesting case.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-4"&gt;
+&lt;p&gt;SFF-8472 for SFP, then there's SFF-8431 and SFF-8432 for SFP+.&amp;#160;&lt;a href="#fnref-4" class="footnoteBackLink" title="Jump back to footnote 4 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/04/10g-ethernet-what-i-relearned</guid>
+      <pubDate>Tue, 28 Apr 2026 18:45:00 +0000</pubDate>
+    </item>
     <item>
       <title>Writing an LLM from scratch, part 33 -- what I learned from finally getting round to the appendices</title>
       <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-33-what-i-learned-from-the-appendices</link>
@@ -3918,440 +4169,6 @@ instance, at which point it starts one and sends a Telegram message.&lt;/li&gt;
 </description>
       <guid isPermaLink="true">/2026/04/automating-starting-lambda-instances</guid>
       <pubDate>Thu, 02 Apr 2026 23:30:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 32g -- Interventions: weight tying</title>
-      <link>https://www.gilesthomas.com/2026/03/llm-from-scratch-32g-interventions-weight-tying</link>
-      <description>&lt;p&gt;In
-&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
-he writes that weight tying, while it reduces the parameter count of a model,
-in his experience makes it worse.  As such, apparently people don't use it in modern LLMs.  Intuitively, that makes
-sense -- I'll explain why in this post.&lt;/p&gt;
-
-&lt;p&gt;But as I'm trying various &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;interventions&lt;/a&gt; to see
-if I can get my model -- based on Raschka's code, but trained for a fraction of the time that the original GPT-2 model was -- to perform as well as the original
-in terms of the loss it gets on a test set, I thought it would be worth
-seeing if it really is a negative for this particular tiny model of 163M parameters.&lt;/p&gt;
-
-&lt;p&gt;After all, the original weights use weight tying, and I did find that &lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;QKV bias&lt;/a&gt;
-appeared to help -- and that's
-another old-school technique that they used, which has since dropped out of fashion.  Might
-this one help too?&lt;/p&gt;
-
-&lt;p&gt;Worth a try!  Let's give it a go.&lt;/p&gt;
-&lt;h3 id="weight-tying-a-refresher"&gt;Weight tying: a refresher&lt;/h3&gt;
-
-&lt;p&gt;I'll start with a quick refresher on what weight tying is, and how it works.  This
-is really targeted at people who've been reading along with this series -- if it's
-all new to you, you might find my post on &lt;a href="/2025/09/maths-for-llms"&gt;Maths for LLMs&lt;/a&gt;
-a useful catch-up guide first.&lt;/p&gt;
-
-&lt;p&gt;In our LLM code, right at the start, we use an embedding layer
-to take our input token IDs, and turn them into embeddings -- each token becomes a vector
-in a high-dimensional space (768 in our case), which we see as representing
-in some manner the "meaning" of the token.&lt;/p&gt;
-
-&lt;p&gt;A useful way to think about that is that we could start with a one-hot vector for the token --
-that is, with our 50,257-token vocabulary, it would be 50,257 items long, and have zeros
-in every position apart from the position corresponding to the token's ID.  We'll treat that
-as being a vector in a "vocab space".  The process of converting the token into an
-embedding turns out to be equivalent to multiplying that vocab space representation
-by an embedding matrix -- one with one row per possible token, the values in that row
-being the values for the appropriate embedding. &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;Because matrix multiplications can be seen as projections between different spaces,
-we can see that as a projection from our vocab space to the embedding space.&lt;/p&gt;
-
-&lt;p&gt;Once we've projected our sequence of tokens into a sequence of embeddings, we do all of the steps
-required for the LLM -- we add in positional information, run it through the Transformers layers,
-normalise it, and then we have a new sequence of embeddings.
-The embedding at position &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; in that output sequence, if our model is working well,
-should be something that represents an appropriate next-token prediction for the
-portion of the input sequence from zero to position &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
-
-&lt;p&gt;What we want as our final output is to map that back to the vocab space.  We want logits:
-a list of numbers that (after being run through softmax) will represent the probability that
-our next token is a particular one.&lt;/p&gt;
-
-&lt;p&gt;Just as we mapped from vocab space to embedding space with (conceptually) a matrix
-multiplication at the start of the process, we can map back with another one.
-More specifically, if we treat the embedding matrix as having the same number of rows
-as there are input tokens (which we'll call &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;vocab&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;) and columns as there
-are embedding dimensions (&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;), then the original vocab-space-to-embedding-space
-matrix will have this shape:&lt;/p&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;vocab&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;p&gt;So it's projecting from a &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;vocab&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;-dimensional space to a &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;-dimensional one.
-Similarly, our matrix to do the projection at the end is just a matrix with the numbers of
-rows and columns swapped around:&lt;/p&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;vocab&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;p&gt;...to do a projection in the other direction.&lt;/p&gt;
-
-&lt;p&gt;The trick with weight tying is to see that these two projections can &lt;em&gt;potentially&lt;/em&gt; be
-just the opposite of each other.  If we assume that the embedding space on the way in
-to the LLM is essentially the same as the embedding space on the way out, then we
-can use one projection to go into it from vocab space, and the opposite to go back.
-The "opposite" in this case is the transpose -- that is, if we use &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; for
-our embedding matrix and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;out&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; for the output one, we have:&lt;/p&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;out&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msup&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;mi&gt;T&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;p&gt;That means we can re-use all of the embedding parameters for the output projection matrix,
-and fewer parameters means not only a smaller model, but hopefully faster training.
-Sounds like a win!&lt;/p&gt;
-
-&lt;p&gt;But of course, there's no such thing as a free lunch.  By constraining the output head
-to be the transpose of the input one, we're essentially enforcing that assumption above:
-we're saying that the embedding space on the way out &lt;em&gt;must&lt;/em&gt; be the same as the embedding
-space on the way in.  That limits what the LLM can do -- if it were able to use
-different embedding spaces at each end, it would have more flexibility, which might
-help it learn to model things better.&lt;/p&gt;
-
-&lt;p&gt;That's the theory: what does it mean in practice?&lt;/p&gt;
-
-&lt;h3 id="the-code"&gt;The code&lt;/h3&gt;
-
-&lt;p&gt;Let's take a quick look at the GPT-2 code -- just the &lt;code&gt;__init__&lt;/code&gt; for the top level class:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;GPTModel&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Module&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-
-    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-        &lt;span class="nb"&gt;super&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Embedding&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;pos_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Embedding&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;context_length&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;drop_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Dropout&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;drop_rate&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;trf_blocks&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Sequential&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-            &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;TransformersBlock&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;_&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;n_layers&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])]&lt;/span&gt;
-        &lt;span class="p"&gt;)&lt;/span&gt;
-
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;final_norm&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LayerNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-            &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
-        &lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;For our embedding layer, we use PyTorch's &lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.Embedding.html"&gt;&lt;code&gt;nn.Embedding&lt;/code&gt;&lt;/a&gt;
-class, and for the output head we use &lt;a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.Linear.html"&gt;&lt;code&gt;nn.Linear&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Now, &lt;code&gt;nn.Embedding&lt;/code&gt; provides us with access to the underlying matrix with a &lt;code&gt;weight&lt;/code&gt;
-field:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;&lt;code&gt;weight&lt;/code&gt; (Tensor) -- the learnable weights of the module of shape (&lt;code&gt;num_embeddings&lt;/code&gt;, &lt;code&gt;embedding_dim&lt;/code&gt;)
-  initialized from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x1D4A9;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;So, that's exactly the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;vocab&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; matrix that we'd expect --
-it's the input dimension as the rows, and the output dimension as the columns.&lt;/p&gt;
-
-&lt;p&gt;If we look at &lt;code&gt;nn.Linear&lt;/code&gt;, we see something very similar:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;weight (torch.Tensor) – the learnable weights of the module of shape (&lt;code&gt;out_features&lt;/code&gt;, &lt;code&gt;in_features&lt;/code&gt;)
-  The values are initialized from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x1D4B0;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt; where &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mtext&gt;in_features&lt;/mtext&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;That's actually the other way around, output dimension as the rows and input as the
-columns.  If you're wondering why, remember that &lt;a href="/2025/02/basic-neural-network-matrix-maths-part-2"&gt;we transpose the weights matrix for a neural network before using it&lt;/a&gt;.
-But that's actually really convenient in our situation, because if we want to use
-the same weights for both, they're already "compatible"!&lt;/p&gt;
-
-&lt;p&gt;And that means that adding weight tying to our code above is as simple as adding
-two lines at the end:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;tie_weights&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tok_emb&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;For the model code, it literally is just that!  There is a tiny inefficiency in that PyTorch is going
-to spend a bit of time initialising the weights in &lt;code&gt;self.out_head&lt;/code&gt; to appropriately-sized
-random values, only to have them all replaced -- but that actually works in our favour,
-because it means that we'll use up the same amount of the random number stream when
-creating the LLM in both the weight-tying and non-weight-tying cases, which is a bit
-better for reproducibility.&lt;/p&gt;
-
-&lt;p&gt;There is one other change needed, though.  I ran a test train with that code, and
-checkpointing failed like this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;[rank0]: RuntimeError:
-[rank0]:             Some tensors share memory, this will lead to duplicate memory on disk and potential differences when loading them again: [{'tok_emb.weight', 'out_hea
-d.weight'}].
-[rank0]:             A potential way to correctly save your model is to use &amp;lt;!--CODE_BLOCK_9763--&amp;gt;.
-[rank0]:             More information at https://huggingface.co/docs/safetensors/torch_shared_tensors
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;&lt;a href="https://huggingface.co/docs/safetensors/index"&gt;Safetensors&lt;/a&gt; doesn't like it when
-you reuse weights like we're doing here.  The good news is that
-&lt;a href="https://huggingface.co/docs/safetensors/torch_shared_tensors"&gt;the help page the error links to&lt;/a&gt;
-is exactly about this problem with weight tying, and the suggested
-fix -- to replace&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;save_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;state_dict&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;model.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...with&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;save_model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;model.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...and similarly for loading -- appears to work fine.  Saving and loading checkpoints
-works, and it's compatible with the old checkpoint files too.  So that's good news :-)&lt;/p&gt;
-
-&lt;p&gt;So, that's how we code it.  How much actual saving do we get in terms of the parameter
-count by doing this?&lt;/p&gt;
-
-&lt;h3 id="the-parameters"&gt;The parameters&lt;/h3&gt;
-
-&lt;p&gt;A quick-and-easy way to count the parameters is just to create an instance of the model and see:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;json&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;gpt&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;GPTModel&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="nb"&gt;open&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;runs/8xa100m40-baseline/model.json&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;r&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;as&lt;/span&gt; &lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="n"&gt;model_conf&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;json&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;GPTModel&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model_conf&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;5&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="nb"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;numel&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;p&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;5&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="mi"&gt;163009536&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;6&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="nb"&gt;open&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;runs/8xa100m40-weight-tying/model.json&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;r&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;as&lt;/span&gt; &lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;     &lt;span class="n"&gt;model_conf&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;json&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-   &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;GPTModel&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model_conf&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="nb"&gt;sum&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;numel&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;p&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="mi"&gt;124412160&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So, we've gone from a 163M-parameter model to a 124M-parameter one.  That's certainly
-quite some saving -- 38,597,376 fewer parameters, which is a reduction of almost a quarter.&lt;/p&gt;
-
-&lt;p&gt;We can also sanity check the size of that saving -- our output head was, as we know,
-a &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mrow&gt;&lt;mtext&gt;vocab&lt;/mtext&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; matrix, so it should have &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;50257&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;768&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; parameters
--- which is, indeed, 38,597,376.  Excellent.&lt;/p&gt;
-
-&lt;p&gt;Now, there's one thing we should consider here.  We're training on a Chinchilla-optimal
-number of tokens, 20x our parameter count.  Is that what we want to keep stable?  Or is
-the total number of training tokens the important bit, so we wind up technically
-overtraining?&lt;/p&gt;
-
-&lt;p&gt;My instinct is that the total training tokens is the important thing.  Chinchilla
-optimality is a training heuristic rather than a true aspect of the model, so sticking
-with it would mean that we're training a model with fewer parameters on less data.
-It seems very unlikely that would do anything other than produce a worse model!&lt;/p&gt;
-
-&lt;p&gt;So: we'll keep the same number of training tokens, and just introduce weight tying.
-How does it train?&lt;/p&gt;
-
-&lt;h3 id="the-train"&gt;The train&lt;/h3&gt;
-
-&lt;p&gt;I kicked it off on the usual 8x A100 40 GiB machine, and after a little while I
-checked the loss chart.  It looked like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32g-interventions-weight-tying/high-initial-loss-loss-chart.png" alt="Crazy high initial training loss with weight tying" title="Crazy high initial training loss with weight tying" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Yikes!  It started off with a loss of about 460.  Normally, we start with a loss
-of about 11.&lt;/p&gt;
-
-&lt;p&gt;The normal loss makes a lot of sense.  If you consider it in terms of perplexity,
-that value of 11 comes out at &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;e&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;11&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x02248;&lt;/mo&gt;&lt;mn&gt;59&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;874&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; -- that is, the model is giving pretty much equal
-probabilities to every one of the 50,257 possible tokens.&lt;/p&gt;
-
-&lt;p&gt;A loss of 460 means that the model is making incorrect predictions and is very certain about them.
-How could that be?  Well, let's look at the documentation again.&lt;/p&gt;
-
-&lt;p&gt;For &lt;code&gt;nn.Embedding&lt;/code&gt;:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;&lt;code&gt;weight&lt;/code&gt; (Tensor) -- the learnable weights of the module of shape (&lt;code&gt;num_embeddings&lt;/code&gt;, &lt;code&gt;embedding_dim&lt;/code&gt;)
-  initialized from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x1D4A9;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;For &lt;code&gt;nn.Linear&lt;/code&gt;:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;weight (torch.Tensor) – the learnable weights of the module of shape (&lt;code&gt;out_features&lt;/code&gt;, &lt;code&gt;in_features&lt;/code&gt;)
-  The values are initialized from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x1D4B0;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt; where &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mtext&gt;in_features&lt;/mtext&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;They're initialised completely differently.  Embeddings are set to values in a normal
-distribution (that is, a Gaussian bell curve) with a mean of 0 and a standard deviation
-of 1.  But linear layers are set to random values in a uniform distribution (that is,
-a completely flat one) within a range based on the number of input features.&lt;/p&gt;
-
-&lt;p&gt;In particular, those numbers for the linear layer are really small!  Our output head
-has &lt;code&gt;in_features&lt;/code&gt; set to 768, so that means that the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt; would
-be:&lt;/p&gt;
-
-&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;768&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo&gt;&amp;#x02248;&lt;/mo&gt;&lt;mn&gt;0.0360&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;
-
-&lt;p&gt;So instead of getting that kind of "ideal" linear layer initialisation
-within the range &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;0.0360&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0.0360&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;, we're getting
-numbers which roughly 2/3 of the time will be in the range &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;, and the
-rest of the time will be even further from zero -- we could be getting -3 or +4, or
-potentially even crazier numbers!&lt;/p&gt;
-
-&lt;p&gt;That means that the output logits (coming from a linear layer with higher weights)
-will be larger, which in turn will push softmax to come up with higher probabilities:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;torch&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;softmax&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tensor&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;2.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;3.0&lt;/span&gt;&lt;span class="p"&gt;]),&lt;/span&gt; &lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;tensor&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mf"&gt;0.0900&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;0.2447&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;0.6652&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;softmax&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tensor&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mf"&gt;10.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;20.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;30.0&lt;/span&gt;&lt;span class="p"&gt;]),&lt;/span&gt; &lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;tensor&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mf"&gt;2.0611e-09&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;4.5398e-05&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;9.9995e-01&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;softmax&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tensor&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mf"&gt;100.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;200.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;300.0&lt;/span&gt;&lt;span class="p"&gt;]),&lt;/span&gt; &lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;tensor&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="mf"&gt;0.0000e+00&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;3.7835e-44&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mf"&gt;1.0000e+00&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;I considered changing things to initialise the weights differently, but given that the
-loss had fallen to 8 or so by the second checkpoint, I decided to just let the run
-complete.  Here's the final loss chart, with the Y axis fixed to run from 0 to 12:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32g-interventions-weight-tying/complete-scaled-loss-chart.png" alt="Full train run loss with weight tying" title="Full train run loss with weight tying" /&gt;&lt;/p&gt;
-
-&lt;p&gt;That's a nice smooth curve, at least!  The output is:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 12,058.054 seconds&lt;/span&gt;
-&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
-&lt;span class="go"&gt;Throughput: 270,380 tokens/second&lt;/span&gt;
-&lt;span class="go"&gt;Final train loss: 3.952&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Timing-wise, that's about 180 seconds faster than our baseline model training run,
-only a 1.5% speedup
--- clearly the lower number of parameters doesn't actually save us much time.
-Loss-wise, the final train loss on the baseline model was 3.743, so that's not
-particularly promising.  Still, the proof is, as ever, in the evals.  Smoke test first:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you are making, the same as if there have been hundreds or thousands of miles of people getting in one
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Borderline coherent, but maybe worse than normal?  Let's see what our test set loss
-looks like.&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Loss against our test dataset: 3.874
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;That's bad -- let's see it in our comparison table:&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test set loss&lt;/th&gt;
-  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-weight-tying&lt;/td&gt;
-  &lt;td&gt;3.874&lt;/td&gt;
-  &lt;td&gt;-0.182&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-weight-decay-cerebras&lt;/td&gt;
-  &lt;td&gt;3.867&lt;/td&gt;
-  &lt;td&gt;-0.175&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-baseline&lt;/td&gt;
-  &lt;td&gt;3.692&lt;/td&gt;
-  &lt;td&gt;-&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-gradient-clipping&lt;/td&gt;
-  &lt;td&gt;3.678&lt;/td&gt;
-  &lt;td&gt;0.014&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-qkv-bias&lt;/td&gt;
-  &lt;td&gt;3.669&lt;/td&gt;
-  &lt;td&gt;0.023&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-weight-decay-gpt2&lt;/td&gt;
-  &lt;td&gt;3.643&lt;/td&gt;
-  &lt;td&gt;0.049&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-remove-dropout&lt;/td&gt;
-  &lt;td&gt;3.641&lt;/td&gt;
-  &lt;td&gt;0.051&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;8xa100m40-schedule-learning-rate&lt;/td&gt;
-  &lt;td&gt;3.602&lt;/td&gt;
-  &lt;td&gt;0.09&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;Our worst model so far :-(&lt;/p&gt;
-
-&lt;h3 id="conclusion"&gt;Conclusion&lt;/h3&gt;
-
-&lt;p&gt;Weight tying certainly didn't help our train.  It is worth noting that the GPT-2 small
-weights -- which &lt;em&gt;do&lt;/em&gt; use it -- got 3.500 on the same test set as we're using for that
-table, so it is possible to get a better model with weight tying.  But there was
-clearly something different about their train, and my suspicion, as I've said before,
-is that it was trained for many more epochs (&lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch#epochs"&gt;I estimated 40&lt;/a&gt;), slowly grinding that loss down.&lt;/p&gt;
-
-&lt;p&gt;But what I'm trying to do in this mini-series of interventions is find tricks that
-will allow us to approach the original weights' loss without a very long training
-run.  And for the purposes of that, I think we can safely say that weight-tying is
-not one of those.&lt;/p&gt;
-
-&lt;p&gt;Next time around, our last intervention test!  What happens if we switch off the use
-of automated mixed precision (AMP)?  That is something I added right back at the start
-as a performance enhancement; it means that PyTorch can do certain calculations
-in 16-bit rather than 32-bit if it thinks there's no harm in doing so.  Might we get
-better loss by training without it?&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;In reality we don't multiply a one-hot vector by a matrix, as that would be
-extremely inefficient -- PyTorch just does a lookup into the embedding matrix.  If
-we get token ID 1234, then it just reads out the contents of row 1234, and that's
-our embedding.  But for the purposes of this post, it's best to see that as more
-of a (extremely effective) performance tweak rather than what's happening conceptually.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/03/llm-from-scratch-32g-interventions-weight-tying</guid>
-      <pubDate>Tue, 24 Mar 2026 19:50:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
