@@ -9,7 +9,93 @@
 		
 		</description>
     <language>en</language>
-    <lastBuildDate>Mon, 27 Apr 2026 23:00:29 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 28 Apr 2026 00:02:01 +0000</lastBuildDate>
+    <item>
+      <title>Don't use localhost:3000, use your own custom domain </title>
+      <link>https://idiallo.com/blog/say-no-to-localhost3000-use-custom-domains?src=feed</link>
+      <description>
+					
+			&lt;p&gt;After presenting a demo of how an internal tool works, I was flooded with questions. Not about the tool, but about why I had bought a domain just to run the demo. "Why didn't you use the staging server?" they asked.&lt;/p&gt;
+			&lt;p&gt;I was confused. I didn't buy a domain. I was running it locally. &lt;/p&gt;
+
+&lt;p&gt;But instead of the URL being &lt;code&gt;localhost:3002&lt;/code&gt;, it was a fully formed domain. &lt;code&gt;www.internaltool.com&lt;/code&gt;. In fact, some people told me that they couldn't access the website on their devices. They thought I had to whitelist their IP to grant them access. To feel young again...&lt;/p&gt;
+
+&lt;p&gt;Setting up a custom domain locally was common practice when I started web programming. But with the advent of Node.js (and rails?), everyone has resorted to just pointing to &lt;code&gt;localhost&lt;/code&gt; with an incrementing port number. The main reason is that the webserver is often bundled into the application itself. It’s easy to just run &lt;code&gt;npm start&lt;/code&gt; and call it a day.&lt;/p&gt;
+
+&lt;p&gt;However, if you have multiple long-term projects running locally, especially if they need to communicate with one another, then managing a mental map of ports like &lt;code&gt;3000&lt;/code&gt;, &lt;code&gt;8080&lt;/code&gt;, and &lt;code&gt;5173&lt;/code&gt; quickly gets tiring. This is where my old school approach shines.&lt;/p&gt;
+
+&lt;p&gt;By combining the system hosts file with a reverse proxy like Nginx, you can run different projects locally with actual domain names. I usually end up with &lt;code&gt;dev.domain.com&lt;/code&gt; for active development, &lt;code&gt;qa.domain.com&lt;/code&gt; for a stable local build, and the actual production URL for the live site.&lt;/p&gt;
+
+&lt;p&gt;Here is how to set it up.&lt;/p&gt;
+
+&lt;h3&gt;Step 1: The Hosts File&lt;/h3&gt;
+
+&lt;p&gt;First, we need to tell your computer where to find these domains.&lt;/p&gt;
+
+&lt;p&gt;Think of &lt;code&gt;/etc/hosts&lt;/code&gt; as your computer's personal contact list. When you type a URL, your computer looks here first. By adding an entry, you are telling your computer: "Don't bother checking the internet when I ask for myproject.com, I am actually talking about this machine." It creates a manual override that maps a friendly name directly to your machine's IP address.&lt;/p&gt;
+
+&lt;p&gt;You can edit the file here:&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Linux/macOS:&lt;/strong&gt; &lt;code&gt;/etc/hosts&lt;/code&gt; &lt;br/&gt;
+&lt;strong&gt;Windows:&lt;/strong&gt; &lt;code&gt;C:\Windows\System32\Drivers\etc\hosts&lt;/code&gt;&lt;/p&gt;
+
+&lt;p&gt;Open the file in your editor. In this file, right after the block of entries for Adobe (active.adobe.com...), add this line:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class="code-lang-default"&gt;127.0.0.1 myproject.com
+127.0.0.1 dev.myproject.com
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Now, when you access those domains in your browser, they don't point to the wider internet, but directly to your own machine.&lt;/p&gt;
+
+&lt;h3&gt;Step 2: Nginx Configuration&lt;/h3&gt;
+
+&lt;p&gt;Now that the domain is pointed to your own machine, we want to redirect it to the right application. If your app runs on port &lt;code&gt;3000&lt;/code&gt;, navigating to &lt;code&gt;myproject.com&lt;/code&gt; will default to port &lt;code&gt;80&lt;/code&gt; and fail. This is where Nginx comes in. It listens on port &lt;code&gt;80&lt;/code&gt; and forwards the traffic to the specific port your app is running on.&lt;/p&gt;
+
+&lt;p&gt;Here is a simplified Nginx config to make it work:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class="code-lang-default"&gt;server {
+    listen 80;
+    server_name myproject.com;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+    }
+}
+
+server {
+    listen 80;
+    server_name dev.myproject.com;
+
+    location / {
+        proxy_pass http://localhost:3001;
+        proxy_set_header Host $host;
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Restart Nginx, and voilà! You have clean, professional URLs for your local environment.&lt;/p&gt;
+
+&lt;h3&gt;A Note for WSL2 Users&lt;/h3&gt;
+
+&lt;p&gt;If you are running your services inside Windows Subsystem for Linux (WSL2), networking is handled a little differently because the Linux instance has its own virtual IP. You can get your instance's IP address with this command:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class="code-lang-default"&gt;wsl hostname -I
+# Output: 172.x.x.x
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;You would use that IP address in your Windows hosts file instead of &lt;code&gt;127.0.0.1&lt;/code&gt;.&lt;/p&gt;
+
+&lt;h3&gt;Conclusion&lt;/h3&gt;
+
+&lt;p&gt;After that demo, some people were disappointed to learn the &lt;code&gt;/etc/hosts&lt;/code&gt; trick. They thought I was so committed that I had bought a domain name just to give them the raw deal with my demo. Someone mused about a shirt with the words "real men don't use localhost:3000". That could have started a whole new motivational speaking career for me. A custom domain just looks very professional and is practical for separating environments. It just feels cooler than staring at &lt;code&gt;localhost:3000&lt;/code&gt; all day. That's how you separate yourself from vibe-coders.&lt;/p&gt;
+
+&lt;p&gt;Anyway, back to earth. I feel like this is a lost skill and I'm keeping it alive by sharing it. That's how you run a custom URL locally.&lt;/p&gt;
+			
+				</description>
+      <guid isPermaLink="true">https://idiallo.com/blog/say-no-to-localhost3000-use-custom-domains?src=feed</guid>
+      <pubDate>Mon, 27 Apr 2026 23:17:54 +0000</pubDate>
+    </item>
     <item>
       <title>The Satisfaction of a ChatGPT Plan </title>
       <link>https://idiallo.com/byte-size/the-satisfaction-of-a-chatgpt-plan?src=feed</link>
@@ -480,36 +566,6 @@
 				</description>
       <guid isPermaLink="true">https://idiallo.com/blog/your-friends-are-hiding-their-ideas?src=feed</guid>
       <pubDate>Sat, 11 Apr 2026 00:47:19 +0000</pubDate>
-    </item>
-    <item>
-      <title>What Are You Trying to Say? </title>
-      <link>https://idiallo.com/blog/what-are-you-trying-to-say?src=feed</link>
-      <description>
-					
-			&lt;p&gt;Sometimes, I find myself talking while my audience has a puzzled look on their face. It doesn't matter how much I prepared my speech, the message is just not getting through. But then they ask: What are you trying to say?&lt;/p&gt;
-			&lt;p&gt;Somehow, this shifts the conversation entirely. Instead of trying to sound smart and interesting, I start telling them exactly what I'm trying to say. The fluff disappears, the jargon fades, and I'm left with the raw information in its most primitive form. And somehow, they understand me better this way.&lt;/p&gt;
-
-&lt;p&gt;&lt;em&gt;What are you trying to say?&lt;/em&gt; Whether it's in person or in writing, that question triggers something in us that allows us to better express our intentions.&lt;/p&gt;
-
-&lt;p&gt;Here's an exercise. Look out the window. What color is the sky? Now, on a piece of paper or in a word processor, write that the sky is blue.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;"The sky is blue."&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;Somehow, it doesn't feel satisfying. Were there a few wisps of cloud in the sky? Did those clouds look like they were floating? Maybe erring? Were there mountains in the distance? Were they covered with a thin sheet of snow? Were you actually looking through a window, or sitting outdoors, maybe at a park with kids playing on a playground in the distance? What was happening under that blue sky? Was it actually blue, or a yawning purple suggesting dusk?&lt;/p&gt;
-
-&lt;p&gt;There's a whole lot we want to express, a whole lot we want to share of our full experience of the moment. But sometimes, just saying that the sky is blue does it.&lt;/p&gt;
-
-&lt;p&gt;&lt;em&gt;What are you trying to say?&lt;/em&gt; Maybe you aren't trying to say that the sky is blue. Maybe you're using it as a metaphor for a deeper feeling you're experiencing. Maybe the emotion is complex and you need to paint it with a broader brush to truly express your feelings. But maybe all you're trying to say is that you're sad. Or happy. Maybe that's all you need to say.&lt;/p&gt;
-
-&lt;p&gt;This is something I find fascinating about communication. Sometimes the process demands that you say things wrong, or in the long-winded and complicated way, in order to arrive at that simple, raw format. It's just like how writing helps us think. Your idea isn't clear until you have it written down, like a complicated equation that resolves to something simple. The only shortcut we can take is to ask ourselves that question and untangle our mind in private, before we present our simple resolution at the end.&lt;/p&gt;
-
-&lt;p&gt;Whenever you find yourself, just like me, going in circles, losing yourself in a spiral, stop for a moment. Ask yourself: &lt;em&gt;What am I trying to say?&lt;/em&gt;&lt;/p&gt;
-			
-				</description>
-      <guid isPermaLink="true">https://idiallo.com/blog/what-are-you-trying-to-say?src=feed</guid>
-      <pubDate>Thu, 09 Apr 2026 12:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
