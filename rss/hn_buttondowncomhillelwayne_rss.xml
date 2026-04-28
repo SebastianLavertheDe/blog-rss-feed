@@ -5,7 +5,38 @@
     <link>https://buttondown.com/hillelwayne</link>
     <description>&lt;!-- buttondown-editor-mode: fancy --&gt;&lt;p&gt;Hi, I'm Hillel. This is the newsletter version of &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://www.hillelwayne.com"&gt;my website&lt;/a&gt;. I post all website updates here. I also post weekly content just for the newsletter, on topics like&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;p&gt;Formal Methods&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Software History and Culture&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Fringetech and exotic tooling&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;The philosophy and theory of software engineering&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;You can see the archive of all public essays &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://buttondown.email/hillelwayne/archive/"&gt;here&lt;/a&gt;.&lt;/p&gt;</description>
     <language>en</language>
-    <lastBuildDate>Tue, 28 Apr 2026 15:31:00 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 28 Apr 2026 17:51:02 +0000</lastBuildDate>
+    <item>
+      <title>Illegal vs Unwanted States</title>
+      <link>https://buttondown.com/hillelwayne/archive/illegal-vs-unwanted-states/</link>
+      <description>
+&lt;p&gt;An &lt;strong&gt;illegal state&lt;/strong&gt; is a state we never want our system to be in. An &lt;strong&gt;unwanted state&lt;/strong&gt; is a state we don't want to stay in. Many states that we wish were illegal are actually unwanted.&lt;/p&gt;
+&lt;p&gt;Considering a calendaring software which stores calendar events as &lt;code&gt;{user: {events: [event]}}&lt;/code&gt;, where each event has a start and end time. This allows one person to attend two events at the same time. We might consider this illegal and replace the data type with &lt;code&gt;{user: {time: optional event}}&lt;/code&gt; which makes this impossible. However, a scheduling conflict isn't illegal, only unwanted! It is possible for a person to sign up for two overlapping events. Maybe they're supposed to choose one event, maybe they'll decide which event to go to later, maybe one of the events doesn't actually represent an in-person meeting. &lt;/p&gt;
+&lt;p&gt;In that case it's acceptable, if not ideal, to remain in the unwanted state. Other unwanted states lead to invalid states if not exited quickly. An airline flight is in an unwanted state if there are more passengers booked to fly than seats available. This must be resolved before passengers actually board, as "more passengers physically on the plane than seats available" is an illegal state.&lt;/p&gt;
+&lt;p&gt;In some cases, an unwanted state does not lead to illegal states, but permanently remaining in the unwanted state is still a problem. We might guarantee that a network partition does not ever lead to inconsistent data. Even though the unwanted state of a network partition cannot cause the illegal state of corrupt data, we still have a big problem if we don't ever fix the partition.&lt;/p&gt;
+&lt;h2&gt;Why systems must represent unwanted states&lt;/h2&gt;
+&lt;div class="subscribe-form"&gt;&lt;/div&gt;
+&lt;p&gt;Generally, unwanted states can happen if we don't have complete control over our system's behavior. We can't guarantee our network is perfectly reliable, our servers are always up, our users all put in correct data. If our system gets input from the external world then the world can push us into an unwanted state. We need to be able to detect these states so we can resolve them.&lt;/p&gt;
+&lt;p&gt;Even when we have complete control over the system, we still may want to be able to temporarily dip into unwanted states. If they wanted, airlines could make overbooking flights impossible. But airlines want to be able to overbook because they expect some number of no-shows. We need to allow them their unwanted state and then put systems in place to prevent it evolving into an illegal state.&lt;/p&gt;
+&lt;p&gt;Sometimes we need unwanted states to make certain workflows possible. It may be the case that 95% never, ever want to accepted conflicting events, and preventing that unwanted state would make their lives better. But without that unwanted state, intentionally double booking yourself is impossible. Some people might need that! In these cases we want to make it very clear to users that they're entering an unwanted state, and then let them decide for themselves how to leave it. &lt;/p&gt;
+&lt;p&gt;(The airlines and users want the unwanted state! It's us engineers who consider it "unwanted" because it can lead to problems down the road.) &lt;/p&gt;
+&lt;h2&gt;Formal models of unwanted states&lt;/h2&gt;
+&lt;p&gt;Illegal states correspond to violated invariants. Conventionally speaking we write this as &lt;code&gt;[]!Illegal&lt;/code&gt;: it should be true at all times that &lt;code&gt;Illegal&lt;/code&gt; is not true. If a single state ever satisfies &lt;code&gt;Illegal&lt;/code&gt; then our system has a bug. &lt;/p&gt;
+&lt;p&gt;Unwanted states are trickier, since they can be both &lt;a href="https://www.hillelwayne.com/post/safety-and-liveness/" target="_blank"&gt;safety and liveness properties&lt;/a&gt;. If modeling an airline system, we don't necessarily want to check properties of overbooking, we only need to check that no overflights happen.&lt;sup id="fnref:overflight"&gt;&lt;a class="footnote-ref" href="#fn:overflight"&gt;1&lt;/a&gt;&lt;/sup&gt; We may discover in the process of verifying that that overbooking is the main cause of overflights and/or that if overbooking is not resolved, then we will eventually have an overflight. Further, if "we never overbook" guarantees "we never overflight", we'd say that "no overbooks" is a &lt;a href="https://buttondown.com/hillelwayne/archive/some-tests-are-stronger-than-others/" target="_blank"&gt;stronger&lt;/a&gt; property than "no overflights". &lt;/p&gt;
+&lt;p&gt;"We never remain in a network partition" is &lt;a href="https://buttondown.com/hillelwayne/archive/formalizing-stability-and-resilience-properties/" target="_blank"&gt;formalized&lt;/a&gt; as &lt;code&gt;[]&amp;lt;&amp;gt;!Partition&lt;/code&gt;: we can enter a partition and stay partitioned a long time but must eventually heal the partition. The &lt;a href="https://p-org.github.io/P/" target="_blank"&gt;P specification language&lt;/a&gt; calls these &lt;a href="https://p-org.github.io/P/manual/monitors/#liveness-specification" target="_blank"&gt;hot states&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;(PS: if all goes well, there should be a new &lt;a href="https://logicforprogrammers.com" target="_blank"&gt;Logic for Programmers&lt;/a&gt; release next week!)&lt;/p&gt;
+&lt;div class="footnote"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn:overflight"&gt;
+&lt;p&gt;Not a real term.&amp;#160;&lt;a class="footnote-backref" href="#fnref:overflight" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/illegal-vs-unwanted-states/</guid>
+      <pubDate>Tue, 28 Apr 2026 15:14:09 +0000</pubDate>
+    </item>
     <item>
       <title>People get confused when language implementations break language guarantees</title>
       <link>https://buttondown.com/hillelwayne/archive/people-get-confused-when-language-implementations/</link>
@@ -1490,56 +1521,6 @@ Day -&amp;gt; Whatever(
 </description>
       <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/maybe-writing-speed-actually-is-a-bottleneck-for/</guid>
       <pubDate>Thu, 17 Jul 2025 19:08:27 +0000</pubDate>
-    </item>
-    <item>
-      <title>Logic for Programmers Turns One</title>
-      <link>https://buttondown.com/hillelwayne/archive/logic-for-programmers-turns-one/</link>
-      <description>
-&lt;p&gt;I released &lt;a href="https://leanpub.com/logic/" target="_blank"&gt;Logic for Programmers&lt;/a&gt; exactly one year ago today. It feels weird to celebrate the anniversary of something that isn't 1.0 yet, but software projects have a proud tradition of celebrating a dozen anniversaries before 1.0. I wanted to share about what's changed in the past year and the work for the next six+ months.&lt;/p&gt;
-&lt;p&gt;&lt;img alt="The book cover!" class="newsletter-image" src="https://assets.buttondown.email/images/70ac47c9-c49f-47c0-9a05-7a9e70551d03.jpg?w=960&amp;amp;fit=max"/&gt;&lt;/p&gt;
-&lt;h3&gt;The Road to 0.1&lt;/h3&gt;
-&lt;p&gt;I had been noodling on the idea of a logic book since the pandemic. The first time I wrote about it on the newsletter was in &lt;a href="https://buttondown.com/hillelwayne/archive/predicate-logic-for-programmers/" target="_blank"&gt;2021&lt;/a&gt;! Then I said that it would be done by June and would be "under 50 pages". The idea was to cover logic as a "soft skill" that helped you think about things like requirements and stuff.&lt;/p&gt;
-&lt;p&gt;That version &lt;em&gt;sucked&lt;/em&gt;. If you want to see how much it sucked, I put it up on &lt;a href="https://www.patreon.com/posts/what-logic-for-133675688" target="_blank"&gt;Patreon&lt;/a&gt;. Then I slept on the next draft for three years. Then in 2024 a lot of business fell through and I had a lot of free time, so with the help of &lt;a href="https://saul.pw/" target="_blank"&gt;Saul Pwanson&lt;/a&gt; I rewrote the book. This time I emphasized breadth over depth, trying to cover a lot more techniques.  &lt;/p&gt;
-&lt;p&gt;I also decided to self-publish it instead of pitching it to a publisher. Not going the traditional route would mean I would be responsible for paying for editing, advertising, graphic design etc, but I hoped that would be compensated by &lt;em&gt;much&lt;/em&gt; higher royalties. It also meant I could release the book in early access and use early sales to fund further improvements. So I wrote up a draft in &lt;a href="https://www.sphinx-doc.org/en/master/" target="_blank"&gt;Sphinx&lt;/a&gt;, compiled it to LaTeX, and uploaded the PDF to &lt;a href="https://leanpub.com/" target="_blank"&gt;leanpub&lt;/a&gt;. That was in June 2024.&lt;/p&gt;
-&lt;p&gt;Since then I kept to a monthly cadence of updates, missing once in November (short-notice contract) and once last month (&lt;a href="https://systemsdistributed.com/" target="_blank"&gt;Systems Distributed&lt;/a&gt;). The book's now on v0.10. What's changed?&lt;/p&gt;
-&lt;h3&gt;A LOT&lt;/h3&gt;
-&lt;p&gt;v0.1 was &lt;em&gt;very obviously&lt;/em&gt; an alpha, and I have made a lot of improvements since then. For one, the book no longer looks like a &lt;a href="https://www.sphinx-doc.org/_/downloads/en/master/pdf/#page=13" target="_blank"&gt;Sphinx manual&lt;/a&gt;. Compare!&lt;/p&gt;
-&lt;p&gt;&lt;img alt="0.1 on left, 0.10 on right. Way better!" class="newsletter-image" src="https://assets.buttondown.email/images/e4d880ad-80b8-4360-9cae-27c07598c740.png?w=960&amp;amp;fit=max"/&gt;&lt;/p&gt;
-&lt;p&gt;Also, the content is very, very different. v0.1 was 19,000 words, v.10 is 31,000.&lt;sup id="fnref:pagesize"&gt;&lt;a class="footnote-ref" href="#fn:pagesize"&gt;1&lt;/a&gt;&lt;/sup&gt; This comes from new chapters on TLA+, constraint/SMT solving, logic programming, and major expansions to the existing chapters. Originally, "Simplifying Conditionals" was 600 words. Six hundred words! It almost fit in two pages!&lt;/p&gt;
-&lt;p&gt;&lt;img alt="How short Simplifying Conditions USED to be" class="newsletter-image" src="https://assets.buttondown.email/images/31e731b7-3bdc-4ded-9b09-2a6261a323ec.png?w=960&amp;amp;fit=max"/&gt;&lt;/p&gt;
-&lt;p&gt;The chapter is now 2600 words, now covering condition lifting, quantifier manipulation, helper predicates, and set optimizations. All the other chapters have either gotten similar facelifts or are scheduled to get facelifts.&lt;/p&gt;
-&lt;p&gt;The last big change is the addition of &lt;a href="https://github.com/logicforprogrammers/book-assets" target="_blank"&gt;book assets&lt;/a&gt;. Originally you had to manually copy over all of the code to try it out, which is a problem when there are samples in eight distinct languages! Now there are ready-to-go examples for each chapter, with instructions on how to set up each programming environment. This is also nice because it gives me breaks from writing to code instead.&lt;/p&gt;
-&lt;h3&gt;How did the book do?&lt;/h3&gt;
-&lt;p&gt;Leanpub's all-time visualizations are terrible, so I'll just give the summary: 1180 copies sold, $18,241 in royalties. That's a lot of money for something that isn't fully out yet! By comparison, &lt;em&gt;Practical TLA+&lt;/em&gt; has made me less than half of that, despite selling over 5x as many books. Self-publishing was the right choice!&lt;/p&gt;
-&lt;p&gt;In that time I've paid about $400 for the book cover (worth it) and maybe $800 in Leanpub's advertising service (probably not worth it). &lt;/p&gt;
-&lt;p&gt;Right now that doesn't come close to making back the time investment, but I think it can get there post-release. I believe there's a lot more potential customers via marketing. I think post-release 10k copies sold is within reach.&lt;/p&gt;
-&lt;p class="empty-line" style="height:16px; margin:0px !important;"&gt;&lt;/p&gt;
-&lt;h3&gt;Where is the book going?&lt;/h3&gt;
-&lt;div class="subscribe-form"&gt;&lt;/div&gt;
-&lt;p&gt;The main content work is rewrites: many of the chapters have not meaningfully changed since 1.0, so I am going through and rewriting them from scratch. So far four of the ten chapters have been rewritten. My (admittedly ambitious) goal is to rewrite three of them by the end of this month and another three by the end of next. I also want to do final passes on the rewritten chapters; as most of them have a few TODOs left lying around.&lt;/p&gt;
-&lt;p&gt;(Also somehow in starting this newsletter and publishing it I realized that one of the chapters might be better split into two chapters, so there could well-be a tenth technique in v0.11 or v0.12!)&lt;/p&gt;
-&lt;p&gt;After that, I will pass it to a copy editor while I work on improving the layout, making images, and indexing. I want to have something worthy of printing on a dead tree by 1.0. &lt;/p&gt;
-&lt;p&gt;In terms of timelines, I am &lt;strong&gt;very roughly&lt;/strong&gt; estimating something like this:&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Summer: final big changes and rewrites&lt;/li&gt;
-&lt;li&gt;Early Autumn: graphic design and copy editing&lt;/li&gt;
-&lt;li&gt;Late Autumn: proofing, figuring out printing stuff&lt;/li&gt;
-&lt;li&gt;Winter: final ebook and initial print releases of 1.0.&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;(If you know a service that helps get self-published books "past the finish line", I'd love to hear about it! Preferably something that works for a fee, not part of royalties.)&lt;/p&gt;
-&lt;p&gt;This timeline may be disrupted by official client work, like a new TLA+ contract or a conference invitation.&lt;/p&gt;
-&lt;p&gt;Needless to say, I am incredibly excited to complete this book and share the final version with you all. This is a book I wished for years ago, a book I wrote because nobody else would. It fills a critical gap in software educational material, and someday soon I'll be able to put a copy on my bookshelf. It's exhilarating and terrifying and above all, satisfying.&lt;/p&gt;
-&lt;div class="footnote"&gt;
-&lt;hr/&gt;
-&lt;ol&gt;
-&lt;li id="fn:pagesize"&gt;
-&lt;p&gt;It's also 150 pages vs 50 pages, but admittedly this is partially because I made the book smaller with a larger font. &lt;a class="footnote-backref" href="#fnref:pagesize" title="Jump back to footnote 1 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/logic-for-programmers-turns-one/</guid>
-      <pubDate>Tue, 08 Jul 2025 18:18:52 +0000</pubDate>
     </item>
   </channel>
 </rss>
