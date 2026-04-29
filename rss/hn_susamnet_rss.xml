@@ -5,7 +5,200 @@
     <link>https://susam.net/</link>
     <description>Susam's Feed</description>
     <language>en</language>
-    <lastBuildDate>Wed, 29 Apr 2026 15:20:17 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 29 Apr 2026 17:43:47 +0000</lastBuildDate>
+    <item>
+      <title>Multiple URLs in Git Remote</title>
+      <link>https://susam.net/multiple-urls-in-git-remote.html</link>
+      <description>
+
+&lt;p&gt;
+  Typically a Git remote contains a single URL.  For example, when we
+  clone a repository, a remote named &lt;code&gt;origin&lt;/code&gt; is
+  automatically created and its URL is set to the location of the
+  upstream repository.  For example:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;samp&gt;$ &lt;kbd&gt;git remote -v&lt;/kbd&gt;
+origin  https://codeberg.org/spxy/spica.git (fetch)
+origin  https://codeberg.org/spxy/spica.git (push)
+$ &lt;kbd&gt;sed '/remote/,$!d' .git/config&lt;/kbd&gt;
+[remote "origin"]
+        url = https://codeberg.org/spxy/spica.git
+        fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "main"]
+        remote = origin
+        merge = refs/heads/main&lt;/samp&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+  A perhaps less known detail is that we can set multiple URLs for a
+  remote.  For example:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;samp&gt;$ &lt;kbd&gt;git remote set-url origin --add https://github.com/spxy/spica.git&lt;/kbd&gt;
+$ &lt;kbd&gt;git remote -v&lt;/kbd&gt;
+origin  https://codeberg.org/spxy/spica.git (fetch)
+origin  https://codeberg.org/spxy/spica.git (push)
+origin  https://github.com/spxy/spica.git (push)
+$ &lt;kbd&gt;sed '/remote/,$!d' .git/config&lt;/kbd&gt;
+[remote "origin"]
+        url = https://codeberg.org/spxy/spica.git
+        fetch = +refs/heads/*:refs/remotes/origin/*
+        url = https://github.com/spxy/spica.git
+[branch "main"]
+        remote = origin
+        merge = refs/heads/main&lt;/samp&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+  As evident from the above output, with multiple URLs for the same
+  remote, the first one becomes the fetch URL whereas all URLs become
+  push URLs.  For example:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;samp&gt;$ &lt;kbd&gt;git pull&lt;/kbd&gt;
+remote: Enumerating objects: 5, done.
+remote: Counting objects: 100% (5/5), done.
+remote: Compressing objects: 100% (2/2), done.
+remote: Total 3 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+Unpacking objects: 100% (3/3), 327 bytes | 109.00 KiB/s, done.
+From https://codeberg.org/spxy/spica
+   d473dde..31db503  main       -&amp;gt; origin/main
+Updating d473dde..31db503
+Fast-forward
+ README.md | 1 +
+ 1 file changed, 1 insertion(+)
+$ &lt;kbd&gt;git log --oneline&lt;/kbd&gt;
+31db503 (HEAD -&amp;gt; main, origin/main, origin/HEAD) Explain that Spica is a binary star system
+d473dde Create README.md&lt;/samp&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+  The output above confirms that the fetch was performed from the
+  first remote URL.  Although the output shows that
+  &lt;code&gt;origin&lt;/code&gt; contains commit 31db503, it is possible
+  that not all remote locations for &lt;code&gt;origin&lt;/code&gt; have received
+  this commit yet.  Since we have not configured a
+  &lt;code&gt;pushurl&lt;/code&gt;, pushes are sent to all remote URLs by default.
+  For example:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;samp&gt;$ &lt;kbd&gt;echo 'It is about 250 light years away from the Sun.' &amp;gt;&amp;gt; README.md&lt;/kbd&gt;
+$ &lt;kbd&gt;git add README.md&lt;/kbd&gt;
+$ &lt;kbd&gt;git commit -m 'Mention distance from the Sun'&lt;/kbd&gt;
+[main 816998d] Mention distance from the Sun
+ 1 file changed, 1 insertion(+)
+$ &lt;kbd&gt;git push&lt;/kbd&gt;
+Enumerating objects: 5, done.
+Counting objects: 100% (5/5), done.
+Delta compression using up to 10 threads
+Compressing objects: 100% (2/2), done.
+Writing objects: 100% (3/3), 325 bytes | 325.00 KiB/s, done.
+Total 3 (delta 1), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://codeberg.org/spxy/spica.git
+   31db503..816998d  main -&amp;gt; main
+Enumerating objects: 9, done.
+Counting objects: 100% (9/9), done.
+Delta compression using up to 10 threads
+Compressing objects: 100% (6/6), done.
+Writing objects: 100% (9/9), 791 bytes | 791.00 KiB/s, done.
+Total 9 (delta 2), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (2/2), done.
+To https://github.com/spxy/spica.git
+ * [new branch]      main -&amp;gt; main
+$ &lt;kbd&gt;git log --oneline&lt;/kbd&gt;
+816998d (HEAD -&amp;gt; main, origin/main, origin/HEAD) Mention distance from the Sun
+31db503 Explain that Spica is a binary star system
+d473dde Create README.md&lt;/samp&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+  A &lt;code&gt;pushurl&lt;/code&gt; can be set as follows:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;samp&gt;$ &lt;kbd&gt;git remote set-url --push origin https://github.com/spxy/spica.git&lt;/kbd&gt;
+$ &lt;kbd&gt;git remote -v&lt;/kbd&gt;
+origin  https://codeberg.org/spxy/spica.git (fetch)
+origin  https://github.com/spxy/spica.git (push)
+$ &lt;kbd&gt;sed '/remote/,$!d' .git/config&lt;/kbd&gt;
+[remote "origin"]
+        url = https://codeberg.org/spxy/spica.git
+        fetch = +refs/heads/*:refs/remotes/origin/*
+        url = https://github.com/spxy/spica.git
+        pushurl = https://github.com/spxy/spica.git
+[branch "main"]
+        remote = origin
+        merge = refs/heads/main&lt;/samp&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+  When one or more &lt;code&gt;pushurl&lt;/code&gt; locations are set, pushes are
+  sent to only those locations.  Fetches continue to occur from the
+  first URL as before.
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;samp&gt;$ &lt;kbd&gt;echo 'Its two stars orbit each other roughly every four days.' &amp;gt;&amp;gt; README.md&lt;/kbd&gt;
+$ &lt;kbd&gt;git add README.md&lt;/kbd&gt;
+$ &lt;kbd&gt;git commit -m 'Mention the four-day orbital period'&lt;/kbd&gt;
+[main 2e9f4e8] Mention the four-day orbital period
+ 1 file changed, 1 insertion(+)
+$ &lt;kbd&gt;git push&lt;/kbd&gt;
+Enumerating objects: 5, done.
+Counting objects: 100% (5/5), done.
+Delta compression using up to 10 threads
+Compressing objects: 100% (2/2), done.
+Writing objects: 100% (3/3), 342 bytes | 342.00 KiB/s, done.
+Total 3 (delta 1), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (1/1), completed with 1 local object.
+To https://github.com/spxy/spica.git
+   816998d..2e9f4e8  main -&amp;gt; main
+$ &lt;kbd&gt;git log --oneline&lt;/kbd&gt;
+2e9f4e8 (HEAD -&amp;gt; main, origin/main, origin/HEAD) Mention the four-day orbital period
+816998d Mention distance from the Sun
+31db503 Explain that Spica is a binary star system
+d473dde Create README.md&lt;/samp&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+  Note that in this case, the new commit has been pushed only to the
+  second remote URL.  If we perform a pull, Git will fetch changes
+  from the first remote URL and will move &lt;code&gt;origin/main&lt;/code&gt;
+  back to the latest commit available there.  For example:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;samp&gt;$ &lt;kbd&gt;git pull&lt;/kbd&gt;
+From https://codeberg.org/spxy/spica
+ + 2e9f4e8...816998d main       -&amp;gt; origin/main  (forced update)
+Already up to date.
+$ &lt;kbd&gt;git log --oneline&lt;/kbd&gt;
+2e9f4e8 (HEAD -&amp;gt; main) Mention the four-day orbital period
+816998d (origin/main, origin/HEAD) Mention distance from the Sun
+31db503 Explain that Spica is a binary star system
+d473dde Create README.md&lt;/samp&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+  For this reason, configuring a separate &lt;code&gt;pushurl&lt;/code&gt; should
+  be done with care.  It is useful only in a narrow range of scenarios
+  such as fetching from a primary repository that we want to treat as
+  read-only while pushing changes to a mirror.
+&lt;/p&gt;
+&lt;p&gt;
+  The difference between &lt;code&gt;pushurl&lt;/code&gt; and a normal remote URL
+  is explained in &lt;code&gt;man git-fetch&lt;/code&gt; as well as &lt;code&gt;man
+  git-push&lt;/code&gt; of Git 2.54.0 as follows:
+&lt;/p&gt;
+&lt;blockquote&gt;
+  The &amp;lt;pushurl&amp;gt; is used for pushes only.  It is optional and
+  defaults to &amp;lt;URL&amp;gt;.  Pushing to a remote affects all defined
+  pushurls or all defined urls if no pushurls are defined.  Fetch,
+  however, will only fetch from the first defined url if multiple urls
+  are defined.
+&lt;/blockquote&gt;
+&lt;!-- ### --&gt;
+&lt;p&gt;
+  &lt;a href="https://susam.net/multiple-urls-in-git-remote.html"&gt;Read on website&lt;/a&gt; |
+  &lt;a href="https://susam.net/tag/git.html"&gt;#git&lt;/a&gt; |
+  &lt;a href="https://susam.net/tag/technology.html"&gt;#technology&lt;/a&gt;
+&lt;/p&gt;
+
+</description>
+      <guid isPermaLink="true">muigr</guid>
+      <pubDate>Wed, 29 Apr 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>QuickQWERTY 1.2.2</title>
       <link>https://susam.net/code/news/quickqwerty/1.2.2.html</link>
@@ -2432,6 +2625,7 @@ nothing to commit, working tree clean&lt;/samp&gt;&lt;/pre&gt;
 &lt;!-- ### --&gt;
 &lt;p&gt;
   &lt;a href="https://susam.net/git-checkout-reset-restore.html"&gt;Read on website&lt;/a&gt; |
+  &lt;a href="https://susam.net/tag/git.html"&gt;#git&lt;/a&gt; |
   &lt;a href="https://susam.net/tag/technology.html"&gt;#technology&lt;/a&gt; |
   &lt;a href="https://susam.net/tag/how-to.html"&gt;#how-to&lt;/a&gt;
 &lt;/p&gt;
@@ -3170,486 +3364,6 @@ $ &lt;kbd&gt;sudo sqlite3 /var/lib/soju/main.db 'SELECT * from Network'&lt;/kbd&
 </description>
       <guid isPermaLink="true">fztsj</guid>
       <pubDate>Thu, 12 Feb 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Twenty Five Years of Computing</title>
-      <link>https://susam.net/twenty-five-years-of-computing.html</link>
-      <description>
-
-&lt;p&gt;
-  Last year, I completed 20 years in professional software
-  development.  I wanted to write a post to mark the occasion back
-  then, but couldn't find the time.  This post is my attempt to make
-  up for that omission.  In fact, I have been involved in software
-  development for a little longer than 20 years.  Although I had
-  my &lt;a href="fd-100.html"&gt;first taste&lt;/a&gt; of computer programming as
-  a child, it was only when I entered university about 25 years ago
-  that I seriously got into software development.  So I'll start my
-  stories from there.  These stories are less about software and more
-  about people.  Unlike many posts of this kind, this one offers no
-  wisdom or lessons.  It only offers a collection of stories.  I hope
-  you'll like at least a few of them.
-&lt;/p&gt;
-&lt;h2 id="contents"&gt;Contents&lt;a href="#contents"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;ul&gt;
-  &lt;li&gt;&lt;a href="#viewing-the-source"&gt;Viewing the Source&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href="#reset-vector"&gt;The Reset Vector&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href="#man-in-the-middle"&gt;Man in the Middle&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href="#sphagetti-code"&gt;Sphagetti Code&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href="#animated-television-widgets"&gt;Animated Television Widgets&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href="#good-blessings"&gt;Good Blessings&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href="#the-ctf-scoreboard"&gt;The CTF Scoreboard&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id="viewing-the-source"&gt;Viewing the Source&lt;a href="#viewing-the-source"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;p&gt;
-  The first story takes place in 2001, shortly after I joined
-  university.  One evening, I went to the university computer
-  laboratory to browse the World Wide Web.  Out of curiosity, I typed
-  &lt;code&gt;susam.com&lt;/code&gt; into the address bar and landed on
-  &lt;a href="https://web.archive.org/web/20010721163153/http://susam.com/"&gt;its
-  home page&lt;/a&gt;.  I remember the text and banner looking much larger
-  back then.  Display resolutions were lower, so the text and banner
-  covered almost half the screen.  I knew very little about the
-  Internet then and I was just trying to make sense of it.  I remember
-  wondering what it would take to create my own website, perhaps at
-  &lt;code&gt;susam.com&lt;/code&gt;.  That's when an older student who had been
-  watching me browse over my shoulder approached and asked if I had
-  created the website.  I told him I hadn't and that I had no idea how
-  websites were made.  He asked me to move aside, took my seat and
-  clicked View &amp;gt; Source in Internet Explorer.  He then explained
-  how websites are made of HTML pages and how those pages are simply
-  text instructions.
-&lt;/p&gt;
-&lt;p&gt;
-  Next, he opened Notepad and wrote a simple HTML page that looked
-  something like this:
-&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;&amp;lt;BODY&amp;gt;&amp;lt;FONT COLOR="RED"&amp;gt;HELLO&amp;lt;/FONT&amp;gt;&amp;lt;/BODY&amp;gt;&lt;/code&gt;&lt;/pre&gt;
-&lt;p&gt;
-  Yes, we had a &lt;code&gt;FONT&lt;/code&gt; tag back then and it was common
-  practice to write HTML tags in uppercase.  He then opened the page
-  in a web browser and showed how it rendered.  After that, he
-  demonstrated a few more features such as changing the font face and
-  size, centring the text and altering the page's background colour.
-  Although the tutorial lasted only about ten minutes, it made the Web
-  feel far less mysterious and much more fascinating.
-&lt;/p&gt;
-&lt;p&gt;
-  That person had an ulterior motive though.  After the tutorial, he
-  never returned the seat to me.  He just continued browsing the Web
-  and waited for me to leave.  I was too timid to ask for my seat
-  back.  Seats were limited, so I returned to my dorm room both
-  disappointed that I couldn't continue browsing that day and excited
-  about all the websites I might create with this newfound knowledge.
-  I could never register &lt;code&gt;susam.com&lt;/code&gt; for myself though.
-  That domain was always used by some business selling Turkish
-  cuisines.  Eventually, I managed to get the next best thing:
-  a &lt;code&gt;.net&lt;/code&gt; domain of my own.  That brief encounter in the
-  university laboratory set me on a lifelong path of creating and
-  maintaining personal websites.
-&lt;/p&gt;
-&lt;h2 id="reset-vector"&gt;The Reset Vector&lt;a href="#reset-vector"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;p&gt;
-  The second story also comes from my university days.  One afternoon,
-  I was hanging out with my mates in the computer laboratory.  In
-  front of me was an MS-DOS machine powered by an Intel 8086
-  microprocessor, on which I was writing a lift control program in
-  assembly.  In those days, it was considered important to
-  deliberately practise solving made-up problems as a way of honing
-  our programming skills.  As I worked on my program, my mind drifted
-  to a small detail about the 8086 microprocessor that we had recently
-  learnt in a lecture.  Our professor had explained that, when the
-  8086 microprocessor is reset, execution begins with CS:IP set to
-  FFFF:0000.  So I murmured to anyone who cared to listen, 'I wonder
-  if the system will reboot if I jump to FFFF:0000.'  I then
-  opened &lt;code&gt;DEBUG.EXE&lt;/code&gt; and jumped to that address.
-&lt;/p&gt;
-&lt;pre&gt;&lt;samp&gt;C:\&amp;gt;&lt;kbd&gt;DEBUG&lt;/kbd&gt;
--&lt;kbd&gt;G =FFFF:0000&lt;/kbd&gt;&lt;/samp&gt;&lt;/pre&gt;
-&lt;p&gt;
-  The machine rebooted instantly.  One of my friends, who topped the
-  class every semester, had been watching over my shoulder.  As soon
-  as the machine restarted, he exclaimed, 'How did you do that?'  I
-  explained that the reset vector is located at physical address FFFF0
-  and that the CS:IP value FFFF:0000 maps to that address in real
-  mode.  After that, I went back to working on my lift control program
-  and didn't think much more about the incident.
-&lt;/p&gt;
-&lt;p&gt;
-  About a week later, the same friend came to my dorm room.  He sat
-  down with a grave look on his face and asked, 'How did you know to
-  do that?  How did it occur to you to jump to the reset vector?'  I
-  must have said something like, 'It just occurred to me.  I
-  remembered that detail from the lecture and wanted to try it out.'
-  He then said, 'I want to be able to think like that.  I come top of
-  the class every semester, but I don't think the way you do.  I would
-  never have thought of taking a small detail like that and testing it
-  myself.'  I replied that I was just curious to see whether what we
-  had learnt actually worked in practice.  He responded, 'And that's
-  exactly it.  It would never occur to me to try something like that.
-  I feel disappointed that I keep coming top of the class, yet I am
-  not curious in the same way you are.  I've decided I don't want to
-  top the class anymore.  I just want to explore and experiment with
-  what we learn, the way you do.'
-&lt;/p&gt;
-&lt;p&gt;
-  That was all he said before getting up and heading back to his dorm
-  room.  I didn't take it very seriously at the time.  I couldn't
-  imagine why someone would willingly give up the accomplishment of
-  coming first every semester.  But he kept his word.  He never topped
-  the class again.  He still ranked highly, often within the top ten,
-  but he kept his promise of never finishing first again.  To this
-  day, I feel a mix of embarrassment and pride whenever I recall that
-  incident.  With a single jump to the processor's reset entry point,
-  I had somehow inspired someone to step back from academic
-  competition in order to have more fun with learning.  Of course,
-  there is no reason one cannot do both.  But in the end, that was his
-  decision, not mine.
-&lt;/p&gt;
-&lt;h2 id="man-in-the-middle"&gt;Man in the Middle&lt;a href="#man-in-the-middle"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;p&gt;
-  In my first job after university, I was assigned to a technical
-  support team where part of my work involved running an installer to
-  deploy a specific component of an e-banking product for customers,
-  usually large banks.  As I learnt to use the installer, I realised
-  how fragile it was.  The installer, written in Python, often failed
-  because of incorrect assumptions about the target environment and
-  almost always required some manual intervention to complete
-  successfully.  During my first week on the project, I spent much of
-  my time stabilising the installer and writing a step-by-step user
-  guide explaining how to use it.  The result was well received by
-  both my seniors and management.  To my surprise, the user guide
-  received more praise than the improvements I made to the installer.
-  While the first few weeks were productive, I soon realised I would
-  not find the work fulfilling for long.  I wrote to management a few
-  times to ask whether I could transfer to a team where I could work
-  on something more substantial.
-&lt;/p&gt;
-&lt;p&gt;
-  My emails were initially met with resistance.  After several rounds
-  of discussion, someone who had heard about my situation reached out
-  and suggested a team whose manager might be interested in
-  interviewing me.  The team was based in a different city.  I was
-  young and willing to relocate wherever I could find good work, so I
-  immediately agreed to the interview.
-&lt;/p&gt;
-&lt;p&gt;
-  This was in 2006, when video conferencing was not yet common.  On
-  the day of the interview, the hiring manager called me on my office
-  desk phone.  He began by introducing the team, which was called
-  &lt;em&gt;Archie&lt;/em&gt;, short for &lt;em&gt;architecture&lt;/em&gt;.  The team
-  developed and maintained the web framework and core architectural
-  components on which the entire e-banking product was built.  The
-  product had existed long before open source frameworks such as
-  Spring or Django came into existence, so features such as API
-  routing, authentication and authorisation layers, cookie management,
-  etc. were all implemented in-house as Java Servlets and JavaServer
-  Pages (JSP).  Since the software was used in banking environments,
-  it also had to pass security testing and regular audits to minimise
-  the risk of serious flaws.
-&lt;/p&gt;
-&lt;p&gt;
-  The interview began well.  He asked several questions related to
-  software security, such as what SQL injection is, how it can be
-  prevented and how one might design a web framework that mitigates
-  cross-site scripting attacks.  He also asked me a few programming
-  questions, most which I answered pretty well.  Towards the end,
-  however, he asked how we could prevent MITM attacks.  I had never
-  heard the term, so I admitted that I did not know what MITM meant.
-  He then asked, 'Man in the middle?' but I still had no idea what
-  that meant or whether it was even a software engineering concept.
-  He replied, 'Learn everything you can about PKI and MITM.  We need
-  to build a digital signatures feature for one of our corporate
-  banking products.  That's the first thing we'll work on.'
-&lt;/p&gt;
-&lt;p&gt;
-  Over the next few weeks, I studied RFCs and documentation related to
-  public key infrastructure, public key cryptography standards and
-  related topics.  At first, the material felt intimidating, but after
-  spending time each evening reading whatever relevant literature I
-  could find, things gradually began to make sense.  Concepts that
-  initially seemed complex and overwhelming eventually felt intuitive
-  and elegant.  I relocated to the new city a few weeks later and
-  delivered the digital signatures feature about a month after joining
-  the team.  We used the open source Bouncy Castle library to
-  implement the feature.  After that project, I worked on other parts
-  of the product too.  The most rewarding part was knowing that the
-  code I was writing became part of a mature product used by hundreds
-  of banks and millions of users.  It was especially satisfying to see
-  the work pass security testing and audits and be considered ready
-  for release.
-&lt;/p&gt;
-&lt;p&gt;
-  That was my first real engineering job.  My manager also turned out
-  to be an excellent mentor.  Working with him helped me develop new
-  skills and his encouragement gave me confidence that stayed with me
-  for years.  Nearly two decades have passed since then, yet the
-  product is still in service and continues to be actively developed.
-  In fact, in my current phase of life I sometimes encounter it as a
-  customer.  Occasionally, I open the browser's developer tools to
-  view the page source where I can still see traces of the HTML
-  generated by code I wrote almost twenty years ago.
-&lt;/p&gt;
-&lt;h2 id="sphagetti-code"&gt;Sphagetti Code&lt;a href="#sphagetti-code"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;p&gt;
-  Around 2007 or 2008, I began working on a proof of concept for
-  developing widgets for an OpenTV set-top box.  The work involved
-  writing code in a heavily trimmed-down version of C.  One afternoon,
-  while making good progress on a few widgets, I noticed that they
-  would occasionally crash at random.  I tried tracking down the bugs,
-  but I was finding it surprisingly difficult to understand my own
-  code.  I had managed to produce some truly spaghetti code full of
-  dubious pointer operations that were almost certainly responsible
-  for the crashes, yet I could not pinpoint where exactly things were
-  going wrong.
-&lt;/p&gt;
-&lt;p&gt;
-  Ours was a small team of four people, each working on an independent
-  proof of concept.  The most senior person on the team acted as our
-  lead and architect.  Later that afternoon, I showed him my progress
-  and explained that I was still trying to hunt down the bugs causing
-  the widgets to crash.  He asked whether he could look at the code.
-  After going through it briefly and probably realising that it was a
-  bit of a mess, he asked me to send him the code as a tarball, which
-  I promptly did.
-&lt;/p&gt;
-&lt;p&gt;
-  He then went back to his desk to study the code.  I remember
-  thinking that there was no way he was going to find the problem
-  anytime soon.  I had been debugging it for hours and barely
-  understood what I had written myself; it was the worst spaghetti
-  code I had ever produced.  With little hope of a quick solution, I
-  went back to debugging on my own.
-&lt;/p&gt;
-&lt;p&gt;
-  Barely five minutes later, he came back to my desk and asked me to
-  open a specific file.  He then showed me exactly where the pointer
-  bug was.  It had taken him only a few minutes not only to read my
-  tangled code but also to understand it well enough to identify the
-  fault and point it out.  As soon as I fixed that line, the crashes
-  disappeared.  I was genuinely in awe of his skill.
-&lt;/p&gt;
-&lt;p&gt;
-  I have always loved computing and programming, so I had assumed I
-  was already fairly good at it.  That incident, however, made me
-  realise how much further I still had to go before I could consider
-  myself a good software developer.  I did improve significantly in
-  the years that followed and today I am far better at managing
-  software complexity than I was back then.
-&lt;/p&gt;
-&lt;h2 id="animated-television-widgets"&gt;Animated Television Widgets&lt;a href="#animated-television-widgets"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;p&gt;
-  In another project from that period, we worked on another set-top
-  box platform that supported Java Micro Edition (Java ME) for widget
-  development.  One day, the same architect from the previous story
-  asked whether I could add animations to the widgets.  I told him
-  that I believed it should be possible, though I'd need to test it to
-  be sure.  Before continuing with the story, I need to explain how
-  the different stakeholders in the project were organised.
-&lt;/p&gt;
-&lt;p&gt;
-  Our small team effectively played the role of the software vendor.
-  The final product going to market would carry the brand of a major
-  telecom carrier, offering direct-to-home (DTH) television services,
-  with the set-top box being one of the products sold to customers.
-  The set-top box was manufactured by another company.  So the project
-  was a partnership between three parties: our company as the software
-  vendor, the telecom carrier and the set-top box manufacturer.  The
-  telecom carrier wanted to know whether widgets could be animated on
-  screen with smooth slide-in and slide-out effects.  That was why the
-  architect approached me to ask whether it could be done.
-&lt;/p&gt;
-&lt;p&gt;
-  I began working on animating the widgets.  Meanwhile, the architect
-  and a few senior colleagues attended a business meeting with all the
-  partners present.  During the meeting, he explained that we were
-  evaluating whether widget animations could be supported.  The
-  set-top box manufacturer immediately dismissed the idea, saying,
-  'That's impossible.  Our set-top box does not support animation.'
-  When the architect returned and shared this with us, I replied, 'I
-  do not understand.  If I can draw a widget, I can animate it too.
-  All it takes is clearing the widget and redrawing it at slightly
-  different positions repeatedly.  In fact, I already have a working
-  version.'  I then showed a demo of the animated widgets running on
-  the emulator.
-&lt;/p&gt;
-&lt;p&gt;
-  The following week, the architect attended another partners' meeting
-  where he shared updates about our animated widgets.  I was not
-  personally present, so what follows is second-hand information
-  passed on by those who were there.  I learnt that the set-top box
-  company reacted angrily.  For some reason, they were unhappy that we
-  had managed to achieve results using their set-top box and APIs that
-  they had officially described as impossible.  They demanded that we
-  stop work on animation immediately, arguing that our work could not
-  be allowed to contradict their official position.  At that point,
-  the telecom carrier's representative intervened and bluntly told the
-  set-top box representative to just shut up.  If the set-top box guy
-  was furious, the telecom guy was even more so, 'You guys told us
-  animation was not possible and these people are showing that it is!
-  You manufacture the set-top box.  How can you not know what it is
-  capable of?'
-&lt;/p&gt;
-&lt;p&gt;
-  Meanwhile, I continued working on the proof of concept.  It worked
-  very well in the emulator, but I did not yet have access to the
-  actual hardware.  The device was still in the process of being
-  shipped to us, so all my early proof-of-concepts ran on the
-  emulator.  The following week, the architect planned to travel to
-  the set-top box company's office to test my widgets on the real
-  hardware.
-&lt;/p&gt;
-&lt;p&gt;
-  At the time, I was quite proud of demonstrating results that even
-  the hardware maker believed were impossible.  When the architect
-  eventually travelled to test the widgets on the actual device, a
-  problem emerged.  What looked like buttery smooth animation on the
-  emulator appeared noticeably choppy on a real television.  Over the
-  next few weeks, I experimented with frame rates, buffering
-  strategies and optimising the computation done in the the rendering
-  loop.  Each week, the architect travelled for testing and returned
-  with the same report: the animation had improved somewhat, but it
-  still remained choppy.  The modest embedded hardware simply could
-  not keep up with the required computation and rendering.  In the
-  end, the telecom carrier decided that no animation was better than
-  poor animation and dropped the idea altogether.  So in the end, the
-  set-top box developers turned out to be correct after all.
-&lt;/p&gt;
-&lt;h2 id="good-blessings"&gt;Good Blessings&lt;a href="#good-blessings"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;p&gt;
-  Back in 2009, after completing about a year at RSA Security, I began
-  looking for work that felt more intellectually stimulating,
-  especially projects involving mathematics and algorithms.  I spoke
-  with a few senior leaders about this, but nothing materialised for
-  some time.  Then one day, Dr Burt Kaliski, Chief Scientist at RSA
-  Laboratories, asked to meet me to discuss my career aspirations.  I
-  have written about this in more detail in another post here:
-  &lt;a href="good-blessings.html"&gt;Good Blessings&lt;/a&gt;.  I will summarise
-  what followed.
-&lt;/p&gt;
-&lt;p&gt;
-  Dr Kaliski met me and offered a few suggestions about the kinds of
-  teams I might approach to find more interesting work.  I followed
-  his advice and eventually joined a team that turned out to be an
-  excellent fit.  I remained with that team for the next six years.
-  During that time, I worked on parser generators, formal language
-  specification and implementation, as well as indexing and querying
-  engines of a petabyte-scale database.  I learnt something new almost
-  every day during those six years.  It remains one of the most
-  enjoyable periods of my career.  I have especially fond memories of
-  working on parser generators alongside remarkably skilled engineers
-  from whom I learnt a lot.
-&lt;/p&gt;
-&lt;p&gt;
-  Years later, I reflected on how that brief meeting with Dr Kaliski
-  had altered the trajectory of my career.  I realised I was not sure
-  whether I had properly expressed my gratitude to him for the role he
-  had played in shaping my path.  So I wrote to thank him and explain
-  how much that single conversation had influenced my life.  A few
-  days later, Dr Kaliski replied, saying he was glad to know that the
-  steps I took afterwards had worked out well.  Before ending his
-  message, he wrote this heart-warming note:
-&lt;/p&gt;
-&lt;blockquote&gt;
-  &amp;lsquo;One of my goals is to be able to provide encouragement to
-  others who are developing their careers, just as others have
-  invested in mine, passing good blessings from one generation to
-  another.&amp;rsquo;
-&lt;/blockquote&gt;
-&lt;h2 id="the-ctf-scoreboard"&gt;The CTF Scoreboard&lt;a href="#the-ctf-scoreboard"&gt;&lt;/a&gt;&lt;/h2&gt;
-&lt;p&gt;
-  This story comes from 2019.  By then, I was no longer a
-  twenty-something engineer just starting out.  I was now a
-  middle-aged staff engineer with years of experience building both
-  low-level networking systems and database systems.  Most of my work
-  up to that point had been in C and C++.  I was now entering a new
-  phase of my career where I would be leading the development of
-  microservices written in Go and Python.  Like many people in this
-  profession, computing has long been one of my favourite hobbies.  So
-  although my professional work for the previous decade had focused on
-  C and C++, I had plenty of hobby projects in other languages,
-  including Python and Go.  As a result, switching gears from systems
-  programming to application development was a smooth transition for
-  me.  I cannot even say that I missed working in C and C++.  After
-  all, who wants to spend their days occasionally chasing memory bugs
-  in core dumps when you could be building features and delivering
-  real value to customers?
-&lt;/p&gt;
-&lt;p&gt;
-  In October 2019, during Cybersecurity Awareness Month, a Capture the
-  Flag (CTF) event was organised at our office.  The contest featured
-  all kinds of technical puzzles, ranging from SQL injection
-  challenges to insecure cryptography problems.  Some challenges also
-  involved reversing binaries and exploiting stack overflow issues.
-&lt;/p&gt;
-&lt;p&gt;
-  I am usually rather intimidated by such contests.  The whole idea of
-  competitive problem-solving under time pressure tends to make me
-  nervous.  But one of my colleagues persuaded me to participate in
-  the CTF.  And, somewhat to my surprise, I turned out to be rather
-  good at it.  Within about eight hours, I had solved roughly 90% of
-  the puzzles.  I finished at the top of the scoreboard.
-&lt;/p&gt;
-&lt;figure&gt;
-  &lt;img src="files/blog/ctf-2019.png" alt="Scoreboard of a Capture the Flag (CTF) event"&gt;
-  &lt;figcaption&gt;
-    CTF Scoreboard
-  &lt;/figcaption&gt;
-&lt;/figure&gt;
-&lt;p&gt;
-  In my younger days, I was generally known to be a good problem
-  solver.  I was often consulted when thorny problems needed solving
-  and I usually managed to deliver results.  I also enjoyed solving
-  puzzles.  I had a knack for them and happily spent hours, sometimes
-  days, working through obscure mathematical or technical puzzles and
-  sharing detailed write-ups with friends of the nerd variety.  Seen
-  in that light, my performance at the CTF probably should not have
-  surprised me.  Still, I was very pleased.  It was reassuring to know
-  that I could still rely on my systems programming experience to
-  solve obscure challenges.
-&lt;/p&gt;
-&lt;p&gt;
-  During the course of the contest, my performance became something of
-  a talking point in the office.  Colleagues occasionally stopped by
-  my desk to appreciate my progress in the CTF.  Two much younger
-  colleagues, both engineers I admired for their skill and
-  professionalism, were discussing the results nearby.  They were
-  speaking softly, but I could still overhear parts of their
-  conversation.  Curious, I leaned slightly and listened a bit more
-  carefully.  I wanted to know what these two people, whom I admired a
-  lot, thought about my performance.
-&lt;/p&gt;
-&lt;p&gt;
-  One of them remarked on how well I was doing in the contest.  The
-  other replied, 'Of course he is doing well.  He has more than ten
-  years of experience in C.'  At that moment, I realised that no
-  matter how well I solved those puzzles, the result would naturally
-  be credited to experience.  In my younger days, when I solved tricky
-  problems like these, people would sometimes call me smart.  Now
-  people simply saw it as a consequence of my experience.  Not that I
-  particularly care for labels such as 'smart' anyway, but it did make
-  me realise how things had changed.  I was now simply the person with
-  many years of experience.  Solving technical puzzles that involved
-  disassembling binaries, tracing execution paths and reconstructing
-  program logic was expected rather than remarkable.
-&lt;/p&gt;
-&lt;p&gt;
-  I continue to sharpen my technical skills to this day.  While my
-  technical results may now simply be attributed to experience, I hope
-  I can continue to make a good impression through my professionalism,
-  ethics and kindness towards the people I work with.  If those leave
-  a lasting impression, that is good enough for me.
-&lt;/p&gt;
-&lt;!-- ### --&gt;
-&lt;p&gt;
-  &lt;a href="https://susam.net/twenty-five-years-of-computing.html"&gt;Read on website&lt;/a&gt; |
-  &lt;a href="https://susam.net/tag/technology.html"&gt;#technology&lt;/a&gt; |
-  &lt;a href="https://susam.net/tag/programming.html"&gt;#programming&lt;/a&gt;
-&lt;/p&gt;
-
-</description>
-      <guid isPermaLink="true">tfyoc</guid>
-      <pubDate>Fri, 06 Feb 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
