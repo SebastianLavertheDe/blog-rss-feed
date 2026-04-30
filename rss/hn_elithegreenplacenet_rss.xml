@@ -7,7 +7,113 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Thu, 30 Apr 2026 00:05:35 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 30 Apr 2026 04:35:23 +0000</lastBuildDate>
+    <item>
+      <title>Thoughts on WebAssembly as a stack machine</title>
+      <link>https://eli.thegreenplace.net/2026/thoughts-on-webassembly-as-a-stack-machine/</link>
+      <description>&lt;p&gt;This week the article &lt;a class="reference external" href="https://purplesyringa.moe/blog/wasm-is-not-quite-a-stack-machine/"&gt;Wasm is not quite a stack machine&lt;/a&gt; has been
+making the rounds and has caught my eye. The post claims that WASM is not a pure
+stack machine because it has locals and is missing some stack manipulation
+operations like &lt;tt class="docutils literal"&gt;dup&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;swap&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;While I don't necessarily disagree, IMHO it's a bit of a semantic
+discussion because - to the best of my knowledge - there is no &lt;em&gt;formal&lt;/em&gt;
+definition of what is a stack machine. Wikipedia, for example,
+says:&lt;/p&gt;
+&lt;blockquote&gt;
+[...], a stack machine is a computer processor or a process virtual machine in
+which the primary interaction is moving short-lived temporary values to and
+from a push-down stack.&lt;/blockquote&gt;
+&lt;p&gt;WASM certainly fits this definition; the &lt;em&gt;primary&lt;/em&gt; interaction is through the
+stack, though WASM is augmented with an infinite register file (locals).
+The more purist stack machines like Forth are only limited to the stack and a
+memory (pointers into which are managed on the stack); WASM has these too, plus
+the registers.&lt;/p&gt;
+&lt;p&gt;Speaking of Forth, the mention of &lt;tt class="docutils literal"&gt;dup&lt;/tt&gt; reminded me of my own impressions
+of programming in that language, documented in my post about
+&lt;a class="reference external" href="https://eli.thegreenplace.net/2025/implementing-forth-in-go-and-c/"&gt;implementing Forth in Go and C&lt;/a&gt;. There,
+I highlighted the following essential library function for Forth; it adds an
+addend to a value stored in memory.&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kn"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;+!&lt;/span&gt;&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;( addend addr -- )&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;tuck&lt;/span&gt;&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="c1"&gt;( addr addend addr )&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;@&lt;/span&gt;&lt;span class="w"&gt;         &lt;/span&gt;&lt;span class="c1"&gt;( addr addend value-at-addr )&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;+&lt;/span&gt;&lt;span class="w"&gt;         &lt;/span&gt;&lt;span class="c1"&gt;( addr updated-value )&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;swap&lt;/span&gt;&lt;span class="w"&gt;      &lt;/span&gt;&lt;span class="c1"&gt;( updated-value addr )&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="k"&gt;!&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;And lamented how difficult it is to understand such code without the
+detailed stack view in comments alongside it.&lt;/p&gt;
+&lt;p&gt;I find it much simpler to reason about this WASM code:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;func&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;export&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;add_to_byte&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="nv"&gt;$addr&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;param&lt;/span&gt; &lt;span class="nv"&gt;$delta&lt;/span&gt; &lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32.store8&lt;/span&gt;
+        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$addr&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32.add&lt;/span&gt;
+            &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;i32.load8_u&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$addr&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+            &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$delta&lt;/span&gt;&lt;span class="p"&gt;)))&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;You may say this is cheating because folded WASM instructions help readability
+and they're just syntactic sugar; OK, here's the linear code:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$addr&lt;/span&gt;
+&lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$addr&lt;/span&gt;
+&lt;span class="nb"&gt;i32.load8_u&lt;/span&gt;
+&lt;span class="nb"&gt;local.get&lt;/span&gt; &lt;span class="nv"&gt;$delta&lt;/span&gt;
+&lt;span class="nb"&gt;i32.add&lt;/span&gt;
+&lt;span class="nb"&gt;i32.store8&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;It's still very readable, because - while the stack is used for all the
+calculations and actual commands - some of the data lives in named &amp;quot;registers&amp;quot;
+instead of on the stack. So we don't need all those tuck-swap contortions to get
+things into the right order.&lt;/p&gt;
+&lt;p&gt;One might worry about the duplicated &lt;tt class="docutils literal"&gt;local.get $addr&lt;/tt&gt;; wouldn't a real &lt;tt class="docutils literal"&gt;dup&lt;/tt&gt;
+be better? Well, not in terms of readability, as we've already discussed. How
+about performance? Since the stack VM is just an abstraction and the underlying
+CPUs executing this code are register machines anyway, the answer is no - it
+doesn't matter at all.&lt;/p&gt;
+&lt;p&gt;Modern compiler engineers were forged in the fires of C and its descendants;
+arbitrary control flow, arbitrary register and memory access, anything goes.
+Compilers are quite sophisticated. Let's see how &lt;tt class="docutils literal"&gt;wasmtime&lt;/tt&gt; compiles our
+&lt;tt class="docutils literal"&gt;add_to_byte&lt;/tt&gt; to native code (using &lt;tt class="docutils literal"&gt;wasmtime explore&lt;/tt&gt; with its
+default &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;opt-level=2&lt;/span&gt;&lt;/tt&gt;); comments are added by me:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="c1"&gt;// Prologue&lt;/span&gt;
+&lt;span class="n"&gt;push&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;rbp&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="n"&gt;mov&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;rbp&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;rsp&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// wasmtime&amp;#39;s VM context pointer lives in rdi; 0x38 is likely its offset&lt;/span&gt;
+&lt;span class="c1"&gt;// to the default linear memory. Therefore, r10 will hold the base address&lt;/span&gt;
+&lt;span class="c1"&gt;// of the linear memory buffer&lt;/span&gt;
+&lt;span class="n"&gt;mov&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;r10&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;qword&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;ptr&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;rdi&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mh"&gt;0x38&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// The first parameter ($addr) is in edx; since WASM values are i32, it&amp;#39;s&lt;/span&gt;
+&lt;span class="c1"&gt;// zero-extended into the 64-bit r11 by copying into r11d&lt;/span&gt;
+&lt;span class="n"&gt;mov&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;r11d&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;edx&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// r10+r11 is memory[$addr]; this loads the current value into rsi&lt;/span&gt;
+&lt;span class="c1"&gt;// (zero-extending from 8 bits)&lt;/span&gt;
+&lt;span class="n"&gt;movzx&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;rsi&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;byte&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;ptr&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;r10&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;r11&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// ecx is the first parameter ($delta); this adds the addend to the&lt;/span&gt;
+&lt;span class="c1"&gt;// current value&lt;/span&gt;
+&lt;span class="n"&gt;add&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;esi&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;ecx&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// Store cur_value+addend back into memory[$addr]&lt;/span&gt;
+&lt;span class="n"&gt;mov&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;byte&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;ptr&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;r10&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;r11&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sil&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// Epilogue&lt;/span&gt;
+&lt;span class="n"&gt;mov&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;rsp&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;rbp&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="n"&gt;pop&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;rbp&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="n"&gt;ret&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This is pretty much the code we'd expect to be emitted for the C statement
+&lt;tt class="docutils literal"&gt;mem[addr] += addend&lt;/tt&gt;, or if we were writing x86-64 assembly by hand. The
+compiler had no difficulty figuring out that two consecutive loads from
+the same WASM local produce the same value and do not - in fact - have to be
+duplicated. The WASM model makes it rather easy, because you can't alias locals;
+as long as there are no intervening writes into the same local, multiple reads
+are known to produce the same value (redundant load elimination).&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-04-29:/2026/thoughts-on-webassembly-as-a-stack-machine/</guid>
+      <pubDate>Wed, 29 Apr 2026 19:28:00 -0700</pubDate>
+    </item>
     <item>
       <title>Debugging WASM in Chrome DevTools</title>
       <link>https://eli.thegreenplace.net/2026/debugging-wasm-in-chrome-devtools/</link>
@@ -714,245 +820,6 @@ there are &lt;object class="valign-m6" data="https://eli.thegreenplace.net/image
 </description>
       <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-28:/2026/notes-on-lagrange-interpolating-polynomials/</guid>
       <pubDate>Sat, 28 Feb 2026 18:58:00 -0800</pubDate>
-    </item>
-    <item>
-      <title>Notes on Linear Algebra for Polynomials</title>
-      <link>https://eli.thegreenplace.net/2026/notes-on-linear-algebra-for-polynomials/</link>
-      <description>&lt;p&gt;We’ll be working with the set &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;, real polynomials
-of degree &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/189de1175926fa11245f32e4d48aa2a7ab2435b4.svg" style="height: 15px;" type="image/svg+xml"&gt;\leq n&lt;/object&gt;. Such polynomials can be expressed using
-&lt;object class="valign-m2" data="https://eli.thegreenplace.net/images/math/db2a943efe93404e43f6ecbec79e0a4fe81b1649.svg" style="height: 14px;" type="image/svg+xml"&gt;n+1&lt;/object&gt; scalar coefficients &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/1ba9b59bdee92f38c1698c784b67ba70f803331d.svg" style="height: 11px;" type="image/svg+xml"&gt;a_i&lt;/object&gt; as follows:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/dedb05af255bc66694c47ba554c5366bdc3b2e12.svg" style="height: 22px;" type="image/svg+xml"&gt;\[p(x)=a_0+a_1 x + a_2 x^2 + \cdots + a_n x^n\]&lt;/object&gt;
-&lt;div class="section" id="vector-space"&gt;
-&lt;h2&gt;Vector space&lt;/h2&gt;
-&lt;p&gt;The set &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;, along with addition of polynomials and
-scalar multiplication form a &lt;em&gt;vector space&lt;/em&gt;. As a proof, let’s review
-how the vector space axioms are satisfied. We’ll use &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt;,
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/90425caaec1646540a7a9049146bf2606d9dbd0d.svg" style="height: 19px;" type="image/svg+xml"&gt;q(x)&lt;/object&gt; and &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/9468a2656a6201bfa194ec81fb0f78352c9666c9.svg" style="height: 19px;" type="image/svg+xml"&gt;r(x)&lt;/object&gt; as arbitrary polynomials from the set
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt; for the demonstration. Similarly, &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/86f7e437faa5a7fce15d1ddcb9eaeaea377667b8.svg" style="height: 8px;" type="image/svg+xml"&gt;a&lt;/object&gt; and
-&lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98.svg" style="height: 13px;" type="image/svg+xml"&gt;b&lt;/object&gt; are arbitrary scalars in &lt;img alt="\mathbb{R}" class="valign-0" src="https://eli.thegreenplace.net/images/math/0ed839b111fe0e3ca2b2f618b940893eaea88a57.png" style="height: 12px;" /&gt;.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Associativity of vector addition&lt;/strong&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/45656c48313e3e3566577fdf014d18f31080ed42.svg" style="height: 19px;" type="image/svg+xml"&gt;\[p(x)+[q(x)+r(x)]=p(x)+q(x)+r(x)=[p(x)+q(x)]+r(x)\]&lt;/object&gt;
-&lt;p&gt;This is trivial because addition of polynomials is associative  &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;.
-Commutativity is similarly trivial, for the same reason:&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Commutativity of vector addition&lt;/strong&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/4e72ebe69a19da51a0e7319eaa997c671024d3c6.svg" style="height: 19px;" type="image/svg+xml"&gt;\[p(x)+q(x)=q(x)+p(x)\]&lt;/object&gt;
-&lt;p&gt;&lt;strong&gt;Identity element of vector addition&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;The zero polynomial 0 serves as an identity element.
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/1910380c6f610451862989641479600496131408.svg" style="height: 19px;" type="image/svg+xml"&gt;\forall p(x)\in P_n(\mathbb{R})&lt;/object&gt;, we have
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/d5aec4c833b53c3aee94eed8b9d7c6bd8bb577d9.svg" style="height: 19px;" type="image/svg+xml"&gt;0 + p(x) = p(x)&lt;/object&gt;.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Inverse element of vector addition&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;For each &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt;, we can use &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/eaa3a7a017152661a9e148063a189da51e966773.svg" style="height: 19px;" type="image/svg+xml"&gt;q(x)=-p(x)&lt;/object&gt; as the additive
-inverse, because &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/a178e59633deb255cbecbdaecb1980ee53ec94c7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)+q(x)=0&lt;/object&gt;.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Identity element of scalar multiplication&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;The scalar 1 serves as an identity element for scalar multiplication.
-For each &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt;, it’s true that &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/5ba95500b0306ee6283d5d71d1a6aa41c2c0b35b.svg" style="height: 19px;" type="image/svg+xml"&gt;1\cdot p(x)=p(x)&lt;/object&gt;.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Associativity of scalar multiplication&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;For any two scalars &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/86f7e437faa5a7fce15d1ddcb9eaeaea377667b8.svg" style="height: 8px;" type="image/svg+xml"&gt;a&lt;/object&gt; and &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98.svg" style="height: 13px;" type="image/svg+xml"&gt;b&lt;/object&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/bc050a41a2584e826e96409fb19fda0347fa9b69.svg" style="height: 19px;" type="image/svg+xml"&gt;\[a[b\cdot p(x)]=ab\cdot p(x)=[ab]\cdot p(x)\]&lt;/object&gt;
-&lt;p&gt;&lt;strong&gt;Distributivity of scalar multiplication over vector addition&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;For any &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt;, &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/90425caaec1646540a7a9049146bf2606d9dbd0d.svg" style="height: 19px;" type="image/svg+xml"&gt;q(x)&lt;/object&gt; and scalar &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/86f7e437faa5a7fce15d1ddcb9eaeaea377667b8.svg" style="height: 8px;" type="image/svg+xml"&gt;a&lt;/object&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/5e0141340db285d60c642b145119b3f279e77518.svg" style="height: 19px;" type="image/svg+xml"&gt;\[a\cdot[p(x)+q(x)]=a\cdot p(x)+a\cdot q(x)\]&lt;/object&gt;
-&lt;p&gt;&lt;strong&gt;Distributivity of scalar multiplication over scalar addition&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;For any scalars &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/86f7e437faa5a7fce15d1ddcb9eaeaea377667b8.svg" style="height: 8px;" type="image/svg+xml"&gt;a&lt;/object&gt; and &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98.svg" style="height: 13px;" type="image/svg+xml"&gt;b&lt;/object&gt; and polynomial &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/29085125ec39218fe745bc4bf6f2aac269a42442.svg" style="height: 19px;" type="image/svg+xml"&gt;\[[a+b]\cdot p(x)=a\cdot p(x) + b\cdot p(x)\]&lt;/object&gt;
-&lt;/div&gt;
-&lt;div class="section" id="linear-independence-span-and-basis"&gt;
-&lt;h2&gt;Linear independence, span and basis&lt;/h2&gt;
-&lt;p&gt;Since we’ve shown that polynomials in &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt; form a
-vector space, we can now build additional linear algebraic definitions
-on top of that.&lt;/p&gt;
-&lt;p&gt;A set of &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/13fbd79c3d390e5d6585a21e11ff5ec1970cff0c.svg" style="height: 12px;" type="image/svg+xml"&gt;k&lt;/object&gt; polynomials &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/5375fa35be4aee1860db8d7f943aa13b9a6983c2.svg" style="height: 19px;" type="image/svg+xml"&gt;p_k(x)\in P_n(\mathbb{R})&lt;/object&gt; is said
-to be &lt;em&gt;linearly independent&lt;/em&gt; if&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/11f5abb0d3349e337653153e9932b683f33cf5f3.svg" style="height: 53px;" type="image/svg+xml"&gt;\[\sum_{i=1}^{k}a_i p_i(x)=0\]&lt;/object&gt;
-&lt;p&gt;implies &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/936812b8cbbba06fa5948bf8f9393e0bd9abc223.svg" style="height: 15px;" type="image/svg+xml"&gt;a_i=0 \quad \forall i&lt;/object&gt;. In words, the only linear
-combination resulting in the zero vector is when all coefficients are 0.&lt;/p&gt;
-&lt;p&gt;As an example, let’s discuss the fundamental building blocks of
-polynomials in &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;: the set
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/dd30851f93c58a2397e24da06afb6c865f1fd4d6.svg" style="height: 20px;" type="image/svg+xml"&gt;\{1, x, x^2, \dots x^n\}&lt;/object&gt;. These are linearly independent
-because:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/9a1a0398b10978c0bb81a5ee5e9392e12c3fb031.svg" style="height: 19px;" type="image/svg+xml"&gt;\[a_0 + a_1 x + a_2 x^2 + \cdots a_n x^n=0\]&lt;/object&gt;
-&lt;p&gt;is true only for zero polynomial, in which all the coefficients
-&lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/fc7c49cdcf0b6f4f244a8e180fc8df4513e6a42e.svg" style="height: 15px;" type="image/svg+xml"&gt;a_i=0&lt;/object&gt;. This comes from the very definition of polynomials.
-Moreover, this set &lt;em&gt;spans&lt;/em&gt; the entire &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt; because
-every polynomial can be (by definition) expressed as a linear combination of
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/dd30851f93c58a2397e24da06afb6c865f1fd4d6.svg" style="height: 20px;" type="image/svg+xml"&gt;\{1, x, x^2, \dots x^n\}&lt;/object&gt;.&lt;/p&gt;
-&lt;p&gt;Since we’ve shown these basic polynomials are linearly independent and
-span the entire vector space, they are a &lt;em&gt;basis&lt;/em&gt; for the space. In fact,
-this set has a special name: the &lt;em&gt;monomial basis&lt;/em&gt; (because a monomial is
-a polynomial with a single term).&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="checking-if-an-arbitrary-set-of-polynomials-is-a-basis"&gt;
-&lt;h2&gt;Checking if an arbitrary set of polynomials is a basis&lt;/h2&gt;
-&lt;p&gt;Suppose we have some set polynomials, and we want to know if these form
-a basis for &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;. How do we go about it?&lt;/p&gt;
-&lt;p&gt;The idea is using linear algebra the same way we do for any other vector
-space. Let’s use a concrete example to demonstrate:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/0a1ff12f973cf607bf879deb912333051a671de5.svg" style="height: 22px;" type="image/svg+xml"&gt;\[Q=\{1-x, x, 2x+x^2\}\]&lt;/object&gt;
-&lt;p&gt;Is the set &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/c3156e00d3c2588c639e0d3cf6821258b05761c7.svg" style="height: 16px;" type="image/svg+xml"&gt;Q&lt;/object&gt; a basis for &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;? We’ll start by
-checking whether the members of &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/c3156e00d3c2588c639e0d3cf6821258b05761c7.svg" style="height: 16px;" type="image/svg+xml"&gt;Q&lt;/object&gt; are linearly independent.
-Write:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/41bdcc040d729f93edeb130b51a9ac3ee66b72d5.svg" style="height: 22px;" type="image/svg+xml"&gt;\[a_0(1-x)+a_1 x + a_2(2x+x^2)=0\]&lt;/object&gt;
-&lt;p&gt;By regrouping, we can turn this into:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/73036a5532059c810bb37bd3a8dc1abdb85c9b1f.svg" style="height: 22px;" type="image/svg+xml"&gt;\[a_0 + (a_1-a_0+2a_2)x+a_2 x^2=0\]&lt;/object&gt;
-&lt;p&gt;For this to be true, the coefficient of each monomial has to be zero;
-mathematically:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/4e5d5010eec23b675caf4b1936082d48a0b9ec1f.svg" style="height: 65px;" type="image/svg+xml"&gt;\[\begin{aligned}
-    a_0&amp;amp;=0\\
-    a_1-a_0+2a_2&amp;amp;=0\\
-    a2&amp;amp;=0\\
-\end{aligned}\]&lt;/object&gt;
-&lt;p&gt;In matrix form:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/78c214c04a41b196844997d84ceeb8df0e5d76e2.svg" style="height: 64px;" type="image/svg+xml"&gt;\[\begin{bmatrix}
-    1 &amp;amp; 0 &amp;amp; 0\\
-    -1 &amp;amp; 1 &amp;amp; 2\\
-    0 &amp;amp; 0 &amp;amp; 1\\
-\end{bmatrix}
-\begin{bmatrix}a_0\\ a_1\\ a_2\end{bmatrix}
-=\begin{bmatrix}0\\ 0\\ 0\end{bmatrix}\]&lt;/object&gt;
-&lt;p&gt;We know how to solve this, by reducing the matrix into &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Row_echelon_form"&gt;row-echelon
-form&lt;/a&gt;. It’s easy to
-see that the reduced row-echelon form of this specific matrix is
-&lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/ca73ab65568cd125c2d27a22bbd9e863c10b675d.svg" style="height: 12px;" type="image/svg+xml"&gt;I&lt;/object&gt;, the identity matrix. Therefore, this set of equations has a
-single solution: &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/936812b8cbbba06fa5948bf8f9393e0bd9abc223.svg" style="height: 15px;" type="image/svg+xml"&gt;a_i=0 \quad \forall i&lt;/object&gt;  &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;We’ve shown that the set &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/c3156e00d3c2588c639e0d3cf6821258b05761c7.svg" style="height: 16px;" type="image/svg+xml"&gt;Q&lt;/object&gt; is linearly independent. Now let’s
-show that it &lt;em&gt;spans&lt;/em&gt; the space &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;. We want to
-analyze:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/4ddca074738e89bc063a29a7cd67215ada8fffe5.svg" style="height: 22px;" type="image/svg+xml"&gt;\[a_0(1-x)+a_1 x + a_2(2x+x^2)=\alpha +\beta x + \gamma x^2\]&lt;/object&gt;
-&lt;p&gt;And find the coefficients &lt;object class="valign-m3" data="https://eli.thegreenplace.net/images/math/1ba9b59bdee92f38c1698c784b67ba70f803331d.svg" style="height: 11px;" type="image/svg+xml"&gt;a_i&lt;/object&gt; that satisfy this for any
-arbitrary &lt;img alt="\alpha" class="valign-0" src="https://eli.thegreenplace.net/images/math/f7c665b45932a814215e979bc2611080b4948e68.png" style="height: 8px;" /&gt;, &lt;img alt="\beta" class="valign-m4" src="https://eli.thegreenplace.net/images/math/6499d503bfc00cadae1440b191c52a8632e2f8c4.png" style="height: 16px;" /&gt; and &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/67833ee2012ec1c6254b6c009dc72bf0dc48aa6d.svg" style="height: 12px;" type="image/svg+xml"&gt;\gamma&lt;/object&gt;. We proceed
-just as before, by regrouping on the left side:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/7bcb2f196e39a4b859cddf4123ee02481940fafa.svg" style="height: 22px;" type="image/svg+xml"&gt;\[a_0 + (a_1-a_0+2a_2)x+a_2 x^2=\alpha +\beta x + \gamma x^2\]&lt;/object&gt;
-&lt;p&gt;and equating the coefficient of each power of &lt;img alt="x" class="valign-0" src="https://eli.thegreenplace.net/images/math/11f6ad8ec52a2984abaafd7c3b516503785c2072.png" style="height: 8px;" /&gt; separately:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/f32a037534eba0f569a01b0d2e763b9ff3c54587.svg" style="height: 65px;" type="image/svg+xml"&gt;\[\begin{aligned}
-    a_0&amp;amp;=\alpha\\
-    a_1-a_0+2a_2&amp;amp;=\beta\\
-    a2&amp;amp;=\gamma\\
-\end{aligned}\]&lt;/object&gt;
-&lt;p&gt;If we turn this into matrix form, the matrix of coefficients is exactly
-the same as before. So we know there’s a single solution, and by
-rearranging the matrix into &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/ca73ab65568cd125c2d27a22bbd9e863c10b675d.svg" style="height: 12px;" type="image/svg+xml"&gt;I&lt;/object&gt;, the solution will appear on the
-right hand side. It doesn’t matter for the moment what the actual
-solution is, as long as it exists and is unique. We’ve shown that
-&lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/c3156e00d3c2588c639e0d3cf6821258b05761c7.svg" style="height: 16px;" type="image/svg+xml"&gt;Q&lt;/object&gt; spans the space!&lt;/p&gt;
-&lt;p&gt;Since the set &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/c3156e00d3c2588c639e0d3cf6821258b05761c7.svg" style="height: 16px;" type="image/svg+xml"&gt;Q&lt;/object&gt; is linearly independent and spans
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;, it is a &lt;em&gt;basis&lt;/em&gt; for the space.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="inner-product"&gt;
-&lt;h2&gt;Inner product&lt;/h2&gt;
-&lt;p&gt;I’ve discussed inner products for functions in &lt;a class="reference external" href="https://eli.thegreenplace.net/2025/hilbert-space-treating-functions-as-vectors/"&gt;the post about Hilbert
-space&lt;/a&gt;.
-Well, &lt;em&gt;polynomials are functions&lt;/em&gt;, so we can define an inner product
-using integrals as follows &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/a7073ffb2e322d7c7b9118b0fcc517c0c484fcb3.svg" style="height: 44px;" type="image/svg+xml"&gt;\[\langle p, q \rangle = \int_{a}^{b} p(x) q(x) w(x) \, dx\]&lt;/object&gt;
-&lt;p&gt;Where the bounds &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/86f7e437faa5a7fce15d1ddcb9eaeaea377667b8.svg" style="height: 8px;" type="image/svg+xml"&gt;a&lt;/object&gt; and &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/e9d71f5ee7c92d6dc9e92ffdad17b8bd49418f98.svg" style="height: 13px;" type="image/svg+xml"&gt;b&lt;/object&gt; are arbitrary, and could be
-infinite. Whenever we deal with integrals we worry about convergence; in
-my post on Hilbert spaces, we only talked about &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/f1aae083af2c79348dd78712847ebd55537fa6e6.svg" style="height: 15px;" type="image/svg+xml"&gt;L^2&lt;/object&gt; - the square
-integrable functions. Most polynomials are not square integrable,
-however. Therefore, we can restrict this using either:&lt;/p&gt;
-&lt;ol class="arabic simple"&gt;
-&lt;li&gt;A special &lt;em&gt;weight function&lt;/em&gt; &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/02e80b7cfa178127b4c5282079352105a2c55cf7.svg" style="height: 19px;" type="image/svg+xml"&gt;w(x)&lt;/object&gt; to make sure the inner
-product integral converges&lt;/li&gt;
-&lt;li&gt;Set finite bounds on the integral, and then we can just set
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/62c32bb13769e79e5a65343da35baaa514b873e3.svg" style="height: 19px;" type="image/svg+xml"&gt;w(x)=1&lt;/object&gt;.&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;Let’s use the latter, and restrict the bounds into the range
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/d5610f38fe75d8d90ac09fd335bad6823492589d.svg" style="height: 18px;" type="image/svg+xml"&gt;[-1,1]&lt;/object&gt;, setting &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/62c32bb13769e79e5a65343da35baaa514b873e3.svg" style="height: 19px;" type="image/svg+xml"&gt;w(x)=1&lt;/object&gt;. We have the following inner
-product:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/9f9575d1c81856a7fd8b8b71352a33119fe023e3.svg" style="height: 44px;" type="image/svg+xml"&gt;\[\langle p, q \rangle = \int_{-1}^{1} p(x) q(x) \, dx\]&lt;/object&gt;
-&lt;p&gt;Let’s check that this satisfies the inner product space conditions.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Conjugate symmetry&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;Since real multiplication is commutative, we can write:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/e5584cd03887f39cb8b7c8cbec3ca64a1d4347da.svg" style="height: 44px;" type="image/svg+xml"&gt;\[\langle p, q \rangle = \int_{-1}^{1} p(x) q(x) \, dx =\int_{-1}^{1} q(x) p(x) \, dx=\langle q, p \rangle\]&lt;/object&gt;
-&lt;p&gt;We deal in the reals here, so we can safely ignore complex conjugation.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Linearity in the first argument&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;Let &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/c9b738cad43aea3a80a02e1f075a09868eb73e26.svg" style="height: 19px;" type="image/svg+xml"&gt;p_1,p_2,q\in P_n(\mathbb{R})&lt;/object&gt; and &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/44a2f2358e9ec13e88b5a266ee1bd804a43c5864.svg" style="height: 16px;" type="image/svg+xml"&gt;a,b\in \mathbb{R}&lt;/object&gt;.
-We want to show that&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/d25bedb6d14cf20fbf28b583412dfd9ac14f6cf3.svg" style="height: 19px;" type="image/svg+xml"&gt;\[\langle ap_1+bp_2,q \rangle = a\langle p_1,q\rangle +b\langle p_2,q\rangle\]&lt;/object&gt;
-&lt;p&gt;Expand the left-hand side using our definition of inner product:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/3549d9fc0999c0fadd0458ece4609f5b08780052.svg" style="height: 95px;" type="image/svg+xml"&gt;\[\begin{aligned}
-    \langle ap_1+bp_2,q \rangle&amp;amp;=\int_{-1}^{1} (a p_1(x)+b p_2(x)) q(x) \, dx\\
-    &amp;amp;=a\int_{-1}^{1} p_1(x) q(x) \, dx+b\int_{-1}^{1} p_2(x) q(x) \, dx
-\end{aligned}\]&lt;/object&gt;
-&lt;p&gt;The result is equivalent to
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7239344e074d1e86c42e73c5470999705411aacc.svg" style="height: 19px;" type="image/svg+xml"&gt;a\langle p_1,q\rangle +b\langle p_2,q\rangle&lt;/object&gt;.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Positive-definiteness&lt;/strong&gt;:&lt;/p&gt;
-&lt;p&gt;We want to show that for nonzero &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/8a22a4ced0990db5e8d521832fddacd240fc599f.svg" style="height: 19px;" type="image/svg+xml"&gt;p\in P_n(\mathbb{R})&lt;/object&gt;, we have
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/c8d11b2d1c5d8a6529b6068917407194be2a7b2d.svg" style="height: 19px;" type="image/svg+xml"&gt;\langle p, p\rangle &amp;gt; 0&lt;/object&gt;. First of all, since &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/5e91383f4084e35136e78c00570cf313965465e9.svg" style="height: 20px;" type="image/svg+xml"&gt;p(x)^2\geq0&lt;/object&gt;
-for all &lt;img alt="x" class="valign-0" src="https://eli.thegreenplace.net/images/math/11f6ad8ec52a2984abaafd7c3b516503785c2072.png" style="height: 8px;" /&gt;, it’s true that:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/44dd56558739e571dee1200a50039374e485e05b.svg" style="height: 44px;" type="image/svg+xml"&gt;\[\langle p, p\rangle=\int_{-1}^{1}p(x)^2\, dx\geq 0\]&lt;/object&gt;
-&lt;p&gt;What about the result 0 though? Well, let’s say that&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/31b9ef374de82013e825fc205670d3ebe0dfc541.svg" style="height: 44px;" type="image/svg+xml"&gt;\[\int_{-1}^{1}p(x)^2\, dx=0\]&lt;/object&gt;
-&lt;p&gt;Since &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/11bf1f75edece9993925ac94a0a1f158762c2111.svg" style="height: 20px;" type="image/svg+xml"&gt;p(x)^2&lt;/object&gt; is a non-negative function, this means that the
-integral of a non-negative function ends up being 0. But &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/7f86e6c6bb632c1ca2518f269fc1cc1b6737d4f7.svg" style="height: 19px;" type="image/svg+xml"&gt;p(x)&lt;/object&gt; is
-a polynomial, so it’s &lt;em&gt;continuous&lt;/em&gt;, and so is &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/11bf1f75edece9993925ac94a0a1f158762c2111.svg" style="height: 20px;" type="image/svg+xml"&gt;p(x)^2&lt;/object&gt;. If the
-integral of a continuous non-negative function is 0, it means the
-function itself is 0. Had it been non-zero in any place, the integral
-would necessarily have to be positive as well.&lt;/p&gt;
-&lt;p&gt;We’ve proven that &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/9de22135888f7085d51d8b1cbd987d2c68a050ec.svg" style="height: 19px;" type="image/svg+xml"&gt;\langle p, p\rangle=0&lt;/object&gt; only when &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/516b9783fca517eecbd1d064da2d165310b19759.svg" style="height: 12px;" type="image/svg+xml"&gt;p&lt;/object&gt; is
-the zero polynomial. The positive-definiteness condition is satisfied.&lt;/p&gt;
-&lt;p&gt;In conclusion, &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt; along with the inner product
-we’ve defined forms an &lt;em&gt;inner product space&lt;/em&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="orthogonality"&gt;
-&lt;h2&gt;Orthogonality&lt;/h2&gt;
-&lt;p&gt;Now that we have an inner product, we can define orthogonality on
-polynomials: two polynomials &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/d2926c1571d4e1b8561077d3308b7cfb6d211e59.svg" style="height: 12px;" type="image/svg+xml"&gt;p,q&lt;/object&gt; are &lt;em&gt;orthogonal&lt;/em&gt; (w.r.t. our
-inner product) iff&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/b994221c38da6d42afb973d4318ac59c4940f545.svg" style="height: 44px;" type="image/svg+xml"&gt;\[\langle p,q\rangle=\int_{-1}^{1}p(x)q(x)\, dx=0\]&lt;/object&gt;
-&lt;p&gt;Contrary to expectation  &lt;a class="footnote-reference" href="#footnote-4" id="footnote-reference-4"&gt;[4]&lt;/a&gt;, the monomial basis polynomials are &lt;em&gt;not&lt;/em&gt;
-orthogonal using our definition of inner product.&lt;/p&gt;
-&lt;p&gt;For example, calculating the inner product for &lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/356a192b7913b04c54574d18c28d46e6395428ab.svg" style="height: 12px;" type="image/svg+xml"&gt;1&lt;/object&gt; and
-&lt;object class="valign-0" data="https://eli.thegreenplace.net/images/math/7046d961a8144b7b2c2da6066849a9f889ff2ac9.svg" style="height: 15px;" type="image/svg+xml"&gt;x^2&lt;/object&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/c6937eec30d2a69a76efdbd489e70d3ad18c0c29.svg" style="height: 47px;" type="image/svg+xml"&gt;\[\langle 1,x^2\rangle=\int_{-1}^{1}x^2\, dx=\frac{x^3}{3}\biggr|_{-1}^{1}=\frac{2}{3}\]&lt;/object&gt;
-&lt;p&gt;There are other sets of polynomials that &lt;em&gt;are&lt;/em&gt; orthogonal using our
-inner product. For example, the &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Legendre_polynomials"&gt;Legendre
-polynomials&lt;/a&gt;; but
-this is a topic for another post.&lt;/p&gt;
-&lt;hr class="docutils" /&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;There’s a level of basic algebra below which we won’t descend in
-these notes. We could break this statement further down by saying
-that something like &lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/bdcf820e656d6ef78cf1729b58556a6a9e2e9fd4.svg" style="height: 21px;" type="image/svg+xml"&gt;a_i x^i + a_j x^j&lt;/object&gt; can be added to
-&lt;object class="valign-m6" data="https://eli.thegreenplace.net/images/math/e2d0aea0ffca9c5c9870d56c7f0247349f759f49.svg" style="height: 21px;" type="image/svg+xml"&gt;b_i x^i + b_j x^j&lt;/object&gt; by adding each power of &lt;img alt="x" class="valign-0" src="https://eli.thegreenplace.net/images/math/11f6ad8ec52a2984abaafd7c3b516503785c2072.png" style="height: 8px;" /&gt;
-separately for any &lt;img alt="i" class="valign-0" src="https://eli.thegreenplace.net/images/math/042dc4512fa3d391c5170cf3aa61e6a638f84342.png" style="height: 12px;" /&gt; and &lt;object class="valign-m4" data="https://eli.thegreenplace.net/images/math/5c2dd944dde9e08881bef0894fe7b22a5c9c4b06.svg" style="height: 16px;" type="image/svg+xml"&gt;j&lt;/object&gt;, but let’s just take it
-for granted.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;Obviously, this specific set of equations is quite trivial to solve
-without matrices; I just want to demonstrate the more general
-approach. Once we have a system of linear equations, the whole
-toolbox of linear algebra is at our disposal. For example, we could
-also have checked the determinant and seen it’s non-zero, which means
-that a square matrix is invertible, and in this case has a single
-solution of zeroes.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;And actually with this (or any valid) inner product,
-&lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt; indeed forms a Hilbert space, because it’s
-finite-dimensional, and every finite-dimensional inner product space
-is complete.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-4" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-4"&gt;[4]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;Because of how naturally this set spans &lt;object class="valign-m5" data="https://eli.thegreenplace.net/images/math/66e617fc4a3781fe03dcf20effb656feaa81a47e.svg" style="height: 19px;" type="image/svg+xml"&gt;P_n(\mathbb{R})&lt;/object&gt;. And
-indeed, we can define alternative inner products using which
-monomials are orthogonal.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-02-25:/2026/notes-on-linear-algebra-for-polynomials/</guid>
-      <pubDate>Wed, 25 Feb 2026 18:34:00 -0800</pubDate>
     </item>
   </channel>
 </rss>
