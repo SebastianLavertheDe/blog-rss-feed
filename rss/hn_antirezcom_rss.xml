@@ -9,7 +9,39 @@ http://antirez.com
 </link>
     <description>Description pending</description>
     <language>en</language>
-    <lastBuildDate>Mon, 04 May 2026 14:12:29 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 04 May 2026 16:51:23 +0000</lastBuildDate>
+    <item>
+      <title>
+Redis array type: short story of a long development
+</title>
+      <link>
+http://antirez.com/news/164
+</link>
+      <description>I started working on the new Array data type for Redis in the first days of January. The PR landed the repository only now, so this code was cooked for four months. I worked at the implementation kinda part time (kinda because many weeks were actually full time, sometimes to detach yourself from the keyboard is complicated), and even before LLMs the implementation was likely something I could do in four months. What changed is that in the same time span, I was able to do a lot more. This is the short story of what happened.
+&lt;br&gt;
+&lt;br&gt;In the first month I just wrote the specification document. The rationale for the new data type, the C structures, the sparse representation used, the exact semantics of the array cursor for ring buffer and ARINSERT. I started writing for days a long specification by hand, then I paired with Opus initially, then GPT 5.3 was released and I switched all the design and development with Codex. Since then I use only GPT 5.x for system programming tasks. Thanks to AI, the specification evolved a lot, via back and forth of feedback, intellectual challenges about what was the best design, what was the right compromise, what was too engineered and what not.
+&lt;br&gt;
+&lt;br&gt;Starting from the second month, I started the implementation using automatic programming (auto coding if you prefer), constantly reviewing the developed code. Then I realized that the level of indirection I picked was wrong. I really wanted people to be able to do ARSET myarray 293842948324 foo and everything to still work without huge allocations. The two levels of directory + slices (sparse and dense) I had were not enough. Because I had AI, I took no compromises, and I decided to go the extra mile. Once certain conditions are reached, the data structure internally changes shape, and becomes a super directory of sliced dense directories, that also point to the actual array slices (4096 elements per slice, by default). This design provided still the internal "is actually an array" representation I wanted, and the memory characteristics I seeked, while being able, for ARSCAN, and ARPOP, to scan the existing arrays taking a time proportional to the existing elements and not to the range span.
+&lt;br&gt;
+&lt;br&gt;Then, it was time to read all the code, line by line. Everything was working, and this type has massive testing, thanks, again to AI, but still things that superficially work do not mean they are optimal. I found many small inefficiencies or design errors that I didn't want, so I started a process of manual and AI-assisted rewrite of many modules. When this stage was done, I started, during the third month, to stress test the implementation in many different ways. I started to be confident that it was really solid, useful, well designed.
+&lt;br&gt;
+&lt;br&gt;Then… it happened. While modeling different use cases to see if the data structure was comfortable to use, I started to put markdown files into Redis arrays. Because files are a very good match for it. At this point, as I was working for other goals with agents, I realized that I could have the skills markdown files centralized knowledge base that I needed, so from a need of mine I decided to implement ARGREP. But I wanted regular expressions, too. What library to pick?
+&lt;br&gt;
+&lt;br&gt;I ended up picking TRE (thanks Ville Laurikari!), because when you have regexp in Redis, you want to be sure that there are no pathological patterns in time or space. But TRE was very inefficient in a specific and extremely useful case, that is matching foo|bar|zap. So with the help of GPT I optimized it, fixed a few potential security issues, and extended the test. I had everything in place.
+&lt;br&gt;
+&lt;br&gt;You know what was the biggest realization of all that? For high quality system programming tasks you have to still be fully involved, but I ventured to a level of complexity that I would have otherwise skipped. AI provided the safety net for two things: certain massive tasks that are very tiring (like the 32 bit support that was added and tested later), and at the same time the virtual work force required to make sure there are no obvious bugs in complicated algorithms. To write the initial huge specification was the key to the successive work, as it was the key to review each single line of sparsearray.c and t_array.c and modifying everything was not a good fit.
+&lt;br&gt;
+&lt;br&gt;I didn't spend any word on the use cases as I tried to document the PR itself with a message where they are detailed:
+&lt;br&gt;
+&lt;br&gt;https://github.com/redis/redis/pull/15162
+&lt;br&gt;
+&lt;br&gt;So it was not really useful to repeat myself here. Enough to say that I really believe it is about time for Redis to have a data type where the numerical index is part of the semantics.
+&lt;br&gt;
+&lt;br&gt;I hope the Array PR will be accepted soon, and that we can benefit from the new use cases it opens. Of course, feedback is welcomed. Thank you.
+&lt;a href="http://antirez.com/news/164"&gt;Comments&lt;/a&gt;</description>
+      <guid isPermaLink="true">http://antirez.com/news/164</guid>
+      <pubDate>Mon, 04 May 2026 16:21:45 +0200</pubDate>
+    </item>
     <item>
       <title>
 AI cybersecurity is not proof of work
@@ -7640,34 +7672,6 @@ http://antirez.com/news/65
 &lt;a href="http://antirez.com/news/65"&gt;Comments&lt;/a&gt;</description>
       <guid isPermaLink="true">http://antirez.com/news/65</guid>
       <pubDate>Mon, 02 Dec 2013 09:52:19 +0100</pubDate>
-    </item>
-    <item>
-      <title>
-The fight against sexism is not a free pass
-</title>
-      <link>
-http://antirez.com/news/64
-</link>
-      <description>Today Joyent wrote a blog post in the company blog about an issue that started with this pull request in the libuv project: https://github.com/joyent/libuv/pull/1015#issuecomment-29538615
-&lt;br&gt;
-&lt;br&gt;Basically the developer Ben Noordhuis rejected a pull request involving a change in the documentation to use gender-neutral form instead of “him”. Joyent replied with this incredible post: http://www.joyent.com/blog/the-power-of-a-pronoun.
-&lt;br&gt;
-&lt;br&gt;In the blog post you can read:
-&lt;br&gt;
-&lt;br&gt;“But while Isaac is a Joyent employee, Ben is not—and if he had been, he wouldn't be as of this morning: to reject a pull request that eliminates a gendered pronoun on the principle that pronouns should in fact be gendered would constitute a fireable offense for me and for Joyent.”
-&lt;br&gt;
-&lt;br&gt;A few lines later you can read: “Indeed, one of the challenges of an open source project that depends on volunteer effort isdealing with assholes”
-&lt;br&gt;
-&lt;br&gt;Maybe Joyent is thinking something like, you can’t go wrong if you fight sexism, or something like that, as I can’t believe they had a so naive reaction. Really, we have 10k years of culture for a reason, to be able to discriminate more than that, it is not 2+2=4.
-&lt;br&gt;
-&lt;br&gt;Probably Ben is not a sexist, maybe he believes simply that “him” does not make a difference in sexism every day. Everybody has his fight, and changing “him” in not the Ben fight, but possibly when Ben will have to evaluate a female candidate, he will use a truly meritocratic meter and WILL NOT GIVE A FUCK about the gender, like he did when refusing the pull request.
-&lt;br&gt;
-&lt;br&gt;You can’t bash people that don’t have your vision, and you can’t think that the fight against sexism is a free pass. Joyent, you are liable of your actions, and your actions violate more fundamental civil rights than you think.
-&lt;br&gt;
-&lt;br&gt;But the most disturbing thing is that companies act like that because of fear, the fear of the reaction of people that believe that the world is black or white, and that if you don’t see it the same color they see it, you are to blame, you are to crucify.
-&lt;a href="http://antirez.com/news/64"&gt;Comments&lt;/a&gt;</description>
-      <guid isPermaLink="true">http://antirez.com/news/64</guid>
-      <pubDate>Sun, 01 Dec 2013 16:48:37 +0100</pubDate>
     </item>
   </channel>
 </rss>
