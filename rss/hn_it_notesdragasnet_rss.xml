@@ -5,11 +5,194 @@
     <link>https://it-notes.dragas.net</link>
     <description>Scattered IT Notes - by Stefano Marinelli</description>
     <language>en</language>
-    <lastBuildDate>Thu, 07 May 2026 06:41:57 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 07 May 2026 09:38:18 +0000</lastBuildDate>
+    <item>
+      <title>Monitor your devices with LibreNMS on FreeBSD</title>
+      <link>https://it-notes.dragas.net/2026/05/07/monitor-your-services-with-librenms-on-freebsd/</link>
+      <description>&lt;p&gt;&lt;img src="https://it-notes.dragas.net/featured/watchdog.webp" alt="Monitor your devices with LibreNMS on FreeBSD"&gt;&lt;/p&gt;&lt;p&gt;&lt;a href="https://www.librenms.org"&gt;LibreNMS&lt;/a&gt; has been a faithful companion for years now. It quietly handles the monitoring of my servers, devices, and services without demanding much in return - exactly what you want from a tool whose job is to watch over everything else. It's a solid alternative to heavier solutions like Zabbix, and it gives you alerts, data, and graphs on virtually anything reachable over SNMP.&lt;/p&gt;
+&lt;p&gt;I usually install it on a host that is &lt;em&gt;not&lt;/em&gt; reachable from the outside, then let it poll all the devices through a VPN: a single observation point, clean perimeter. The ability to create multiple dashboards - and to filter them by user - has also let me give clients a transparent window onto their own servers. Transparency, in my experience, is always the better long-term bet.&lt;/p&gt;
+&lt;p&gt;Together with &lt;a href="https://it-notes.dragas.net/2024/07/22/install-uptime-kuma-freebsd-jail/"&gt;Uptime-Kuma&lt;/a&gt; (and the good old Nagios/Munin pair), LibreNMS lives in a FreeBSD jail on my monitoring servers and just does its job.&lt;/p&gt;
+&lt;p&gt;This post walks through a plain installation of LibreNMS on FreeBSD: package-based, no reverse proxy, no HTTPS, no fancy hardening. The goal is to get to a working setup you can build on top of.&lt;/p&gt;
+&lt;h2&gt;Assumptions&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;FreeBSD 15.0-RELEASE, in a jail or on a dedicated VM/host&lt;/li&gt;
+&lt;li&gt;nginx + php-fpm + MySQL 8.4&lt;/li&gt;
+&lt;li&gt;LibreNMS installed from the official package — not via &lt;code&gt;git clone&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;One note before we start: in this guide I use plain HTTP just to reach the first-time setup. If your LibreNMS instance won't stay confined to a private network or behind a VPN, configuring HTTPS is mandatory, not optional.&lt;/p&gt;
+&lt;h2&gt;Installation&lt;/h2&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;pkg install librenms mysql84-server python3 nginx
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;LibreNMS currently depends on PHP 8.4. If you want to speed PHP up, install OPcache too:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;pkg install php84-opcache
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h2&gt;MySQL&lt;/h2&gt;
+&lt;p&gt;Two settings need to be in place &lt;em&gt;before&lt;/em&gt; MySQL starts for the first time. After the first start they cannot be changed without reinitializing the data directory, so it's worth getting them right now.&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;cd /usr/local/etc/mysql
+cp my.cnf.sample my.cnf
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;In the &lt;code&gt;[mysqld]&lt;/code&gt; section, add:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code&gt;innodb_file_per_table=1
+lower_case_table_names=0
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Now start MySQL:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;service mysql-server enable
+service mysql-server start
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;On a fresh FreeBSD install, the local &lt;code&gt;root&lt;/code&gt; user can connect to MySQL without a password from the command line. Connect and create the database and user. I'm using &lt;code&gt;password&lt;/code&gt; here as a placeholder - don't.&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;mysql
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;pre class="highlight"&gt;&lt;code class="language-sql"&gt;CREATE DATABASE librenms CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'librenms'@'localhost' IDENTIFIED BY 'password';
+GRANT ALL PRIVILEGES ON librenms.* TO 'librenms'@'localhost';
+exit
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h2&gt;php-fpm&lt;/h2&gt;
+&lt;p&gt;Edit &lt;code&gt;/usr/local/etc/php-fpm.d/www.conf&lt;/code&gt; and adjust the listen directives:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code&gt;listen = /var/run/php-fpm-librenms.sock
+listen.owner = www
+listen.group = www
+listen.mode = 0660
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Then create &lt;code&gt;php.ini&lt;/code&gt; from the production sample:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;cd /usr/local/etc
+cp php.ini-production php.ini
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And set the timezone in &lt;code&gt;php.ini&lt;/code&gt;:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code&gt;date.timezone = Europe/Rome
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h2&gt;nginx&lt;/h2&gt;
+&lt;p&gt;Since this jail (or host) is dedicated to LibreNMS, we can rewrite the &lt;code&gt;server&lt;/code&gt; block in &lt;code&gt;/usr/local/etc/nginx/nginx.conf&lt;/code&gt; directly:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-nginx"&gt;server {
+    listen      80;
+    #server_name yourServerName
+    root        /usr/local/www/librenms/html;
+    index       index.php;
+
+    charset utf-8;
+    gzip on;
+    gzip_types text/css application/javascript text/javascript application/x-javascript image/svg+xml text/plain text/xsd text/xsl text/xml image/x-icon;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location /api/v0 {
+        try_files $uri $uri/ /api_v0.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(.+\.php)(/.*)$;
+        set $path_info $fastcgi_path_info;
+        try_files $fastcgi_script_name =404;
+        include fastcgi_params;
+        fastcgi_param SERVER_SOFTWARE &amp;quot;&amp;quot;;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $path_info;
+        fastcgi_index index.php;
+        fastcgi_pass unix:/var/run/php-fpm-librenms.sock;
+        fastcgi_buffers 256 4k;
+        fastcgi_intercept_errors on;
+        fastcgi_read_timeout 14400;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Now start nginx and php-fpm:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;service nginx enable
+service nginx start
+
+service php_fpm enable
+service php_fpm start
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h2&gt;LibreNMS configuration&lt;/h2&gt;
+&lt;p&gt;Copy the default config:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;cp /usr/local/www/librenms/config.php.default /usr/local/www/librenms/config.php
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Because we installed from the package, this file already has the right commands and paths for FreeBSD - no need to hunt down &lt;code&gt;mtr&lt;/code&gt;, &lt;code&gt;fping&lt;/code&gt;, &lt;code&gt;snmpwalk&lt;/code&gt; and friends one by one.&lt;/p&gt;
+&lt;p&gt;Create the directory for RRD graphs and set ownership:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;mkdir -p /var/db/librenms/rrd
+chown -R www:www /var/db/librenms
+chmod 775 /var/db/librenms/rrd
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Then the &lt;code&gt;.env&lt;/code&gt; file:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;cd /usr/local/www/librenms
+cp .env.example .env
+chown www .env
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Edit &lt;code&gt;.env&lt;/code&gt; and set at least:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DB_DATABASE&lt;/code&gt; - &lt;code&gt;librenms&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;DB_USERNAME&lt;/code&gt; - &lt;code&gt;librenms&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;DB_PASSWORD&lt;/code&gt; - the one you actually used (not &lt;code&gt;password&lt;/code&gt;, please)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Then add this line, which tells LibreNMS we still need to run the web installer:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code&gt;INSTALL=true
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;A note on permissions. The official LibreNMS documentation suggests &lt;code&gt;chown -R www:www&lt;/code&gt; over the entire application tree, but on FreeBSD the package already lays down sane ownership, with &lt;code&gt;storage/&lt;/code&gt; and &lt;code&gt;bootstrap/cache/&lt;/code&gt; writable by &lt;code&gt;www&lt;/code&gt;. There's no reason to widen the rest of the codebase. If &lt;code&gt;validate.php&lt;/code&gt; complains later about something write-related, the first place to check is:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;ls -la /usr/local/www/librenms/storage /usr/local/www/librenms/bootstrap/cache
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Now generate the app key as &lt;code&gt;www&lt;/code&gt;, since the file is owned by &lt;code&gt;www&lt;/code&gt;:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;su -m www -c &amp;quot;php artisan key:generate&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And tighten &lt;code&gt;.env&lt;/code&gt;:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;chmod 600 .env
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Refresh the configuration cache:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;su -m www -c &amp;quot;lnms config:clear&amp;quot;
+su -m www -c &amp;quot;lnms config:cache&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h2&gt;Web installer&lt;/h2&gt;
+&lt;p&gt;Open &lt;code&gt;http://host/install&lt;/code&gt; and follow the steps. The validation process may fail. Refreshing the cache picks up the values written to &lt;code&gt;config.php&lt;/code&gt; during the install:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;su -m www -c &amp;quot;lnms config:clear&amp;quot;
+su -m www -c &amp;quot;lnms config:cache&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;When the web installer is done, edit .env again and remove the INSTALL=true line if it's still there. Leaving it in place re-exposes the installer to anyone who can reach the URL.&lt;/p&gt;
+&lt;h2&gt;Polling service&lt;/h2&gt;
+&lt;p&gt;LibreNMS needs something to actually run the polls. On FreeBSD, the package ships an rc service that runs the LibreNMS dispatcher, so there's no need to manage cron entries by hand the way most Linux guides assume.&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;service librenms enable
+service librenms start
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h2&gt;Validate&lt;/h2&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;cd /usr/local/www/librenms
+su -m www -c './validate.php'
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;You may see a couple of complaints right after starting the service - usually scheduler-related and self-resolving within a few minutes. Re-run &lt;code&gt;validate.php&lt;/code&gt; once the dispatcher has had time to settle. Anything still red after that is worth investigating.&lt;/p&gt;
+&lt;h2&gt;Next steps&lt;/h2&gt;
+&lt;p&gt;At this point you can log into the web interface and start adding devices, configuring SNMP, and building dashboards. For that, the &lt;a href="https://docs.librenms.org/"&gt;official LibreNMS documentation&lt;/a&gt; is excellent, and there's no point in me paraphrasing it here.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://it-notes.dragas.net/2026/05/07/monitor-your-services-with-librenms-on-freebsd/</guid>
+      <pubDate>Thu, 07 May 2026 10:45:00 +0000</pubDate>
+    </item>
     <item>
       <title>EnshittifAIcation</title>
       <link>https://it-notes.dragas.net/2026/03/20/enshittifaication/</link>
-      <description>&lt;p&gt;&lt;img src="https://unsplash.com/photos/pTUCMqXCOrk/download?force=true&amp;w=640" alt="Photo by Ehimetalor Akhere Unuabona on Unsplash"&gt;&lt;/p&gt;&lt;p&gt;Yesterday morning, first thing after waking up, I checked my emails. One of them was from a client - a sharp person, but not a tech expert - forwarding a message from one of their "digital marketplaces". They claimed that during site crawling, their bot upgrades the connection to HTTP/2, and that this somehow causes issues on their end, so they were asking us to disable HTTP/2 to fix the problem.&lt;/p&gt;
+      <description>&lt;p&gt;&lt;img src="https://unsplash.com/photos/vi1HXPw6hyw/download?force=true&amp;w=640" alt="Photo by Immo Wegmann on Unsplash"&gt;&lt;/p&gt;&lt;p&gt;Yesterday morning, first thing after waking up, I checked my emails. One of them was from a client - a sharp person, but not a tech expert - forwarding a message from one of their "digital marketplaces". They claimed that during site crawling, their bot upgrades the connection to HTTP/2, and that this somehow causes issues on their end, so they were asking us to disable HTTP/2 to fix the problem.&lt;/p&gt;
 &lt;p&gt;I contacted Alex directly - the person (spoiler: not a person) who had sent the email - explaining that if their bot has trouble with HTTP/2 (which, on the contrary, provides significant benefits for the e-commerce experience in question), that's their problem, not ours, and they should fix it. Completely unprompted, I received something unexpected in reply: a guide on how to configure Apache to do what they wanted. The problem? Not only did it completely ignore my stated position, but we don't use Apache - we use nginx. And, I should add, their guide was entirely wrong. I replied pointing all of this out and finally asked to be "escalated to a human, since I was clearly talking to an AI that wasn't understanding any of my responses". The reply was blunt:  &lt;em&gt;"That's not possible for this type of issue. Follow our guide or we will suspend your service and your e-commerce visibility."&lt;/em&gt;  For me, obviously, that's a hard pass. For my client, though, it's a real problem - an intelligent person who understood the situation, but still a problem to solve.&lt;/p&gt;
 &lt;hr /&gt;
 &lt;p&gt;Over the past few months, I've been witnessing a dramatic increase in botnet attacks targeting some of the servers I manage, especially e-commerce ones. These aren't directed at me personally - they also hit servers I manage on behalf of clients. At first I thought they were AI scrapers, but the traffic comes from everywhere, especially from residential connections scattered around the world. I believe these are deliberate disruption campaigns, a side effect of the turbulent geopolitical climate we're living through.&lt;/p&gt;
@@ -2475,68 +2658,6 @@ Transfer/sec:      5.44MB
 &lt;p&gt;&lt;a href="https://bssg.dragas.net"&gt;Happy blogging everyone!&lt;/a&gt;&lt;/p&gt;</description>
       <guid isPermaLink="true">https://it-notes.dragas.net/2025/04/07/launching-bssg-my-journey-from-dynamic-cms-to-bash-static-site-generator/</guid>
       <pubDate>Mon, 07 Apr 2025 08:11:36 +0200</pubDate>
-    </item>
-    <item>
-      <title>OSDay 2025 - Why Choose to Use the BSDs in 2025</title>
-      <link>https://it-notes.dragas.net/2025/03/23/osday-2025-why-choose-bsd-in-2025/</link>
-      <description>&lt;p&gt;&lt;img src="https://it-notes.dragas.net/nana_bianca.avif" alt="Photo: Nana Bianca - Firenze"&gt;&lt;/p&gt;&lt;p&gt;&lt;em&gt;This is the text underlying my presentation at &lt;a href="https://osday.dev"&gt;OSDay 2025&lt;/a&gt;, held on 21 March 2025 in Florence, Italy. There was limited time, so I couldn't go into much detail and had to keep things more general and structured than usual. You can watch &lt;a href="https://www.youtube.com/live/_IdH5YTBAGs?t=24936s"&gt;the video of my talk on YouTube&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
-&lt;p&gt;&lt;em&gt;The slides can be downloaded &lt;a href="/slides/osday_2025.pdf"&gt;here&lt;/a&gt;&lt;/em&gt;&lt;/p&gt;
-&lt;p&gt;&lt;em&gt;Happy reading!&lt;/em&gt;&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;OSDay Florence - 21 March 2025 - &lt;a href="https://osday.dev/schedule/9688a15e-e9ed-4803-8ac9-114400446bf4"&gt;Why Choose to Use the BSDs in 2025&lt;/a&gt;&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;"I'm Stefano Marinelli, &lt;a href="https://it-notes.dragas.net/2024/10/03/i-solve-problems-eurobsdcon/"&gt;I solve problems&lt;/a&gt;."&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;I'm the founder and Barista of the &lt;a href="https://bsd.cafe"&gt;BSD Cafe&lt;/a&gt;, a community of *BSD enthusiasts.&lt;/p&gt;
-&lt;p&gt;I work in my company, called &lt;a href="https://prodottoinrete.it"&gt;Prodottoinrete&lt;/a&gt; - a container of ideas and solutions.&lt;/p&gt;
-&lt;p&gt;I'm passionate about technology and computing, and I've made my passion my profession. Every morning, when I sit in front of the computer, a new world opens up for me to explore.&lt;/p&gt;
-&lt;p&gt;I've been a Linux user since 1996, before I turned 17. Back then, I used Fidonet and would read about alternative operating systems. I experimented with Linux distributions from CDs, and by 1997, Linux became my everyday system. It was only in 2002 that I began exploring BSD systems, largely thanks to FreeBSD's fantastic handbook.&lt;/p&gt;
-&lt;p&gt;The relationship we had with Open Source 20-30 years ago was fundamentally different than today. Back then, embracing Open Source meant thinking differently. It meant embracing freedom. We chose Linux and the BSDs when Windows and commercial Unix systems dominated the market. Not because they were simple or free (as in free beer), but for freedom from impositions - both technological and ideological.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;I solve problems.&lt;/strong&gt; And to solve problems effectively, we need to recognize when the landscape has changed.&lt;/p&gt;
-&lt;p&gt;The reality today is that while we won that war - Open Source is everywhere - we're facing a new challenge. The "mainstream" Open Source world is creating monocultures. The focus has shifted from technologies to specific tools. We're seeing innovation for novelty's sake, not problem-solving.&lt;/p&gt;
-&lt;p&gt;This shift has profound implications. In a world dominated by cyber threats, where everything is connected and we completely depend on technology, the value of stability has been lost. By stability, I don't just mean that a system doesn't crash. I mean continuity over time, upgradeability, and system visibility.&lt;/p&gt;
-&lt;p&gt;Instead, the industry seems obsessed with the hype cycle. "New" is prioritized over secure and stable. The mantra has become:
-- "It will be fixed in the next version"
-- "We need automatic restarts when it crashes"
-- "Do we need software that crashes less? We have systemd and Kubernetes to restart crashed workloads!"
-- "We need moooarrr powaaaaaaar!!!!"&lt;/p&gt;
-&lt;p&gt;Let me give you a concrete example. A program written in Rust should be memory safe - that's one of the main selling points of the language. But if that program uses unsafe functions and segfaults, what advantage does it offer over a mature C implementation? Stability matters more than the implementation language.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;I solve problems.&lt;/strong&gt; And creating a monoculture does not solve problems - it creates new ones.&lt;/p&gt;
-&lt;p&gt;Yes, Linux, Docker, and Kubernetes are better than closed source solutions. But when everyone uses the same tools, freedom dies. We use them because "everyone does" rather than because they're the best tool for our specific needs.&lt;/p&gt;
-&lt;p&gt;If we had only used what everyone else used, we wouldn't have Linux or the BSDs today. There would be no LibreOffice, no Nextcloud. We'd just have Windows variations and expensive Unix systems. We'd be bound by licenses and vendors, stuck with closed solutions.&lt;/p&gt;
-&lt;p&gt;This is where the BSDs offer a compelling alternative: "Be free and evaluate alternatives. Always."&lt;/p&gt;
-&lt;p&gt;For those who don't know, the original BSD started in the 1970s (before Linux was conceived). Minix was created as an educational OS because it was believed that BSD, mature and professional, would be the Open Source OS that would dominate the market. A legal case stalled development and scared adopters, but in 1993, NetBSD and FreeBSD emerged. OpenBSD forked from NetBSD later, then DragonflyBSD from FreeBSD.&lt;/p&gt;
-&lt;p&gt;As Linus Torvalds said in 1993, "If 386BSD had been available when I started on Linux, Linux would probably never had happened."&lt;/p&gt;
-&lt;p&gt;What makes the BSDs special is their philosophy:
-- Kernel and userland developed by same teams
-- Consistency in tools and updates
-- Excellent documentation - especially OpenBSD, where insufficient docs are considered a bug
-- Man pages contain virtually everything
-- Evolution, not Revolution&lt;/p&gt;
-&lt;p&gt;Let me briefly introduce the main BSD variants that I work with daily:&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;FreeBSD&lt;/strong&gt; is a generalist system. It focuses on stability and performance - with HardenedBSD as a security-enhanced fork. It has native ZFS, Boot Environments, and complete separation between OS and packages. It's had container support via jails since 2000 - which predates Linux cgroups by a decade! It offers bhyve virtualization (more efficient than KVM). OPNsense and pfSense are based on FreeBSD, as pf is a powerful firewall. It's used by Netflix for streaming video delivery and forms the foundation for PlayStation consoles. MacOS and iOS also contain some FreeBSD code.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;OpenBSD&lt;/strong&gt; focuses on security and code correctness. Its code is constantly audited and simplified - less is more. The team believes "The more complex the code, the less maintainable." It has security mechanisms like pledge() and unveil(). OpenSSH (and many other nice things) originated and are developed here. Development is driven by team priorities, not user requests. It's ideal for routers, firewalls, and security-critical systems.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;NetBSD&lt;/strong&gt; lives by the motto "Of course it runs NetBSD!" Its focus is on correctness, portability, and proper implementation. It supports 50+ architectures. Development centers on compatibility, which necessitates code quality. It must function on decades-old hardware. It's ideal for systems that require stability without the need for continuous updates, like embedded devices.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;I solve problems.&lt;/strong&gt; And in my experience, the BSDs have consistently proven to be excellent problem-solvers. Here are some real-world benefits I've experienced:&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Better stability and security&lt;/li&gt;
-&lt;li&gt;Simplified administration - upgrades won't destroy your system&lt;/li&gt;
-&lt;li&gt;&lt;a href="https://it-notes.dragas.net/2024/07/04/from-cloud-chaos-to-freebsd-efficiency/"&gt;Less vulnerability to common attacks&lt;/a&gt; - "We don't need this patch, you're running OpenBSD and it's been fixed 20 years ago"&lt;/li&gt;
-&lt;li&gt;Network interfaces maintain consistent names - ix0 will remain ix0, not renaming from enx3e3300c9e14e to enp10s0f0np0&lt;/li&gt;
-&lt;li&gt;FreeBSD shows lower system load compared to Linux&lt;/li&gt;
-&lt;li&gt;FreeBSD handles I/O pressure better - &lt;a href="https://it-notes.dragas.net/2024/06/10/proxmox-vs-freebsd-which-virtualization-host-performs-better/"&gt;on the same hardware, I've seen 70% time reduction&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;FreeBSD delivers improved end-user experience/responsiveness&lt;/li&gt;
-&lt;li&gt;NetBSD provides the comfort of "Don't worry - your platform will be supported for the foreseeable future"&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;So why choose BSD in 2025? I believe there are several compelling reasons:&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Security in an increasingly hostile environment&lt;/li&gt;
-&lt;li&gt;Stability in a world obsessed with novelty&lt;/li&gt;
-&lt;li&gt;Performance without unnecessary complexity&lt;/li&gt;
-&lt;li&gt;Freedom from the mainstream monoculture&lt;/li&gt;
-&lt;li&gt;Systems designed with coherent philosophy&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;Don't be afraid to try BSD systems - despite the Beastie mascot, they don't hurt and you'll appreciate them!&lt;/p&gt;
-&lt;p&gt;See you at &lt;a href="https://bsd.cafe"&gt;BSD Cafe&lt;/a&gt;!&lt;/p&gt;</description>
-      <guid isPermaLink="true">https://it-notes.dragas.net/2025/03/23/osday-2025-why-choose-bsd-in-2025/</guid>
-      <pubDate>Sun, 23 Mar 2025 10:30:00 +0100</pubDate>
     </item>
   </channel>
 </rss>
