@@ -5,7 +5,165 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Mon, 11 May 2026 15:58:34 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 11 May 2026 18:01:51 +0000</lastBuildDate>
+    <item>
+      <title>Hosting a website on an AVR</title>
+      <link>https://maurycyz.com/projects/mcusite/</link>
+      <description>&lt;!-- mksite: start of content --&gt;
+&lt;p&gt;
+In today's episode of "dumb things to do with an 8-bit microcontroller":
+&lt;/p&gt;
+&lt;img src=/projects/mcusite/webscale.jpg alt="A small perfboard screwed into a chamfered wooden block. The board contains a small SMD IC (on adapter board), a few pin headers and two LEDs."&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;center&gt;Does your server come with real wood?&lt;/center&gt;
+&lt;p&gt;
+&lt;note-box&gt;
+&lt;a href=https://maurycyz.com/mcu/&gt;MCU website demo&lt;/a&gt;
+(may go down if this gets posted to HN)
+&lt;/note-box&gt;
+&lt;/p&gt;&lt;p&gt;
+My victim is the AVR64DD32 which is quite similar to the Atmega328 of Arduino fame.
+Compared to the older Atmega, these are cheaper for the same memory, use a single programming pin and have nicer peripherals:
+&lt;/p&gt;
+&lt;table style="width: 100%"&gt;
+&lt;tr&gt;&lt;td&gt;CPU:&lt;/td&gt;&lt;td&gt;Single 8-bit AVR core @ 24 MHz (max)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;RAM:&lt;/td&gt;&lt;td&gt;8 kB (static RAM)&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Flash:&lt;/td&gt;&lt;td&gt;64 kB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;EEPROM:&lt;/td&gt;&lt;td&gt;256 bytes&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Voltage:&lt;/td&gt;&lt;td&gt;1.8 - 5.5 Volts&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Cost:&lt;/td&gt;&lt;td&gt;$1&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+&lt;p&gt;
+&lt;!-- snip --&gt;
+&lt;/p&gt;
+&lt;p&gt;
+So that's the computer (and a rather spacious one at that) but it'll need an internet connection to host a website.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;The obvious choice is Ethernet&lt;/em&gt;, but even the slowest version (10BASE-T) still runs at 10 megabits/second.
+Worse, it uses Manchester encoding:
+a zero is sent as "10" and a one as "01", so 10 megabits of data is actually 20 megabits at the wire.
+&lt;/p&gt;&lt;p&gt;
+This is simply too fast for the AVR to generate.
+While it's processor can run at 24 MHz, but all the peripherals and IO pins max out at 12 MHz.
+(although some other 8-bit chips can manage it)
+&lt;/p&gt;&lt;p&gt;
+The proper solution is to buy a dedicated ethernet chip from DigiKey, but then I'd be waiting weeks to finish this project.
+&lt;/p&gt;&lt;p&gt;
+... and ethernet is far from the only option:
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Serial Line Internet Protocol&lt;/em&gt; (RFC 1055) is a very old and very simple standard for running networks over serial:
+&lt;/p&gt;&lt;p&gt;
+Before sending a packet, wrap it in 0xC0 bytes.
+If the packet contains any 0xC0 bytes, replace them with 0xDB 0xDC.
+To avoid ambiguity, any pre-existing 0xDB bytes are replaced with 0xDB 0xDD.
+&lt;/p&gt;&lt;p&gt;
+This scheme was widely used for connecting to the internet over modems:
+A old-school dial up modem just runs a serial link over a phone line, and it's up the the computer to do anything with it.
+&lt;!--Before home computers became afforable,
+it was common to plug in a terminal as a very early form of remote access.--&gt;
+&lt;/p&gt;&lt;p&gt;
+... which is why SLIP is still supported by modern Linux:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;h-c&gt;# Just a normal USB to Serial adapter&lt;/h-c&gt;
+&lt;h-n&gt;stty&lt;/h-n&gt; -F &lt;h-s&gt;/dev/ttyUSB0&lt;/h-s&gt; &lt;h-v&gt;115200 raw cs8&lt;/h-v&gt;
+&lt;h-n&gt;slattach&lt;/h-n&gt; -m -F -L -p &lt;h-v&gt;slip&lt;/h-v&gt; &lt;h-s&gt;/dev/ttyUSB0&lt;/h-s&gt;
+&lt;h-c&gt;# ... and now it's a network interface&lt;/h-c&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+The hardware on the microcontroller's end is trivial:
+&lt;/p&gt;
+&lt;img src=/projects/mcusite/sch.png img="A schematic diagram showing a microcontroller connected to a serial line. The power supply has two decoupling capacitors and a reverse-polarity protection diode. Both data lines have LEDs wired up as activity lights."&gt;
+&lt;br&gt;
+&lt;br&gt;
+&lt;center&gt;&lt;a href=/projects/mcusite/www.c&gt;www.c&lt;/a&gt;: Source code. &lt;a href=/projects/mcusite/www.elf&gt;www.elf&lt;/a&gt;: Prebuilt binary &lt;/center&gt;
+&lt;p&gt;
+It does work with no external components, but I wanted some blinkenlights, and an idiot-proofing diode
+for when I inevitably connect the power backwards.
+&lt;/p&gt;&lt;p&gt;
+Because it only draws a few milliwatts, it's perfectly fine to run the server of the serial adapter's 5 volt rail:
+it's really nice to only have one cable to deal with. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Now it has an internet connection&lt;/em&gt;, but that's hardly a server.
+&lt;/p&gt;&lt;p&gt;
+In order for my web page to get to your computer, it needs to pass through dozens of different networks.
+&lt;/p&gt;&lt;p&gt;
+To do this, each packet has an IP header:
+40 bytes that contain the address of the source and destination computers, and some other stuff I don't really care about.
+&lt;/p&gt;&lt;p&gt;
+The protocol used to be a lot more complex, with features like packet fragmentation
+that require a lot of memory to handle correctly, but I don't have to:
+every modern operating system disables fragmentation and IPv6 removed it entirely.
+&lt;/p&gt;&lt;p&gt;
+This makes implementing it very easy:
+Just swap around the source and destination of a recieved packet to generate the header for the response.
+(and reset the TTL counter)
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;The other protocol, TCP is a lot harder&lt;/em&gt;:
+Implementing it requires the microcontroller to track connection states,
+periodically retransmit lost packets and handle a huge number edge cases.
+&lt;/p&gt;&lt;p&gt;
+It took several days to get my custom implementation working well enough, and it's
+still got a few bugs.
+&lt;/p&gt;&lt;p&gt;
+As for implementing HTTP, I didn't:
+The server always sends a hardcoded "response" back to the client.
+This works fine as long as there's only a single URL on the site.
+&lt;/p&gt;&lt;p&gt;
+&lt;video width=100% controls muted&gt;
+  [Video of the page loading. See web or files directory: loading.mp4]
+  &lt;source src=/projects/mcusite/loading.mp4 type=video/mp4 /&gt;
+&lt;/video&gt;
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Ok great&lt;/em&gt;, but what if I want to share it with friends?
+Unfortunately, to do that, it needs a publically routable IPv4 address.
+Not only are these expensive (there's a limited number) but it's impossible to get a good internet connection at my place.
+&lt;/p&gt;&lt;p&gt;
+(no, Starlink is not good)
+&lt;/p&gt;&lt;p&gt;
+I do have a machine with a publically routable address,
+but it's at a datacenter near Helsinki:
+I'd need a very long serial cable...
+&lt;/p&gt;&lt;p&gt;
+Another cool thing Linux supports is wireguard, which creates a virtual network link over the internet.
+This works even if one of the machines is behind (CG)NAT or other annoyances.
+&lt;/p&gt;&lt;p&gt;
+Problem solved:
+&lt;/p&gt;&lt;p&gt;
+have the Linux router box connect to the VPS to get a proper internet connection?
+&lt;/p&gt;&lt;p&gt;
+... except the MCU still doesn't have it's own IP address:
+I could forward everything from my VPS's address to it, but that would break my normal website.
+&lt;/p&gt;&lt;p&gt;
+Instead, I setup the server to proxy any requests under &lt;code&gt;/mcu&lt;/code&gt; to the server using a local address block.
+This means that visitors aren't directly connecting to the MCU's TCP/IP stack...
+but hey, it's the same setup that the Vape Server uses and no one complained.
+&lt;/p&gt;&lt;p&gt;
+(It also makes it slightly harder to break by sending SYN packets, but
+it's not exactly hard to DDoS a server connected over what's effectively dial-up)
+&lt;/p&gt;
+&lt;note-box&gt;
+This whole problem wouldn't exist if we could just get our stuff together:
+IPv6 has existed for thirty years but most people still don't have access. 
+&lt;/note-box&gt;
+&lt;p&gt;&lt;/p&gt;
+&lt;h1&gt;&lt;em&gt;Related&lt;/em&gt;:&lt;/h1&gt;
+&lt;link-box&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=/mcu&gt;/mcu&lt;/a&gt;: The page hosted from the microcontroller.&lt;/li&gt;
+&lt;li&gt;&lt;a href=http://ewaste.fka.wtf/&gt;http://ewaste.fka.wtf/&lt;/a&gt;: The Vape Server, a website hosted off a 32-bit MCU pulled from the trash.&lt;/li&gt;
+&lt;li&gt;&lt;a href=https://lcamtuf.substack.com/p/psa-if-youre-a-fan-of-atmega-try&gt;https://lcamtuf.substack.com/p/psa-if-youre-a-fan-of-atmega-try&lt;/a&gt;:
+lcamtuf on the AVR Dx line.
+&lt;/ul&gt;
+&lt;/link-box&gt;
+&lt;p&gt;
+&lt;/p&gt;
+&lt;!-- mksite: end of content --&gt;
+				</description>
+      <guid isPermaLink="true">http://maurycyz.com/projects/mcusite/</guid>
+      <pubDate>Mon, 11 May 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>5x5 Pixel font for tiny screens</title>
       <link>https://maurycyz.com/projects/mcufont/</link>
@@ -648,95 +806,6 @@ It doesn't make any sense when I'm looking for an interesting (and humor&amp;shy
 &lt;!-- mksite: end of content --&gt;
 				</description>
       <guid isPermaLink="true">http://maurycyz.com/misc/gopher/</guid>
-      <pubDate>Wed, 01 Apr 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>GopherTree</title>
-      <link>https://maurycyz.com/projects/gopher/</link>
-      <description>&lt;!-- mksite: start of content --&gt;
-&lt;p&gt;
-
-While gopher is usually seen as a proto-web, it's really closer to FTP.
-
-It has no markup format, no links and no URLs.
-Files are arranged in a hierarchically, and can be in any format.
-&lt;!-- This is a great model for intermittent connections because it allows downloading lots of stuff for offline reading. --&gt;
-&lt;/p&gt;
-&lt;p&gt;
-&lt;!-- snip --&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;This rigid structure allows clients to get creative with how it's displayed&lt;/em&gt;...
-which is why I'm extremely disappointed that everyone renders gopher menus like shitty websites:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/projects/gopher/typical.png&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;You see all that text mixed into the menu?&lt;/em&gt;
-Those are informational selectors: a non-standard feature that's often used to recreate hypertext.
-&lt;/p&gt;&lt;p&gt;
-I know this "limited web" aesthetic appeals to certain circles, but it removes the things that make the protocol interesting.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;It would be nice to display gopher menus like what they are, a directory tree&lt;/em&gt;:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/projects/gopher/gophertree.png&gt;
-&lt;/p&gt;&lt;p&gt;
-This makes it easy to browse collections of files, and help avoid the Wikipedia problem:
-Absentmindedly clicking links until you realize it's 3 AM and you have a thousand tabs open...
-and that you never finished what you wanted to read in the first place.
-&lt;/p&gt;&lt;p&gt;
-&lt;!--
-With a directory tree, you can always see how deep you are and how you got there.
-This little bit of context really helps with staying on topic.
-&lt;/p&gt;&lt;p&gt;
---&gt;
-&lt;em&gt;I've made the decision to hide informational selectors by default&lt;/em&gt;.
-These have two main uses: creating faux hypertext and adding ASCII art banners.
-&lt;/p&gt;&lt;p&gt;
-ASCII art banners are simply annoying:
-Having one in each menu looks cute in a web browser, but having 50 copies cluttering up the directory tree is... not great.
-&lt;/p&gt;&lt;p&gt;
-Hypertext doesn't work well. 
-In the strict sense, looking ugly is better then not working at all &amp;mdash;
-but almost everyone who does this also hosts on the web, so it's not a huge loss.
-&lt;/p&gt;&lt;p&gt;
-If you do find a server that uses them reasonably, they can be renabled with a keyboard shortcut.
-&lt;/p&gt;&lt;p&gt;
-&lt;!--
-&lt;em&gt;My client uses a curses GUI&lt;/em&gt; that runs in your terminal.
-It'll handle Unicode like "Ł" or "µA" fine, but don't expect it to work with things like right-to-left scripts.
-&lt;/p&gt;&lt;p&gt;
---&gt;
-&lt;em&gt;The client also has a built in text viewer&lt;/em&gt;, with pagination and proper word-wrap.
-It supports both UTF-8 and Latin-1 text encodings, but this has to be selected manually:
-gopher has no mechanism to indicate encoding.
-(but most text looks the same in both)
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Bookmarks&lt;/em&gt; work by writing items to a locally stored gopher menu, which also serves as a "homepage" of sorts.
-Because it's just a file, I didn't bother implementing any advanced editing features:
-any text editor works fine for that.
-&lt;/p&gt;&lt;p&gt;
-The bookmark code is UNIX/Linux specific, but porting should be possible.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;All this fits within a thousand lines of C code&lt;/em&gt;, the same as my ultra-minimal web browser.
-While arguably a browser, it was practically unusable: lacking basic features like a back button or pagination.
-&lt;/p&gt;&lt;p&gt;
-The gopher version of the same size is complete enough to replace Lynx as my preferred client.
-&lt;/p&gt;&lt;p&gt;
-Usage instructions can be found at the top of the source file.
-&lt;/p&gt;&lt;p&gt;
-&lt;/p&gt;
-&lt;h1&gt;&lt;em&gt;Related:&lt;/em&gt;&lt;/h1&gt;
-&lt;link-box&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;a href=/projects/gopher/gophertree.c&gt;/projects/gopher/gophertree.c&lt;/a&gt;: Source and instructions&lt;/li&gt;
-&lt;li&gt;&lt;a href=/projects/tinyweb/&gt;/projects/tinyweb/&lt;/a&gt;: 1000 line web browser&lt;/li&gt;
-&lt;li&gt;&lt;a href=https://datatracker.ietf.org/doc/html/rfc1436&gt;https://datatracker.ietf.org/doc/html/rfc1436&lt;/a&gt;: Gopher RFC&lt;/li&gt;
-&lt;/ul&gt;
-&lt;/link-box&gt;
-&lt;p&gt;
-&lt;/p&gt;
-&lt;!-- mksite: end of content --&gt;
-				</description>
-      <guid isPermaLink="true">http://maurycyz.com/projects/gopher/</guid>
       <pubDate>Wed, 01 Apr 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
