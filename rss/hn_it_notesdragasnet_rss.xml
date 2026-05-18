@@ -5,7 +5,290 @@
     <link>https://it-notes.dragas.net</link>
     <description>Scattered IT Notes - by Stefano Marinelli</description>
     <language>en</language>
-    <lastBuildDate>Mon, 18 May 2026 04:05:16 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 18 May 2026 08:49:28 +0000</lastBuildDate>
+    <item>
+      <title>FediMeteo, HAProxy, and the art of not wasting snac threads</title>
+      <link>https://it-notes.dragas.net/2026/05/18/fedimeteo-haproxy-and-the-art-of-not-wasting-snac-threads/</link>
+      <description>&lt;p&gt;&lt;img src="https://unsplash.com/photos/ZVhm6rEKEX8/download?ixid=M3wxMjA3fDB8MXxhbGx8fHx8fHx8fHwxNzQwNTEzNjE5fA&amp;force=true&amp;w=640" alt="FediMeteo, HAProxy, and the art of not wasting snac threads"&gt;&lt;/p&gt;&lt;p&gt;When I wrote about &lt;a href="https://it-notes.dragas.net/2025/02/26/fedimeteo-how-a-tiny-freebsd-vps-became-a-global-weather-service-for-thousands/"&gt;FediMeteo&lt;/a&gt; for the first time, I told the story from the beginning: the idea born almost by chance while checking the weather for a holiday, the memory of my grandfather, who for years had been my personal meteorologist, the decision to build something small and useful, and then the surprise of seeing people actually use it. What began as a personal experiment quickly became a small global service, still running with the same philosophy: FreeBSD, jails, simple scripts, snac, text, emoji, and a lot of small pieces doing their work quietly.&lt;/p&gt;
+&lt;p&gt;That article was mostly about the birth and growth of the project. This one is about one of the less romantic parts of the same story, although I have to admit that I find a certain beauty in it too: keeping the service light as it grows.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://fedimeteo.com"&gt;FediMeteo&lt;/a&gt; is still intentionally simple from the outside. A homepage, some numbers, a list of countries, and many ActivityPub accounts publishing weather forecasts. The posts are text and emoji. There is no JavaScript requirement to read the pages, no heavy frontend, no unnecessary media attached to every forecast, and no dynamic homepage recalculated at every visit just to show the same numbers. This is not accidental. It is the way I wanted the service to behave from the beginning.&lt;/p&gt;
+&lt;p&gt;But the more the service is used, the more the small details matter. A request that looks harmless when there are ten followers may become a repeated request when there are thousands of followers, remote instances, crawlers, previews, and other servers fetching the same public objects. In the Fediverse, the same small thing can be asked many times by many different places, each one with a perfectly legitimate reason. The backend doesn't care: it just needs to deal with the requests.&lt;/p&gt;
+&lt;p&gt;And in FediMeteo, the backend is &lt;a href="https://codeberg.org/grunfink/snac2"&gt;snac&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;I like snac very much precisely because it is small, clear, and efficient. It is not a giant application that tries to be everything. It does a focused job and does it well. But this also means that I want to respect its shape. I do not want to waste its threads on work that the reverse proxy can safely do. A snac thread serving the same public avatar again and again is not a tragedy, but it is still a waste. A snac thread answering the same public ActivityPub object several times in the same minute is doing real work, but often not necessary work.&lt;/p&gt;
+&lt;p&gt;This is the reason behind the &lt;a href="https://www.haproxy.org"&gt;HAProxy&lt;/a&gt; tuning I am currently using in front of FediMeteo.&lt;/p&gt;
+&lt;p&gt;It is not about making the configuration look clever. It is about keeping snac quiet.&lt;/p&gt;
+&lt;h2&gt;A continuation of the same idea&lt;/h2&gt;
+&lt;p&gt;I had already explored the same problem with snac and nginx in two previous posts:  &lt;a href="https://it-notes.dragas.net/2025/01/29/improving-snac-performance-with-nginx-proxy-cache/"&gt;Improving snac Performance with Nginx Proxy Cache&lt;/a&gt;  and  &lt;a href="https://it-notes.dragas.net/2025/02/08/caching-snac-proxied-media-with-nginx/"&gt;Caching snac Proxied Media with Nginx&lt;/a&gt;. In both cases, the idea was that the reverse proxy should absorb repeated public requests instead of letting them consume snac resources.&lt;/p&gt;
+&lt;p&gt;This is especially important because snac uses a limited number of threads. I like that. Limits are healthy. They force us to understand what the service is doing, and they prevent a small program from pretending to be an infinite resource. But limits also make waste visible. If a few threads are busy serving files that could have been served from cache, those threads are not available for something more useful.&lt;/p&gt;
+&lt;p&gt;With FediMeteo the implementation is different because the reverse proxy is HAProxy, but the reasoning is the same. I have many small snac instances, each one in its own FreeBSD (&lt;a href="https://github.com/BastilleBSD/bastille"&gt;Bastille&lt;/a&gt;) jail, and one public entry point that has to route, terminate TLS, compress, cache, and generally remove as much repetitive work as possible from the backends.&lt;/p&gt;
+&lt;p&gt;This is, in a way, the natural continuation of the original FediMeteo design. In the first article I wrote that I wanted to manage everything according to the Unix philosophy: small pieces working together. This is another piece of that same puzzle. HAProxy does the edge work. snac does the ActivityPub work. Scripts generate forecasts. cron launches updates. ZFS gives me snapshots. FreeBSD jails keep countries separated. Nothing is particularly heroic by itself, but the whole system becomes pleasant because each part has a clear responsibility.&lt;/p&gt;
+&lt;h2&gt;Why there is almost no media&lt;/h2&gt;
+&lt;p&gt;Before talking about HAProxy, it is worth mentioning one of the most important optimizations, which is not in the proxy configuration at all.&lt;/p&gt;
+&lt;p&gt;FediMeteo does not use media in its forecasts.&lt;/p&gt;
+&lt;p&gt;No images attached to the posts, no generated weather cards, no maps for each city, no decorative banners. The forecasts are text and emoji. This was a deliberate decision. Weather information does not become more useful just because it is put inside an image, and every media file used by the service would become something to store, serve, cache, federate, expire, back up, and occasionally debug.&lt;/p&gt;
+&lt;p&gt;Text and emoji are enough. They are accessible, light, readable in text browsers, friendly to timelines, and understandable even when someone does not know the local language perfectly. This was one of the original design principles of FediMeteo, and it also helps the infrastructure. Less media means less work, fewer cache entries, fewer repeated fetches, fewer surprises.&lt;/p&gt;
+&lt;p&gt;There is one exception: the avatar.&lt;/p&gt;
+&lt;p&gt;All FediMeteo accounts use the same avatar, and this is also intentional. I could have used a different avatar for each country, or for each city, or created something visually richer. It would have been nicer in some screenshots, perhaps. It would also have been operationally worse.&lt;/p&gt;
+&lt;p&gt;With one shared avatar, the reverse proxy has one very useful object to cache. It is public, identical for everyone, small, requested often, and therefore almost always hot in cache. HAProxy can serve it directly instead of asking each snac instance to return the same file. Since avatars are requested by remote instances, browsers, profile previews, and all sorts of federation-related fetches, this single decision removes a surprising amount of pointless backend traffic.&lt;/p&gt;
+&lt;p&gt;So the avatar is not only a visual identity. It is part of the architecture.&lt;/p&gt;
+&lt;p&gt;This is the kind of optimization I like most, because it starts before the software. It starts with deciding not to create a problem.&lt;/p&gt;
+&lt;h2&gt;The homepage is static because it can be static&lt;/h2&gt;
+&lt;p&gt;The main homepage follows the same logic.&lt;/p&gt;
+&lt;p&gt;It is a static HTML page generated from a template. Once per hour, a cron script updates the numbers and statistics. It counts the data I want to show, regenerates the page, and then the page remains static until the next run.&lt;/p&gt;
+&lt;p&gt;This is not because I cannot make a dynamic page. It is because I do not need one. Boring is good.&lt;/p&gt;
+&lt;p&gt;The homepage does not need to query all the country instances on every visit. It does not need a database request for each user who opens it. It does not need to ask snac anything in real time. The numbers are useful, but they do not need to be updated every second. Once per hour is enough, and it also fits the spirit of the whole project: do the work when it is needed, then serve the result cheaply.&lt;/p&gt;
+&lt;p&gt;I have seen too many small services become heavy because the first implementation was convenient rather than appropriate. A cron job and a template are not fashionable, but they are often exactly what a page like this needs.&lt;/p&gt;
+&lt;h2&gt;Many countries, one entry point&lt;/h2&gt;
+&lt;p&gt;FediMeteo is made of many country instances. Each one runs in its own jail and listens on its own internal address and port. From the outside, however, they all live under the same domain structure:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-text"&gt;fedimeteo.com
+www.fedimeteo.com
+it.fedimeteo.com
+uk.fedimeteo.com
+jp.fedimeteo.com
+us.fedimeteo.com
+usa.fedimeteo.com
+can.fedimeteo.com
+canada.fedimeteo.com
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And many more.&lt;/p&gt;
+&lt;p&gt;At the beginning, it is always tempting to write one ACL after another in the HAProxy frontend. It is quick, it is explicit, and for five hostnames it is perfectly fine. But FediMeteo did not remain at five hostnames. As countries and aliases grew, a long chain of ACLs would have turned the frontend into a list of names instead of a description of how the proxy behaves.&lt;/p&gt;
+&lt;p&gt;So I moved the hostname to backend mapping into a map file:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-text"&gt;fedimeteo.com        backend_fedimeteo
+www.fedimeteo.com    backend_fedimeteo
+it.fedimeteo.com     backend_it
+uk.fedimeteo.com     backend_uk
+jp.fedimeteo.com     backend_jp
+us.fedimeteo.com     backend_us
+usa.fedimeteo.com    backend_us
+can.fedimeteo.com    backend_ca
+canada.fedimeteo.com backend_ca
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;The frontend then needs only one rule:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;use_backend %[req.hdr(host),field(1,:),lower,map(/usr/local/etc/fedimeteo.map,backend_fedimeteo)]
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;This reads the  &lt;code&gt;Host&lt;/code&gt;  header, removes the port if present, lowercases the result, and looks it up in  &lt;code&gt;/usr/local/etc/fedimeteo.map&lt;/code&gt;. If nothing matches, it falls back to the main FediMeteo backend.&lt;/p&gt;
+&lt;p&gt;I like this because it keeps the configuration honest. The frontend contains the policy. The map contains the data. Adding a country means adding an entry to the map and defining a backend. I do not need to make the frontend more complicated every time the service grows.&lt;/p&gt;
+&lt;h2&gt;Backends as small compartments&lt;/h2&gt;
+&lt;p&gt;The country backends are deliberately plain:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;backend backend_it
+    mode http
+    http-reuse safe
+    server srv1 10.0.0.2:8001 maxconn 30
+
+backend backend_uk
+    mode http
+    http-reuse safe
+    server srv1 10.0.0.7:8001 maxconn 30
+
+backend backend_jp
+    mode http
+    http-reuse safe
+    server srv1 10.0.0.32:8001 maxconn 30
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;One backend, one jail, one snac instance. This is exactly the same organizational principle as the rest of the project. If I need to reason about Italy, I look at the Italian jail. If I need to reason about the United Kingdom, I look at the UK jail. If one day I need to move a country elsewhere, the separation is already there.&lt;/p&gt;
+&lt;p&gt;The  &lt;code&gt;maxconn 30&lt;/code&gt;  value is not a magic number. It is a ceiling. I want each small backend to have a visible limit in front of it. If something starts hammering a country instance, I prefer the pressure to appear at the HAProxy layer instead of becoming unlimited concurrent work inside snac.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;http-reuse safe&lt;/code&gt;  lets HAProxy reuse backend connections where appropriate. This is another small reduction in unnecessary work. Opening connections repeatedly is not the biggest problem in the world, but avoiding it is still better, especially when many small services sit behind the same proxy.&lt;/p&gt;
+&lt;h2&gt;The front door&lt;/h2&gt;
+&lt;p&gt;The HTTPS frontend listens on IPv4 and IPv6 and offers both HTTP/2 and HTTP/1.1:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;frontend https_in
+    bind :::443 v4v6 ssl crt /usr/local/etc/certs/ alpn h2,http/1.1
+    mode http
+    option http-keep-alive
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;TLS defaults are set globally:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+ssl-default-bind-options no-sslv3 no-tlsv10 no-tlsv11 no-tls-tickets
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Port 80 only redirects to HTTPS, except for Let's Encrypt challenges:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;acl letsencrypt-acl path_beg /.well-known/acme-challenge/
+http-request redirect scheme https code 301 unless letsencrypt-acl
+use_backend letsencrypt-backend if letsencrypt-acl
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;In the HTTPS frontend I also set the usual forwarding headers:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-request set-header X-Real-IP %[src]
+http-request set-header X-Forwarded-Proto https
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And I add HSTS:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-response set-header Strict-Transport-Security &amp;quot;max-age=31536000; includeSubDomains; preload&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;None of this is unusual, and that is fine. The interesting parts of an infrastructure are not always the parts that should be unusual.&lt;/p&gt;
+&lt;h2&gt;Two caches, because the requests are different&lt;/h2&gt;
+&lt;p&gt;The HAProxy configuration defines two caches:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;cache mediacache
+  total-max-size 128
+  max-object-size 10000000
+  max-age 3600
+  process-vary on
+  max-secondary-entries 12
+
+cache jsoncache
+  total-max-size 16
+  max-object-size 1000000
+  max-age 60
+  process-vary on
+  max-secondary-entries 12
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;I keep media and ActivityPub JSON separate because they are not the same kind of traffic.&lt;/p&gt;
+&lt;p&gt;The media cache is larger and has a longer maximum age. In FediMeteo, this mostly means the shared avatar and a few static-looking objects. Since there is intentionally almost no media, the important cached object is requested very often and remains warm.&lt;/p&gt;
+&lt;p&gt;The JSON cache is smaller and short-lived. It is there for public ActivityPub GET requests, not to store federation state forever. A 60 second cache is enough to collapse many repeated requests that arrive close together in time, without pretending that ActivityPub responses should be treated like immutable files.&lt;/p&gt;
+&lt;p&gt;This distinction is important. Caching is not one decision. It is a set of small decisions about what a response means, who can see it, how often it changes, and what happens if it is served again.&lt;/p&gt;
+&lt;h2&gt;Recognizing media&lt;/h2&gt;
+&lt;p&gt;For media, the ACL is based on file extensions:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;acl is_media path_end -i .jpg .jpeg .png .gif .webp .svg .ico .mp4 .webm .mp3 .ogg .wav .flac .mov .avi .mkv .m4v
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Then I store the result in a transaction variable:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-request set-var(txn.is_media) bool(true) if is_media
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;The cache lookup is straightforward:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-request cache-use mediacache if { var(txn.is_media) -m bool true }
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And on the response side:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-response set-header Cache-Control &amp;quot;max-age=3600, public&amp;quot; if { var(txn.is_media) -m bool true }
+http-response del-header Set-Cookie if { var(txn.is_media) -m bool true }
+http-response del-header Vary if { var(txn.is_media) -m bool true }
+http-response cache-store mediacache if { var(txn.is_media) -m bool true }
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;The  &lt;code&gt;Cache-Control&lt;/code&gt;  header makes the intent explicit.  &lt;code&gt;Set-Cookie&lt;/code&gt;  is removed because a public media object should not carry session information.  &lt;code&gt;Vary&lt;/code&gt;  is removed because I do not want the same avatar to fragment into many cache entries because of harmless header differences.&lt;/p&gt;
+&lt;p&gt;This is aggressive only if removed from its context. In this service, with this media policy, it is a reasonable choice. FediMeteo is not serving private media under these paths. It is mostly serving the same public avatar over and over.&lt;/p&gt;
+&lt;p&gt;For the same reason, I clean the request before it reaches the backend:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-request del-header Authorization if { var(txn.is_media) -m bool true }
+http-request del-header Cookie        if { var(txn.is_media) -m bool true }
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;I would not do this globally. I do it after deciding that the request is media. Scope is what makes these rules safe.&lt;/p&gt;
+&lt;p&gt;The result is exactly what I want: the shared avatar becomes an almost perfect cache object. Small, public, repeatedly requested, and served by HAProxy instead of snac.&lt;/p&gt;
+&lt;h2&gt;ActivityPub JSON microcaching&lt;/h2&gt;
+&lt;p&gt;The ActivityPub side starts from the  &lt;code&gt;Accept&lt;/code&gt;  header:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;acl is_ap_json   req.hdr(Accept),lower -m sub application/activity+json
+acl is_ap_ldjson req.hdr(Accept),lower -m sub application/ld+json
+acl is_outbox    path_end /outbox
+acl is_get       method GET
+acl has_auth     req.hdr(Authorization) -m found
+acl has_cookie   req.hdr(Cookie) -m found
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;This part matters because ActivityPub uses content negotiation. The same path may return HTML to a browser and JSON to a remote instance. If the proxy pretends that a URL is always one thing, it will eventually cache the wrong representation.&lt;/p&gt;
+&lt;p&gt;So I only mark public ActivityPub GET requests as cacheable:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-request set-var(txn.is_activitypub) bool(true) if is_get !is_outbox is_ap_json !has_auth !has_cookie
+http-request set-var(txn.is_activitypub) bool(true) if is_get !is_outbox is_ap_ldjson !has_auth !has_cookie
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;There are several decisions here, all important.&lt;/p&gt;
+&lt;p&gt;It must be a  &lt;code&gt;GET&lt;/code&gt;, because I am not caching deliveries or anything that changes state. It must not be  &lt;code&gt;/outbox&lt;/code&gt;, because outbox collections are not the traffic I want to cache here. It must not have  &lt;code&gt;Authorization&lt;/code&gt;, and it must not have cookies, because authenticated or user-specific requests do not belong in a shared public cache.&lt;/p&gt;
+&lt;p&gt;Then the cache can be used and populated:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-request cache-use jsoncache if { var(txn.is_activitypub) -m bool true }
+
+http-response set-header Cache-Control &amp;quot;max-age=60, public&amp;quot; if { var(txn.is_activitypub) -m bool true }
+http-response cache-store jsoncache if { var(txn.is_activitypub) -m bool true }
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Sixty seconds is short, but useful. Federation often creates small clusters of identical requests. A remote server fetches an actor, another fetches the same actor, something asks for the same object, something retries. I do not need to cache these responses for hours. I only need HAProxy to answer the second and third identical request during the same small burst.&lt;/p&gt;
+&lt;p&gt;This is microcaching in the most practical sense. It reduces repeated work without changing the nature of the service.&lt;/p&gt;
+&lt;h2&gt;Static media paths&lt;/h2&gt;
+&lt;p&gt;There is also a rule for static paths:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;acl is_short_path path_reg ^/[^/]+/s/
+http-request cache-use mediacache if is_short_path
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;This comes from the same observation that led me to cache snac media with nginx. snac uses static media paths, and those paths often represent the kind of public, repeatable traffic that should not consume backend threads if the proxy can serve it. I call them "short", not because they are, but because the first time I saw them, I thought the 's' stood for "short", not "static". The name just stuck.&lt;/p&gt;
+&lt;p&gt;In FediMeteo this is less central than on a normal social instance, because I deliberately do not use media except for the avatar and basic static objects. Still, the rule fits the general policy: let HAProxy handle repeatable edge work, and let snac spend its threads where they are actually needed.&lt;/p&gt;
+&lt;h2&gt;&lt;code&gt;Vary&lt;/code&gt;, but not without limits&lt;/h2&gt;
+&lt;p&gt;Both caches have:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;process-vary on
+max-secondary-entries 12
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;I want HAProxy to process  &lt;code&gt;Vary&lt;/code&gt;, because content negotiation is real, especially when ActivityPub is involved. But I also want variation to be bounded. If every slightly different header creates another cache entry, the cache becomes a complicated way to miss.&lt;/p&gt;
+&lt;p&gt;For media, I remove  &lt;code&gt;Vary&lt;/code&gt;  before storing the response. A shared avatar does not need to vary by  &lt;code&gt;Accept&lt;/code&gt;. For ActivityPub JSON, I am more careful because the representation matters.&lt;/p&gt;
+&lt;p&gt;Again, the important thing is not the number itself. It is the decision to make variation explicit and limited.&lt;/p&gt;
+&lt;h2&gt;Seeing whether it works&lt;/h2&gt;
+&lt;p&gt;During rollout, I like to expose a very small diagnostic header:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;http-response set-header X-Cache-Status HIT if !{ srv_id -m found }
+http-response set-header X-Cache-Status MISS if { srv_id -m found }
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;This is intentionally simple. If HAProxy selected a backend server, I call it a miss. If no backend server was selected, the response came from cache, so I call it a hit. It is not a complete observability system, but it is enough to answer the first question I usually have after changing a cache rule.&lt;/p&gt;
+&lt;p&gt;Did this request reach snac?&lt;/p&gt;
+&lt;p&gt;A test can be as simple as:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;curl -I https://it.fedimeteo.com/path/to/avatar.png
+curl -I https://it.fedimeteo.com/path/to/avatar.png
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;The second request should be a hit.&lt;/p&gt;
+&lt;p&gt;For ActivityPub JSON, the test must use the right  &lt;code&gt;Accept&lt;/code&gt;  header:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;curl -I \
+  -H 'Accept: application/activity+json' \
+  https://it.fedimeteo.com/some/activitypub/object
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And I also want to verify that cookies and authorization prevent public caching:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;curl -I \
+  -H 'Cookie: test=value' \
+  -H 'Accept: application/activity+json' \
+  https://it.fedimeteo.com/some/activitypub/object
+
+curl -I \
+  -H 'Authorization: Bearer fake' \
+  -H 'Accept: application/activity+json' \
+  https://it.fedimeteo.com/some/activitypub/object
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;A cache that works should be visible. A cache that is invisible can be correct, but it can also be silently wrong. I prefer to know.&lt;/p&gt;
+&lt;h2&gt;Compression and operational paths&lt;/h2&gt;
+&lt;p&gt;HAProxy also handles gzip compression:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;filter compression
+compression algo gzip
+compression type text/css text/html text/javascript application/javascript text/plain text/xml application/json application/activity+json
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;This keeps another common responsibility at the edge. The country instances can stay focused on snac and the forecast data, while HAProxy deals with client-facing compression for HTML, JSON, and ActivityPub responses.&lt;/p&gt;
+&lt;p&gt;There is also a local Prometheus exporter:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-haproxy"&gt;frontend prometheus
+  bind 127.0.0.1:8405
+  mode http
+  http-request use-service prometheus-exporter
+  no log
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;And I keep internal operational paths, such as statistics and Grafana, handled before the hostname map. These are small details, but ordering matters. Special paths should be explicit and early. The hostname map is for FediMeteo routing, not for every internal tool I happen to expose behind the same proxy.&lt;/p&gt;
+&lt;h2&gt;What this changes in practice&lt;/h2&gt;
+&lt;p&gt;The nice thing about this configuration is that none of its parts is particularly surprising.&lt;/p&gt;
+&lt;p&gt;The map keeps hostname routing manageable. The backend definitions keep each country isolated and limited. The static homepage avoids dynamic work for something that changes once per hour. The shared avatar gives HAProxy one very hot media object to serve directly. The media cache keeps public files away from snac. The JSON microcache absorbs short ActivityPub bursts. Header cleanup prevents useless variation. Connection reuse avoids unnecessary backend connection churn.&lt;/p&gt;
+&lt;p&gt;But all of this is only a longer way of saying one thing:&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;fewer requests reach snac&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;That is the metric I care about here.&lt;/p&gt;
+&lt;p&gt;Not because snac is slow. If anything, FediMeteo exists in its current form because snac is efficient enough to make this kind of project possible on a very small VPS. But precisely because the whole architecture is small and pleasant, I do not want to waste resources where there is no need.&lt;/p&gt;
+&lt;p&gt;This is also consistent with the rest of the project. Forecasts are serialized by scripts. Updates happen every six hours. The homepage is regenerated hourly. Countries live in separate jails. Snapshots and backups are handled outside the application. No single component tries to be the entire system.&lt;/p&gt;
+&lt;p&gt;HAProxy is just another small piece, but it sits in the right place to remove a lot of repeated work.&lt;/p&gt;
+&lt;h2&gt;Caveats&lt;/h2&gt;
+&lt;p&gt;This configuration is not a universal HAProxy recipe for ActivityPub services.&lt;/p&gt;
+&lt;p&gt;It matches FediMeteo as it is now: almost no media, one shared avatar, static homepage, public forecasts, many small snac instances, and ActivityPub traffic that can benefit from a short public cache when there are no cookies or authorization headers.&lt;/p&gt;
+&lt;p&gt;If I decide one day to use media in forecasts, the media cache rules will need to be reviewed. If I use different avatars for each city or country, the cache will still work, but I will lose the very nice property of one shared, always-hot avatar. If ActivityPub responses become actor-dependent, public JSON caching must be reconsidered. If one country grows a very different traffic pattern from the others, it may deserve a different limit or policy.&lt;/p&gt;
+&lt;p&gt;This is why I do not like presenting configurations as magic. A good configuration is a written form of the assumptions behind a service. When the assumptions change, the configuration must change too.&lt;/p&gt;
+&lt;h2&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;FediMeteo started as a small idea and became larger than I expected, but I still want it to feel small in the right ways. Small does not mean fragile. Small means understandable. It means that each part has a reason to exist, and that unnecessary work is removed before it becomes a problem.&lt;/p&gt;
+&lt;p&gt;The HAProxy layer follows this idea. It terminates TLS, routes hostnames through a map, reuses backend connections, serves the shared avatar from cache, microcaches public ActivityPub JSON, avoids authenticated and cookie-based traffic, and gives me a small diagnostic header to see what is happening.&lt;/p&gt;
+&lt;p&gt;There is no single brilliant directive here. There is only the usual work of matching infrastructure to reality.&lt;/p&gt;
+&lt;p&gt;FediMeteo publishes weather forecasts as text and emoji. The homepage is static HTML updated every hour. The accounts share the same avatar because it is enough, and because it is better for the cache. Each country has its own snac instance in its own FreeBSD jail. HAProxy stands in front of them and tries, quietly, not to bother them unless it has to.&lt;/p&gt;
+&lt;p&gt;I like this kind of infrastructure.&lt;/p&gt;
+&lt;p&gt;Not because it is invisible, but because when it works well, it leaves very little to say.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://it-notes.dragas.net/2026/05/18/fedimeteo-haproxy-and-the-art-of-not-wasting-snac-threads/</guid>
+      <pubDate>Mon, 18 May 2026 09:44:00 +0000</pubDate>
+    </item>
     <item>
       <title>Monitor your devices with LibreNMS on FreeBSD</title>
       <link>https://it-notes.dragas.net/2026/05/07/monitor-your-services-with-librenms-on-freebsd/</link>
@@ -2611,53 +2894,6 @@ Transfer/sec:      5.44MB
 &lt;p&gt;In the upcoming articles in this series, we will explore how to expand this basic installation with other useful services and how to keep the system updated and secure over time.&lt;/p&gt;</description>
       <guid isPermaLink="true">https://it-notes.dragas.net/2025/04/22/make-your-own-internet-presence-with-netbsd-and-a-1-euro-vps-part-1-your-blog/</guid>
       <pubDate>Tue, 22 Apr 2025 07:30:36 +0200</pubDate>
-    </item>
-    <item>
-      <title>Launching BSSG - My Journey from Dynamic CMS to Bash Static Site Generator</title>
-      <link>https://it-notes.dragas.net/2025/04/07/launching-bssg-my-journey-from-dynamic-cms-to-bash-static-site-generator/</link>
-      <description>&lt;p&gt;&lt;img src="https://unsplash.com/photos/0gkw_9fy0eQ/download?ixid=M3wxMjA3fDB8MXxhbGx8fHx8fHx8fHwxNzQzOTQ2ODgyfA&amp;force=true&amp;w=1920" alt="Photo by Patrick Fore on Unsplash"&gt;&lt;/p&gt;&lt;p&gt;I've had my own website practically forever. Back in the late '90s, I already had a web page on my ISP's server, and since at least 2001, I've had my own homepage on my own server. I've never been a great graphic designer, let alone a skilled webmaster, so I've always tried to keep things minimal and compatible.&lt;/p&gt;
-&lt;p&gt;Initially, like many others, I wrote HTML pages by hand. Then I used WYSIWYG creation tools, and eventually, I landed on CMS (Content Management Systems).&lt;/p&gt;
-&lt;h2&gt;The Era of Dynamic CMS&lt;/h2&gt;
-&lt;p&gt;I liked &lt;a href="https://en.wikipedia.org/wiki/Content_management_system"&gt;CMS&lt;/a&gt; because they allowed me to focus on the content and not on the correctness of the generated HTML. Thanks to them, I started writing my first blog shortly afterward.&lt;/p&gt;
-&lt;p&gt;Over the years, I've used many tools like PHPNuke, FlatNuke (created and developed by my friend &lt;a href="https://simonevellei.com/"&gt;Simone Vellei&lt;/a&gt;), eventually moving through Joomla and Wordpress. Wordpress always seemed like the most suitable tool for the job, and I used it for many years. Even today, mainly on the sysadmin side, I manage hundreds of Wordpress sites, and they are reasonably reliable, aside from the plugins (because &lt;a href="https://www.youtube.com/live/_IdH5YTBAGs?t=9801"&gt;the problem with Wordpress isn't the software itself, but many of the external plugins&lt;/a&gt;).&lt;/p&gt;
-&lt;p&gt;But this is precisely the problem: all dynamic CMS require constant and continuous security updates because, without them, the chances of defacement are extremely high.&lt;/p&gt;
-&lt;h2&gt;Discovering Static Site Generators&lt;/h2&gt;
-&lt;p&gt;And that's precisely why, when I discovered Carlos Fenollosa's &lt;a href="https://github.com/cfenollosa/bashblog"&gt;bashblog&lt;/a&gt; in 2014, it immediately became clear that, indeed, there was no reason to continue down the path of dynamic CMS. I don't write often, I don't update often, there's no reason to regenerate all the content with every visit. Sure, WordPress caching plugins are often quite effective, but they are still add-ons that need to be kept up to date. And I'm not a fan of adding things to streamline. Often, less is more.&lt;/p&gt;
-&lt;p&gt;So, I started using bashblog for some 'secondary' projects until, in 2015, I &lt;a href="https://www.dragas.net/posts/da-wordpress-a-pelican/"&gt;migrated my 'old' Italian blog from WordPress to Pelican&lt;/a&gt;. Shortly after, I &lt;a href="https://www.dragas.net/posts/da-pelican-a-nikola/"&gt;moved from Pelican to Nikola&lt;/a&gt;, and that blog is still generated by Nikola, although (that blog's) updates are now extremely rare (so much so that I consider it almost abandoned). I also created the first Docker container for Nikola and, for a long time, it was listed among the deployment methods on their site.&lt;/p&gt;
-&lt;h2&gt;Building My Own: BSSG&lt;/h2&gt;
-&lt;p&gt;But bashblog continued to fascinate me. So in 2015, for fun, I started developing my own Static Site Generator from scratch. I called it (with little imagination), &lt;a href="https://bssg.dragas.net"&gt;BSSG - Bash Static Site Generator&lt;/a&gt;. The plan was for it to be compatible with the main OSes I use, to remain sufficiently simple and straightforward (!!!), and to be tailored to my needs. I intended to use it only and exclusively for small private things, starting with a sort of diary of mine - more professional than personal - and leave the 'official' blogs to more tested and 'professional' tools.&lt;/p&gt;
-&lt;p&gt;As time went by, I added some small features I liked: theming support, archives, tags (initially absent). Over time, many functions were added, and the script grew large – large enough to make me pause and ask myself some questions about the long-term stability of this solution. So, it remained only for my 'diary', which, however, grew year after year to the point where I needed to devise some kind of optimization. I then developed (more for fun than out of real necessity) a caching system. On rebuild, only what needs to be rebuilt is reconstructed, making the operation sufficiently fast even as the number of posts grows. Obviously, there are limits: using bash and external tools, the efficiency cannot be compared to that of a proper programming language.&lt;/p&gt;
-&lt;h2&gt;Brief Detour: ITNBlog&lt;/h2&gt;
-&lt;p&gt;And it's here that I decided, in preparation for opening a new blog (this one), to create a new tool called &lt;a href="https://itnblog.dragas.net"&gt;ITNBlog&lt;/a&gt;. I would develop it in Python and focus a bit more on performance and completeness. But ITNBlog stalled very quickly: time was limited, I'm not a full-time developer, so I realized I would spend too much time on development and too little on content creation.&lt;/p&gt;
-&lt;p&gt;Therefore, in 2018, I launched this blog but using &lt;a href="https://ghost.org/"&gt;Ghost&lt;/a&gt;, a solution that gave me good results, including performance-wise. I chose Ghost because I thought that, writing content also from my phone while on the go, a real CMS would be useful. Spoiler: no, it didn't turn out that way, so a few years later I decided to migrate this blog to &lt;a href="https://gohugo.io/"&gt;Hugo&lt;/a&gt;. Nevertheless, I continued to develop ITNBlog on and off, as a hobby, without any particular ambitions.&lt;/p&gt;
-&lt;p&gt;At some point, however, I found myself in a particular situation: Hugo deprecated some features, and the theme I had chosen moved forward. But I ended up in an unpleasant situation: using the latest version of Hugo and the current version of the theme would produce unacceptable output; staying with the old version of Hugo while waiting for the theme update meant making a compromise. I actually build the blog from different devices, and they all have different versions of Hugo installed. Change the theme? Feasible, but I would have had to modify almost the entire site.&lt;/p&gt;
-&lt;p&gt;I considered migrating to &lt;a href="https://github.com/gyptazy/manpageblog"&gt;manpageblog&lt;/a&gt; by &lt;a href="https://gyptazy.com/"&gt;gyptazy&lt;/a&gt; – I personally love its simplicity and retro look, and it was the main candidate to replace Hugo. I also created a script and migrated all my posts into the correct format.&lt;/p&gt;
-&lt;h2&gt;BSSG to the Rescue (and ITNBlog's Role)&lt;/h2&gt;
-&lt;p&gt;&lt;strong&gt;That's when I realized: I would implement the few missing features needed to make ITNBlog sufficiently complete, and this blog would be published using it, ensuring I'd be committed to its development. However, ITNBlog is not mature enough to be released publicly, so for now, it will remain the engine just for my blog. Then I thought again about BSSG – development had stalled some time ago, but it was still in use – and figured that perhaps, with a little tidying up, I could release &lt;em&gt;it&lt;/em&gt;.&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;Because I'm tired of seeing people use dynamic CMS even to implement primarily static blogs or websites – and BSSG, despite its limitations and inefficiencies, works. And there are many themes to choose from. In short, you can install it and generate your blog in seconds.&lt;/p&gt;
-&lt;h2&gt;Why Choose BSSG?&lt;/h2&gt;
-&lt;p&gt;BSSG is the result of a 10-year evolution. The code isn't extremely consistent, some interesting features are missing (which I plan to implement), and it could use refactoring as the build script is monstrously large. But it works, it's portable (and much of the complexity increased precisely because of portability), and it generates sites that achieve very high accessibility and speed scores.&lt;/p&gt;
-&lt;p&gt;Here are some highlights:&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;✅ &lt;strong&gt;Portability:&lt;/strong&gt; Uses native OS tools (e.g., &lt;code&gt;md5sum&lt;/code&gt; on Linux, &lt;code&gt;md5&lt;/code&gt; on OpenBSD and NetBSD). Portability itself added much of the complexity!&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;Simple Theming:&lt;/strong&gt; Themes are just simple CSS files, so the structure remains the same – simplifying theme switching or creating new ones. More than 50 themes &lt;a href="https://bssg.dragas.net/example"&gt;are already available&lt;/a&gt;!&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;Essential Features:&lt;/strong&gt; Supports RSS feed generation, sitemap.xml, OpenGraph tags (to improve social sharing), internationalization (the blog can be in languages other than English – but not multilingual, at least for now), etc.&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;Built-in Backup and Restore script:&lt;/strong&gt; It will just copy the configuration file, posts, and pages. Nothing else.&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;Minimal Dependencies.&lt;/strong&gt;&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;Markdown Support:&lt;/strong&gt; Posts and pages are in Markdown (CommonMark, Pandoc, and markdown.pl are supported).&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;Feature Images.&lt;/strong&gt;&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;Optional GNU Parallel Integration:&lt;/strong&gt; To speed up build times when there are many posts. This feature significantly impacts the code and has caused me numerous headaches over time. But it's optional (if &lt;code&gt;parallel&lt;/code&gt; isn't found, it proceeds traditionally) and only provides benefits when the number of posts increases: with few posts, performance actually degrades.&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;High Accessibility and Performance Scores:&lt;/strong&gt; Sites built with BSSG achieve excellent scores.&lt;/li&gt;
-&lt;li&gt;✅ &lt;strong&gt;BSD Licensed:&lt;/strong&gt; Released under a BSD license.&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;One of the problems I've always had with all CMS and SSGs has been choosing a theme. In some cases (like Hugo), the theme heavily influences the output, which is both good and bad. Good because it makes each site unique, but bad because it makes switching themes difficult. In the past, I've sometimes found myself having to change themes because they were abandoned and no longer updated. BSSG works differently: theming comes from using a different CSS file, which makes its structure more rigid, but switching from one theme to another is trivial. To help with the choice, I created a script that will build your site using all the themes present in the &lt;code&gt;themes&lt;/code&gt; directory, just like on the examples page of the official website. This way, it will be easy to see and test your site with all available themes. If you want to add a touch of originality, you can choose the 'random' theme, and one will be chosen randomly from the list at each site regeneration.&lt;/p&gt;
-&lt;h2&gt;Admin Interface (Experimental)&lt;/h2&gt;
-&lt;p&gt;BSSG is in production use by some clients (for their internal sites), for whom I also created a basic admin interface (using Node Express, partly to chew on a bit of Node), but I don't feel ready to release it immediately as it's not sufficiently tested. It has an integrated Markdown editor and allows post scheduling, generating the files and launching BSSG with the right options at the right time. This could be that connecting link between traditional CMS and SSGs. There are others, but this one is tightly integrated with BSSG.&lt;/p&gt;
-&lt;h2&gt;BSSG is Available Today&lt;/h2&gt;
-&lt;p&gt;Starting today, BSSG is publicly available. It's not perfect, it probably doesn't make sense to do something of this complexity in bash, development will proceed slowly – but it's here, available to anyone who might find it useful.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://bssg.dragas.net"&gt;Happy blogging everyone!&lt;/a&gt;&lt;/p&gt;</description>
-      <guid isPermaLink="true">https://it-notes.dragas.net/2025/04/07/launching-bssg-my-journey-from-dynamic-cms-to-bash-static-site-generator/</guid>
-      <pubDate>Mon, 07 Apr 2025 08:11:36 +0200</pubDate>
     </item>
   </channel>
 </rss>
