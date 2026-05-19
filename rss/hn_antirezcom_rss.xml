@@ -9,7 +9,57 @@ http://antirez.com
 </link>
     <description>Description pending</description>
     <language>en</language>
-    <lastBuildDate>Tue, 19 May 2026 05:05:56 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 19 May 2026 09:55:01 +0000</lastBuildDate>
+    <item>
+      <title>
+Alternatives for the EDIT tool of LLM agents
+</title>
+      <link>
+http://antirez.com/news/166
+</link>
+      <description>EDIT: of course this was already done in the past! I had little doubts but people just confirmed me about it on Twitter :) But, keep reading: the CRC32 compromise at the end is an interesting tradeoff, and this is a good discussion to have in general.
+&lt;br&gt;
+&lt;br&gt;Right now I'm working to an agent for my DS4 project. Local inference is token-poor, it's a battlefield where optimizations count. I was quite surprised by the fact the EDIT tool everybody is using right now forces the LLM to emit the old version of the text verbatim. This CAS (check and set) mode of operation, where I say EDIT old="foo" new="bar", is needed because there are often colliding edits (the user is editing as well, or checked out a different branch, and so forth) and because the LLM can just hallucinate that a given line had a given content.
+&lt;br&gt;
+&lt;br&gt;This means, basically, that just using line numbers is very fragile: to say, change line 22 with new="foobar" is not good. Yet I don't want my local LLM to throw away tokens rewriting the old text each time, also because certain times the old text has a lot of special chars and spaces that the model may get wrong; in this case the tool would fail, forcing the LLM to do the same edit again. So I (re)designed a tag-based EDIT tool that is still CAS style, but more tokens efficient.
+&lt;br&gt;
+&lt;br&gt;The READ and SEARCH tools return something like that:
+&lt;br&gt;
+&lt;br&gt;  10:Q8fA int count = 10;
+&lt;br&gt;  11:rA3_ if (count &gt; limit) {
+&lt;br&gt;  12:Kq9z     count = limit;
+&lt;br&gt;  13:PX0b }
+&lt;br&gt;
+&lt;br&gt;So there are line numbers and tags. The tag is 4 chars, on average 2.5 LLM tokens, representing a checksum of the line. Now the LLM can edit like this:
+&lt;br&gt;
+&lt;br&gt;  {
+&lt;br&gt;    "tool": "edit",
+&lt;br&gt;    "path": "/tmp/example.c",
+&lt;br&gt;    "line": 10,
+&lt;br&gt;    "tag": "Q8fA",
+&lt;br&gt;    "new": "int count = 11;"
+&lt;br&gt;  }
+&lt;br&gt;
+&lt;br&gt;Or, multi line, like this:
+&lt;br&gt;
+&lt;br&gt;  {
+&lt;br&gt;    "tool": "edit",
+&lt;br&gt;    "path": "/tmp/example.c",
+&lt;br&gt;    "lines": "11:rA3_\n12:Kq9z\n13:PX0b",
+&lt;br&gt;    "new": "if (count &gt; limit)\n    return limit;"
+&lt;br&gt;  }
+&lt;br&gt;
+&lt;br&gt;The saving is significant especially when the agent is deleting big amounts of text, but also in the general case. However, there is some overhead due to the fact we have line numbers and tags. There are potential tradeoffs, maybe the tag should be 8 chars and include the line number in the hash, there is to check exactly collisions possibilities and tokenization to see how much this is a win, but I like the line:tag format as later the LLM is often able to exploit the line information in many ways, like to get ranges in successive tool calls. Maybe there are other ways to exploit the tag, too, like: is this line still dj4_?
+&lt;br&gt;
+&lt;br&gt;The interesting thing is that DeepSeek v4 Flash is able to use this tool in a very effective way, so apparently it is natural for it. And while I did't measure the exact savings I saw in the field that edits are much faster and even more reliable.
+&lt;br&gt;
+&lt;br&gt;The alternative to this is to return just the whole file CRC32 each time (basically the tag becomes a file tag, even for partial reads). So that we can only work with line numbers + CRC, the edit would just specify 11,12,13,14. Less tokens, of course. This forces, however, to recompute the CRC32 of the file each time, but for reasonably sized files this is cheap enough. But this approach has limits: we fail the edit even if *unrelated* changes happened, so there is a strong tradeoff at play. To be fair to the whole file method, there is to say that it allows to specify ranges as 10:23, which is a huge win.
+&lt;br&gt;
+&lt;br&gt;I have the feeling I can decide which is better only with enough practical evidence, by using ds4-agent over multiple sessions with the two systems. For now maybe a command line to switch the edit mode is the first right step to do.
+&lt;a href="http://antirez.com/news/166"&gt;Comments&lt;/a&gt;</description>
+      <guid isPermaLink="true">http://antirez.com/news/166</guid>
+      <pubDate>Tue, 19 May 2026 09:26:03 +0200</pubDate>
+    </item>
     <item>
       <title>
 A few words on DS4
@@ -7525,149 +7575,6 @@ http://antirez.com/news/67
 &lt;a href="http://antirez.com/news/67"&gt;Comments&lt;/a&gt;</description>
       <guid isPermaLink="true">http://antirez.com/news/67</guid>
       <pubDate>Tue, 10 Dec 2013 00:53:03 +0100</pubDate>
-    </item>
-    <item>
-      <title>
-WAIT: synchronous replication for Redis
-</title>
-      <link>
-http://antirez.com/news/66
-</link>
-      <description>Redis unstable has a new command called "WAIT". Such a simple name, is indeed the incarnation of a simple feature consisting of less than 200 lines of code, but providing an interesting way to change the default behavior of Redis replication.
-&lt;br&gt;
-&lt;br&gt;The feature was extremely easy to implement because of previous work made. WAIT was basically a direct consequence of the new Redis replication design (that started with Redis 2.8). The feature itself is in a form that respects the design of Redis, so it is relatively different from other implementations of synchronous replication, both at API level, and from the point of view of the degree of consistency it is able to ensure.
-&lt;br&gt;
-&lt;br&gt;Replication: synchronous or not?
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;Replication is one of the main concepts of distributed systems. For some state to be durable even when processes fail or when there are network partitions making processes unable to communicate, we are forced to use a simple but effective strategy, that is to take the same information “replicated” across different processes (database nodes).
-&lt;br&gt;
-&lt;br&gt;Every kind of system featuring strong consistency will use a form of replication called synchronous replication. It means that before some new data is considered “committed”, a node requires acknowledge from other nodes that the information was received. The node initially proposing the new state, when the acknowledge is received, will consider the information committed and will reply to the client that everything went ok.
-&lt;br&gt;
-&lt;br&gt;There is a price to pay for this safety: latency. Systems implementing strong consistency are unable to reply to the client before receiving enough acknowledges. How many acks are “enough”? This depends on the kind of system you are designing. For example in the case of strong consistent systems that are available as long as the majority of nodes are working, the majority of the nodes should reply back before some data is considered to be committed. The result is that the latency is bound to the slowest node that replies as the (N/2+1)th node. Slower nodes can be ignored once the majority is reached.
-&lt;br&gt;
-&lt;br&gt;Asynchronous replication
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;This is why asynchronous replication exists: in this alternative model we reply to the client confirming its write BEFORE we get acknowledges from other nodes.
-&lt;br&gt;If you think at it from the point of view of CAP, it is like if the node *pretends* that there is a partition and can’t talk with the other nodes. The information will eventually be replicated at a latter time, exactly like an eventually consistent DB would do during a partition. Usually this latter time will be a few hundred microseconds later, but if the node receiving the write fails before propagating the write, but after it already sent the reply to the client, the write is lost forever even if it was acknowledged.
-&lt;br&gt;
-&lt;br&gt;Redis uses asynchronous replication by default: Redis is designed for performances and low, easy to predict, latency. However if possible it is nice for a system to be able to adapt consistency guarantees depending on the kind of write, so some form of synchronous replication could be handy even for Redis.
-&lt;br&gt;
-&lt;br&gt;WAIT: call me synchronous if you want.
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;The way I depicted synchronous replication above, makes it sound simpler than it actually is.
-&lt;br&gt;
-&lt;br&gt;The reality is that usually synchronous replication is “transactional”, so that a write is propagated to the majority of nodes (or *all* the nodes with some older algorithm), or none, in one way or the other not only the node proposing the state change must wait for a reply from the majority, but also the other nodes need to wait for the proposing node to consider the operation committed in order to, in turn, commit the change. Replicas require in one way or the other a mechanism to collect the write without applying it, basically.
-&lt;br&gt;
-&lt;br&gt;This means that nothing happens during this process, everything is blocked for the current operation, and later you can process a new one, and so forth and so forth.
-&lt;br&gt;
-&lt;br&gt;Because synchronous replication can be very costly, maybe we can do with a bit less? We want a way to make sure some write propagated across the replicas, but at the same time we want other clients to go at light speed as usually sending commands and receiving replies. Clients waiting in a synchronous write should never block any other client doing other synchronous or non-synchronous work.
-&lt;br&gt;
-&lt;br&gt;There is a tradeoff you can take: WAIT does not allow to rollback an operation that was not propagated to enough slaves. It only offers, merely, a way to inform the client about what happened.
-&lt;br&gt;The information, specifically, is the number of replicas that your write was able to reach, all this encapsulated into a simple to use blocking command.
-&lt;br&gt;
-&lt;br&gt;This is how it works:
-&lt;br&gt;
-&lt;br&gt;redis 127.0.0.1:9999&gt; set foo bar
-&lt;br&gt;OK
-&lt;br&gt;redis 127.0.0.1:9999&gt; incr mycounter
-&lt;br&gt;(integer) 1
-&lt;br&gt;redis 127.0.0.1:9999&gt; wait 5 100
-&lt;br&gt;(integer) 7
-&lt;br&gt;
-&lt;br&gt;Basically you can send any number of commands, and they’ll be executed, and replicated as usually.
-&lt;br&gt;As soon as you call WAIT however the client stops until all the writes above are successfully replicated to the specified number of replicas (5 in the example), unless the timeout is reached (100 milliseconds in the example).
-&lt;br&gt;
-&lt;br&gt;Once one of the two limits is reached, that is, the master replicated to 5 replicas, or the timeout was reached, the command returns, sending as reply the number of replicas reached. If the return value is less than the replicas we specified, the request timed out, otherwise the above commands were successfully replicated to the specified number of replicas.
-&lt;br&gt;
-&lt;br&gt;In practical terms this means that you have to deal with the condition in which the command was accepted by less replicas you specified in the amount of time you specified. More about that later.
-&lt;br&gt;
-&lt;br&gt;How it works?
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;The WAIT implementation is surprisingly simple. The first thing I did was to take the blocking code of BLPOP &amp; other similar operations and make it a generic primitive of Redis internal API, so now implementing blocking commands is much simpler.
-&lt;br&gt;
-&lt;br&gt;The rest of the implementation was trivial because 2.8 introduced the concept of master replication offset, that is, a global offset that we increment every time we send something to the slaves. All the salves receive exactly the same stream of data, and remember the offset processed so far as well.
-&lt;br&gt;
-&lt;br&gt;This is very useful for partial resynchronization as you can guess, but moreover slaves acknowledge the amount of replication offset processed so far, every second, with the master, so the master has some idea about how much they processed.
-&lt;br&gt;
-&lt;br&gt;Every second sucks right? We can’t base WAIT on an information available every second. So when WAIT is used by a client, it sets a flag, so that all the WAIT callers in a given event loop iteration will be grouped together, and before entering the event loop again we send a REPLCONF GETACK command into the replication stream. Slaves will reply ASAP with a new ACK.
-&lt;br&gt;
-&lt;br&gt;As soon as the ACKs received from slaves is enough to unblock some client, we do it. Otherwise we unblock the client on timeout.
-&lt;br&gt;
-&lt;br&gt;Not considering the refactoring needed for the block operations that is technically not part of the WAIT implementation, all the code is like 170 lines of code, so very easy to understand, modify, and with almost zero effects on the rest of the code base.
-&lt;br&gt;
-&lt;br&gt;Living with the indetermination
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;WAIT does not offer any “transactional” feature to commit a write to N nodes or nothing, but provides information about the degree of durability we achieved with our write, in an easy to use form that does not slow down operations of other clients.
-&lt;br&gt;
-&lt;br&gt;How this improves consistency in Redis land? Let’s look at the following pseudo code:
-&lt;br&gt;
-&lt;br&gt;    def save_payment(payment_id)
-&lt;br&gt;        redis.set(payment_id,”confirmed”)
-&lt;br&gt;    end
-&lt;br&gt;
-&lt;br&gt;We can imagine that the function save_payment is called every time an user payed for something, and we want to store this information in our database. Now imagine that there are a number of clients processing payments, so the function above gets called again and again.
-&lt;br&gt;
-&lt;br&gt;In Redis 2.6 if there was an issue communicating with the replicas, while running the above code, it was impossible to sense the problem in time. The master failing could result in replicas missing a number of writes.
-&lt;br&gt;
-&lt;br&gt;In Redis 2.8 this was improved by providing options to stop accepting writes if there are problems communicating with replicas. Redis can check if there are at least N replicas that appear to be alive (pinging back the master) in this setup. With this option we improved the consistency guarantees a bit, now there is a maximum window to write to a master that is not backed by enough replicas.
-&lt;br&gt;
-&lt;br&gt;With WAIT we can finally considerably improve how much safe are our writes, since I can modify the code in the following way:
-&lt;br&gt;
-&lt;br&gt;    def save_payment(payment_id)
-&lt;br&gt;        redis.set(payment_id,”confirmed”)
-&lt;br&gt;        if redis.wait(3,1000) &gt;= 3 then
-&lt;br&gt;            return true
-&lt;br&gt;        else
-&lt;br&gt;            return false
-&lt;br&gt;    end
-&lt;br&gt;
-&lt;br&gt;In the above version of the program we finally gained some information about what happened to the write, even if we actually did not changed the outcome of the write, we are now able to report back this information to the caller.
-&lt;br&gt;However what to do if wait returns less than 3? Maybe we could try to revert our write sending redis.del(payment_id)?  Or we can try to set the value again in order to succeed the next time?
-&lt;br&gt;
-&lt;br&gt;With the above code we are exposing our system to too much troubles. In a given moment if only two slaves are accepting writes all the transactions will have to deal with this inconsistency, whatever it is handled. There is a better thing we can do, modifying the code in a way so that it actually does not set a value, but takes a list of events about the transaction, using Redis lists:
-&lt;br&gt;
-&lt;br&gt;    def save_payment(payment_id)
-&lt;br&gt;        redis.rpush(payment_id,”in progress”) # Return false on exception
-&lt;br&gt;        if redis.wait(3,1000) &gt;= 3 then
-&lt;br&gt;            redis.rpush(payment_id,”confirmed”) # Return false on exception
-&lt;br&gt;            if redis.wait(3,1000) &gt;= 3 then
-&lt;br&gt;                return true
-&lt;br&gt;            else
-&lt;br&gt;                redis.rpush(payment_id,”cancelled”)
-&lt;br&gt;                return false
-&lt;br&gt;            end
-&lt;br&gt;        else
-&lt;br&gt;            return false
-&lt;br&gt;    end
-&lt;br&gt;
-&lt;br&gt;Here we push an “in progress” state into the list for this payment ID before to actually confirming it. If we can’t reach enough replicas we abort the payment, and it will not have the “confirmed” element. In this way if there are only two replicas getting writes the transactions will fail one after the other. The only clients that will have the deal with inconsistencies are the clients that are able to propagate “in progress” to 3 or more replicas but are not able to do the same with the “confirmed” write. In the above code we try to deal with this issue with a best-effort “cancelled” write, however there is still the possibility of a race condition:
-&lt;br&gt;
-&lt;br&gt;1) We send “in progress”
-&lt;br&gt;2) We send “confirmed”, it only reaches 2 slaves.
-&lt;br&gt;3) We send “cancelled” but at this point the master crashed and a failover elected one of the slaves.
-&lt;br&gt;
-&lt;br&gt;So in the above case we returned a failed transaction while actually the “confirmed” state was written.
-&lt;br&gt;
-&lt;br&gt;You can do different things to deal better with this kind of issues, that is, to mark the transaction as “broken” in a strong consistent and highly available system like Zookeeper, to write a log in the local client, to put it in the hands of a message queue that is designed with some redundancy, and so forth.
-&lt;br&gt;
-&lt;br&gt;Synchronous replication and failover: two close friends
-&lt;br&gt;===
-&lt;br&gt;
-&lt;br&gt;Synchronous replication is important per se because it means, there are N copies of this data around, however to really exploit the improved data safety, we need to make sure that when a master node fails, and a slave is elected, we get the best slave.
-&lt;br&gt;
-&lt;br&gt;The new implementation of Sentinel already elects the slave with the best replication offset available, assuming it publishes its replication offset via INFO (that is, it must be Redis 2.8 or greater), so a good setup can be to run an odd number of Redis nodes, with a Redis Sentinel installed in every node, and use synchronous replication to write to the majority of nodes. As long as the majority of the nodes is available, a Sentinel will be able to win the election and elect a slave with the most updated data.
-&lt;br&gt;
-&lt;br&gt;Redis cluster is currently not able to elect the slave with the best replication offset, but will be able to do that before the stable release. It is also conceivable that Redis Cluster will have an option to only promote a slave if the majority of replicas for a given hash slot are reachable.
-&lt;br&gt;
-&lt;br&gt;I just scratched the surface of synchronous replication, but I believe that this is a building block that we Redis users will be able to exploit in the future to stretch Redis capabilities to cover new needs for which Redis was traditionally felt as inadequate.
-&lt;a href="http://antirez.com/news/66"&gt;Comments&lt;/a&gt;</description>
-      <guid isPermaLink="true">http://antirez.com/news/66</guid>
-      <pubDate>Thu, 05 Dec 2013 10:50:33 +0100</pubDate>
     </item>
   </channel>
 </rss>
