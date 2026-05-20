@@ -5,7 +5,41 @@
     <link>https://buttondown.com/hillelwayne</link>
     <description>&lt;!-- buttondown-editor-mode: fancy --&gt;&lt;p&gt;Hi, I'm Hillel. This is the newsletter version of &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://www.hillelwayne.com"&gt;my website&lt;/a&gt;. I post all website updates here. I also post weekly content just for the newsletter, on topics like&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;p&gt;Formal Methods&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Software History and Culture&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Fringetech and exotic tooling&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;The philosophy and theory of software engineering&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;You can see the archive of all public essays &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://buttondown.email/hillelwayne/archive/"&gt;here&lt;/a&gt;.&lt;/p&gt;</description>
     <language>en</language>
-    <lastBuildDate>Wed, 20 May 2026 13:44:49 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 20 May 2026 16:57:17 +0000</lastBuildDate>
+    <item>
+      <title>Assumptions weaken properties</title>
+      <link>https://buttondown.com/hillelwayne/archive/assumptions-weaken-properties/</link>
+      <description>
+&lt;p&gt;In &lt;a href="https://buttondown.com/hillelwayne/archive/some-tests-are-stronger-than-others/" target="_blank"&gt;some tests are stronger than others&lt;/a&gt;, I defined &lt;code&gt;STRONG =&amp;gt; WEAK&lt;/code&gt; to mean "any system passing test STRONG is also guaranteed to pass WEAK". This uses the logical implication operator, defined as &lt;code&gt;P =&amp;gt; Q = !P || (P &amp;amp;&amp;amp; Q)&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Implication may be the most overworked operator in logic. Among other things, it's also used in formal specification, where &lt;code&gt;Spec =&amp;gt; Prop&lt;/code&gt; means "any system satisfying &lt;code&gt;Spec&lt;/code&gt; has property &lt;code&gt;Prop&lt;/code&gt;" and &lt;code&gt;ASSUME =&amp;gt; Spec&lt;/code&gt; means "The assumption &lt;code&gt;ASSUME&lt;/code&gt; must hold in order for the system to satisfy &lt;code&gt;Spec&lt;/code&gt;."&lt;/p&gt;
+&lt;p&gt;Now let's mush these all together and do some math. To start, "the system has property &lt;code&gt;Prop&lt;/code&gt;" is the same as "the system passes the test that checks &lt;code&gt;Prop&lt;/code&gt;", so test strength is also property strength. Now let "&lt;code&gt;ASSUME =&amp;gt; Prop&lt;/code&gt;" mean "the system passes &lt;code&gt;Prop&lt;/code&gt; assuming &lt;code&gt;ASSUME&lt;/code&gt; is true." In classic logic, if &lt;code&gt;P&lt;/code&gt; is true, then obviously &lt;code&gt;!Q || P&lt;/code&gt; is true. Further, that is equivalent (just draw the truth table!) to &lt;code&gt;!Q || (P &amp;amp;&amp;amp; Q)&lt;/code&gt;. So for &lt;em&gt;any&lt;/em&gt; propositions &lt;code&gt;P&lt;/code&gt; and &lt;code&gt;Q&lt;/code&gt;, &lt;code&gt;P =&amp;gt; (Q =&amp;gt; P)&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;In other words, &lt;code&gt;Prop =&amp;gt; (ASSUME =&amp;gt; Prop)&lt;/code&gt;. In other other words, "the system passes &lt;code&gt;Prop&lt;/code&gt;" is a stronger property than "the system passes &lt;code&gt;Prop&lt;/code&gt; whenever our assumptions hold."&lt;/p&gt;
+&lt;p&gt;In other other other words, any assumption added makes a property weaker.&lt;/p&gt;
+&lt;p&gt;This makes intuitive sense to me. A JSON parser that's only been verified with ASCII strings has the property "input only uses ASCII &amp;amp;&amp;amp; is valid json =&amp;gt; correctly parsed". A better JSON parser that works for all Unicode will have the property "is valid json =&amp;gt; correctly parsed", which has fewer assumptions, meaning it's guaranteed to work in a strict superset of cases. &lt;/p&gt;
+&lt;p&gt;It also matches the intuition that "more assumptions means more likely to go wrong". We have a bug whenever &lt;code&gt;Prop&lt;/code&gt; is false. The only way for &lt;code&gt;Spec =&amp;gt; Prop&lt;/code&gt; to be true and &lt;code&gt;Prop&lt;/code&gt; be false is if &lt;code&gt;Spec&lt;/code&gt; is false, eg our system doesn't satisfy the specification we intended to implement. On the other hand, &lt;code&gt;Spec =&amp;gt; (ASSUME =&amp;gt; Prop) &amp;amp;&amp;amp; !Prop&lt;/code&gt; is true whenever &lt;code&gt;Spec&lt;/code&gt; &lt;em&gt;and/or&lt;/em&gt; &lt;code&gt;ASSUME&lt;/code&gt; is false, meaning a correctly-implemented system could still show a bug if a runtime assumption is false. &lt;/p&gt;
+&lt;p&gt;...Looking back the last two paragraphs have a lot of conceptual leaps. Does that all make sense to you? It all feels natural to me but that might just be my familiarity with the topic talking. &lt;/p&gt;
+&lt;p&gt;Regardless, a couple more notes on assumptions:&lt;/p&gt;
+&lt;h2&gt;Why we have assumptions&lt;/h2&gt;
+&lt;p&gt;Why not just build our systems to satisfy &lt;code&gt;ASSUME =&amp;gt; Prop&lt;/code&gt; when we can "just" build it to satisfy &lt;code&gt;Prop&lt;/code&gt;? At least three reasons.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;First&lt;/strong&gt;, sometimes &lt;code&gt;Prop&lt;/code&gt; is simply impossible to satisfy and we need to add assumptions to make this property. We do this a lot in formal methods with &lt;a href="https://www.hillelwayne.com/post/fairness/" target="_blank"&gt;fairness&lt;/a&gt;. The property "&lt;code&gt;mergesort&lt;/code&gt; always returns a sorted list" is unsatisfiable because we can dropkick the computer before it returns. Instead, we have to verify a weaker property like "&lt;code&gt;mergesort&lt;/code&gt; always returns =&amp;gt; it returns a sorted list" or "&lt;code&gt;mergesort&lt;/code&gt; always makes progress =&amp;gt; it will eventually return a sorted list."&lt;/p&gt;
+&lt;p&gt;Another example is Rust. Rust &lt;em&gt;does not&lt;/em&gt; guarantee the property "the program is memory safe". It guarantees the weaker property "all &lt;code&gt;unsafe&lt;/code&gt; blocks are memory safe =&amp;gt; the program is memory safe". Making the language satisfy the stronger property would rule out too many use cases of Rust. Note you also get memory safety if you don't use &lt;code&gt;unsafe&lt;/code&gt;, but that still satisfies the assumption, as all &lt;em&gt;zero&lt;/em&gt; blocks are safe!&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Second&lt;/strong&gt;, sometimes the strong property is satisfiable, but it's simply not worth the extra cost. Like it's possible to make our software resistant against cosmic rays, but if your code isn't running in space, why bother? Just say "No cosmic bit flips =&amp;gt; things work". Or if your plugin works Neovim &lt;code&gt;0.12&lt;/code&gt; but not 0.11, you could put in the effort to make it run on older versions, or you could tell everybody that they need to upgrade to use your plugin. "Neovim version is at least 0.12 =&amp;gt; the plugin works".&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Third&lt;/strong&gt;, sometimes the strong property is satisfiable in the system but not easily &lt;em&gt;verifiable&lt;/em&gt;. Say your algorithm makes a lot of API calls and you don't want to hit rate limits while testing. If you &lt;a href="https://en.wikipedia.org/wiki/Mock_object" target="_blank"&gt;mock out the API&lt;/a&gt; you're testing the weaker property "The mock is accurate to the API =&amp;gt; the algorithm is correct".&lt;/p&gt;
+&lt;h2&gt;Assumptions are a second level of system effect&lt;/h2&gt;
+&lt;p&gt;I notice that almost all of the examples in the last two sections are exoprogram factors:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The JSON parser assumptions are about user input&lt;/li&gt;
+&lt;li&gt;Fairness assumptions are about the OS/hardware/operating environment&lt;/li&gt;
+&lt;li&gt;Unsafe assumptions are about things the Rust compiler can't verify&lt;/li&gt;
+&lt;li&gt;Cosmic ray assumptions depend on the physical location of the hardware&lt;/li&gt;
+&lt;li&gt;The plugin assumptions are about the Neovim team's release schedule and social compatibility contract&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The edge case is replacing a third party call with a mock. The assumption is intraprogram because the program could just hit the API during testing. We still have the assumption because of an exoprogram constraint. Maybe this is why mocks are considered an antipattern in Agile.&lt;/p&gt;
+&lt;p&gt;One consequence of this is that checking whether assumptions hold is a different problem from verifying that your code works given the assumptions. Like to make sure "all unsafe blocks are safe" can't use the rust compiler, you need a second tool like &lt;a href="https://github.com/rust-lang/miri" target="_blank"&gt;Miri&lt;/a&gt;. I wonder if checking assumptions is, in practice, generally more difficult than checking everything else.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/assumptions-weaken-properties/</guid>
+      <pubDate>Wed, 20 May 2026 15:13:16 +0000</pubDate>
+    </item>
     <item>
       <title>Points are a weird and inconsistent unit of measure</title>
       <link>https://buttondown.com/hillelwayne/archive/points-are-a-weird-and-inconsistent-unit-of/</link>
@@ -1435,124 +1469,6 @@ output ["buy at \(buy)\n", "sell at \(sell)\n", "for \(profit)"];
 </description>
       <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/software-books-i-wish-i-could-read/</guid>
       <pubDate>Wed, 06 Aug 2025 13:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>2000 words about arrays and tables</title>
-      <link>https://buttondown.com/hillelwayne/archive/2000-words-about-arrays-and-tables/</link>
-      <description>
-&lt;p&gt;I'm way too discombobulated from getting next month's release of &lt;a href="https://leanpub.com/logic/" target="_blank"&gt;Logic for Programmers&lt;/a&gt; ready, so I'm pulling a idea from the slush pile. Basically I wanted to come up with a mental model of arrays as a concept that explained APL-style multidimensional arrays and tables but also why there weren't multitables.&lt;/p&gt;
-&lt;p&gt;So, arrays. In all languages they are basically the same: they map a sequence of numbers (I'll use &lt;code&gt;1..N&lt;/code&gt;)&lt;sup id="fnref:1-indexing"&gt;&lt;a class="footnote-ref" href="#fn:1-indexing"&gt;1&lt;/a&gt;&lt;/sup&gt; to homogeneous values (values of a single type). This is in contrast to the other two foundational types, associative arrays (which map an arbitrary type to homogeneous values) and structs (which map a fixed set of keys to &lt;em&gt;heterogeneous&lt;/em&gt; values). Arrays appear in PLs earlier than the other two, possibly because they have the simplest implementation and the most obvious application to scientific computing. The OG FORTRAN had arrays. &lt;/p&gt;
-&lt;p&gt;I'm interested in two structural extensions to arrays. The first, found in languages like nushell and frameworks like Pandas, is the &lt;em&gt;table&lt;/em&gt;. Tables have string keys like a struct &lt;em&gt;and&lt;/em&gt; indexes like an array. Each row is a struct, so you can get "all values in this column" or "all values for this row". They're heavily used in databases and data science.&lt;/p&gt;
-&lt;p&gt;The other extension is the &lt;strong&gt;N-dimensional array&lt;/strong&gt;, mostly seen in APLs like Dyalog and J. Think of this like arrays-of-arrays(-of-arrays), except all arrays at the same depth have the same length. So &lt;code&gt;[[1,2,3],[4]]&lt;/code&gt; is not a 2D array, but &lt;code&gt;[[1,2,3],[4,5,6]]&lt;/code&gt; is. This means that N-arrays can be queried on any axis.&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="nv"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;i&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;
-&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;
-&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;5&lt;/span&gt;
-&lt;span class="mi"&gt;6&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;
-&lt;span class="w"&gt;   &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="c1"&gt;NB. first row&lt;/span&gt;
-&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;
-&lt;span class="w"&gt;   &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;{"&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="c1"&gt;NB. first column&lt;/span&gt;
-&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;6&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;So, I've had some ideas on a conceptual model of arrays that explains all of these variations and possibly predicts new variations. I wrote up my notes and did the bare minimum of editing and polishing. Somehow it ended up being 2000 words.&lt;/p&gt;
-&lt;h3&gt;1-dimensional arrays&lt;/h3&gt;
-&lt;p&gt;A one-dimensional array is a function over &lt;code&gt;1..N&lt;/code&gt; for some N. &lt;/p&gt;
-&lt;p&gt;To be clear this is &lt;em&gt;math&lt;/em&gt; functions, not programming functions. Programming functions take values of a type and perform computations on them. Math functions take values of a fixed set and return values of another set. So the array &lt;code&gt;[a, b, c, d]&lt;/code&gt; can be represented by the function &lt;code&gt;(1 -&amp;gt; a ++ 2 -&amp;gt; b ++ 3 -&amp;gt; c ++ 4 -&amp;gt; d)&lt;/code&gt;. Let's write the set of all four element character arrays as &lt;code&gt;1..4 -&amp;gt; char&lt;/code&gt;. &lt;code&gt;1..4&lt;/code&gt; is the function's &lt;strong&gt;domain&lt;/strong&gt;.&lt;/p&gt;
-&lt;p&gt;The set of all character arrays is the empty array + the functions with domain &lt;code&gt;1..1&lt;/code&gt; + the functions with domain &lt;code&gt;1..2&lt;/code&gt; + ... Let's call this set &lt;code&gt;Array[Char]&lt;/code&gt;. Our compilers can enforce that a type belongs to &lt;code&gt;Array[Char]&lt;/code&gt;, but some operations care about the more specific type, like matrix multiplication. This is either checked with the runtime type or, in exotic enough languages, with static dependent types.&lt;/p&gt;
-&lt;p&gt;(This is actually how TLA+ does things: the basic collection types are functions and sets, and a function with domain 1..N is a sequence.)&lt;/p&gt;
-&lt;h3&gt;2-dimensional arrays&lt;/h3&gt;
-&lt;p&gt;Now take the 3x4 matrix&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="w"&gt;   &lt;/span&gt;&lt;span class="nv"&gt;i&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;
-&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;
-&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;5&lt;/span&gt;&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="mi"&gt;6&lt;/span&gt;&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;
-&lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;9&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;11&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;There are two equally valid ways to represent the array function:&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;A function that takes a row and a column and returns the value at that index, so it would look like &lt;code&gt;f(r: 1..3, c: 1..4) -&amp;gt; Int&lt;/code&gt;.&lt;/li&gt;
-&lt;li&gt;A function that takes a row and returns that column as an array, aka another function: &lt;code&gt;f(r: 1..3) -&amp;gt; g(c: 1..4) -&amp;gt; Int&lt;/code&gt;.&lt;sup id="fnref:associative"&gt;&lt;a class="footnote-ref" href="#fn:associative"&gt;2&lt;/a&gt;&lt;/sup&gt;&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;Man, (2) looks a lot like &lt;a href="https://en.wikipedia.org/wiki/Currying" target="_blank"&gt;currying&lt;/a&gt;! In Haskell, functions can only have one parameter. If you write &lt;code&gt;(+) 6 10&lt;/code&gt;, &lt;code&gt;(+) 6&lt;/code&gt; first returns a &lt;em&gt;new&lt;/em&gt; function &lt;code&gt;f y = y + 6&lt;/code&gt;, and then applies &lt;code&gt;f 10&lt;/code&gt; to get 16. So &lt;code&gt;(+)&lt;/code&gt; has the type signature &lt;code&gt;Int -&amp;gt; Int -&amp;gt; Int&lt;/code&gt;: it's a function that takes an &lt;code&gt;Int&lt;/code&gt; and returns a function of type &lt;code&gt;Int -&amp;gt; Int&lt;/code&gt;.&lt;sup id="fnref:typeclass"&gt;&lt;a class="footnote-ref" href="#fn:typeclass"&gt;3&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-&lt;p&gt;Similarly, our 2D array can be represented as an array function that returns array functions: it has type &lt;code&gt;1..3 -&amp;gt; 1..4 -&amp;gt; Int&lt;/code&gt;, meaning it takes a row index and returns &lt;code&gt;1..4 -&amp;gt; Int&lt;/code&gt;, aka a single array.&lt;/p&gt;
-&lt;p&gt;(This differs from conventional array-of-arrays because it forces all of the subarrays to have the same domain, aka the same length. If we wanted to permit ragged arrays, we would instead have the type &lt;code&gt;1..3 -&amp;gt; Array[Int]&lt;/code&gt;.)&lt;/p&gt;
-&lt;p&gt;Why is this useful? A couple of reasons. First of all, we can apply function transformations to arrays, like "&lt;a href="https://blog.zdsmith.com/series/combinatory-programming.html" target="_blank"&gt;combinators&lt;/a&gt;". For example, we can flip any function of type &lt;code&gt;a -&amp;gt; b -&amp;gt; c&lt;/code&gt; into a function of type &lt;code&gt;b -&amp;gt; a -&amp;gt; c&lt;/code&gt;. So given a function that takes rows and returns columns, we can produce one that takes columns and returns rows. That's just a matrix transposition! &lt;/p&gt;
-&lt;p&gt;Second, we can extend this to any number of dimensions: a three-dimensional array is one with type &lt;code&gt;1..M -&amp;gt; 1..N -&amp;gt; 1..O -&amp;gt; V&lt;/code&gt;. We can still use function transformations to rearrange the array along any ordering of axes.&lt;/p&gt;
-&lt;p&gt;Speaking of dimensions:&lt;/p&gt;
-&lt;h3&gt;What are dimensions, anyway&lt;/h3&gt;
-&lt;div class="subscribe-form"&gt;&lt;/div&gt;
-&lt;p&gt;Okay, so now imagine we have a &lt;code&gt;Row&lt;/code&gt; × &lt;code&gt;Col&lt;/code&gt; grid of pixels, where each pixel is a struct of type &lt;code&gt;Pixel(R: int, G: int, B: int)&lt;/code&gt;. So the array is&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;Row -&amp;gt; Col -&amp;gt; Pixel
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;But we can also represent the &lt;em&gt;Pixel struct&lt;/em&gt; with a function: &lt;code&gt;Pixel(R: 0, G: 0, B: 255)&lt;/code&gt; is the function where &lt;code&gt;f(R) = 0&lt;/code&gt;, &lt;code&gt;f(G) = 0&lt;/code&gt;, &lt;code&gt;f(B) = 255&lt;/code&gt;, making it a function of type &lt;code&gt;{R, G, B} -&amp;gt; Int&lt;/code&gt;. So the array is actually the function&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;Row -&amp;gt; Col -&amp;gt; {R, G, B} -&amp;gt; Int
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;And then we can rearrange the parameters of the function like this:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;{R, G, B} -&amp;gt; Row -&amp;gt; Col -&amp;gt; Int
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Even though the set &lt;code&gt;{R, G, B}&lt;/code&gt; is not of form 1..N, this clearly has a real meaning: &lt;code&gt;f[R]&lt;/code&gt; is the function mapping each coordinate to that coordinate's red value. What about &lt;code&gt;Row -&amp;gt; {R, G, B} -&amp;gt; Col -&amp;gt; Int&lt;/code&gt;?  That's for each row, the 3 × Col array mapping each color to that row's intensities.&lt;/p&gt;
-&lt;p&gt;Really &lt;em&gt;any finite set&lt;/em&gt; can be a "dimension". Recording the monitor over a span of time? &lt;code&gt;Frame -&amp;gt; Row -&amp;gt; Col -&amp;gt; Color -&amp;gt; Int&lt;/code&gt;. Recording a bunch of computers over some time? &lt;code&gt;Computer -&amp;gt; Frame -&amp;gt; Row …&lt;/code&gt;.&lt;/p&gt;
-&lt;p&gt;This is pretty common in constraint satisfaction! Like if you're conference trying to assign talks to talk slots, your array might be type &lt;code&gt;(Day, Time, Room) -&amp;gt; Talk&lt;/code&gt;, where Day/Time/Room are enumerations.&lt;/p&gt;
-&lt;p&gt;An implementation constraint is that most programming languages &lt;em&gt;only&lt;/em&gt; allow integer indexes, so we have to replace Rooms and Colors with numerical enumerations over the set. As long as the set is finite, this is always possible, and for struct-functions, we can always choose the indexing on the lexicographic ordering of the keys. But we lose type safety.&lt;/p&gt;
-&lt;h3&gt;Why tables are different&lt;/h3&gt;
-&lt;p&gt;One more example: &lt;code&gt;Day -&amp;gt; Hour -&amp;gt; Airport(name: str, flights: int, revenue: USD)&lt;/code&gt;. Can we turn the struct into a dimension like before? &lt;/p&gt;
-&lt;p&gt;In this case, no. We were able to make &lt;code&gt;Color&lt;/code&gt; an axis because we could turn &lt;code&gt;Pixel&lt;/code&gt; into a &lt;code&gt;Color -&amp;gt; Int&lt;/code&gt; function, and we could only do that because all of the fields of the struct had the same type. This time, the fields are &lt;em&gt;different&lt;/em&gt; types. So we can't convert &lt;code&gt;{name, flights, revenue}&lt;/code&gt; into an axis. &lt;sup id="fnref:name-dimension"&gt;&lt;a class="footnote-ref" href="#fn:name-dimension"&gt;4&lt;/a&gt;&lt;/sup&gt; One thing we can do is convert it to three &lt;em&gt;separate&lt;/em&gt; functions:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;airport: Day -&amp;gt; Hour -&amp;gt; Str
-flights: Day -&amp;gt; Hour -&amp;gt; Int
-revenue: Day -&amp;gt; Hour -&amp;gt; USD
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;But we want to keep all of the data in one place. That's where &lt;strong&gt;tables&lt;/strong&gt; come in: an array-of-structs is isomorphic to a struct-of-arrays:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;AirportColumns(
-    airport: Day -&amp;gt; Hour -&amp;gt; Str,
-    flights: Day -&amp;gt; Hour -&amp;gt; Int,
-    revenue: Day -&amp;gt; Hour -&amp;gt; USD,
-)
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;The table is a sort of &lt;em&gt;both&lt;/em&gt; representations simultaneously. If this was a pandas dataframe, &lt;code&gt;df["airport"]&lt;/code&gt; would get the airport column, while &lt;code&gt;df.loc[day1]&lt;/code&gt; would get the first day's data. I don't think many table implementations support more than one axis dimension but there's no reason they &lt;em&gt;couldn't&lt;/em&gt;. &lt;/p&gt;
-&lt;p&gt;These are also possible transforms:&lt;/p&gt;
-&lt;div class="codehilite"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;Hour -&amp;gt; NamesAreHard(
-    airport: Day -&amp;gt; Str,
-    flights: Day -&amp;gt; Int,
-    revenue: Day -&amp;gt; USD,
-)
-
-Day -&amp;gt; Whatever(
-    airport: Hour -&amp;gt; Str,
-    flights: Hour -&amp;gt; Int,
-    revenue: Hour -&amp;gt; USD,
-)
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;In my mental model, the heterogeneous struct acts as a "block" in the array. We can't remove it, we can only push an index into the fields or pull a shared column out. But there's no way to convert a heterogeneous table into an array.&lt;/p&gt;
-&lt;h3&gt;Actually there is a terrible way&lt;/h3&gt;
-&lt;p&gt;Most languages have unions or &lt;del&gt;product&lt;/del&gt; sum types that let us say "this is a string OR integer". So we can make our airport data &lt;code&gt;Day -&amp;gt; Hour -&amp;gt; AirportKey -&amp;gt; Int | Str | USD&lt;/code&gt;. Heck, might as well just say it's &lt;code&gt;Day -&amp;gt; Hour -&amp;gt; AirportKey -&amp;gt; Any&lt;/code&gt;. But would anybody really be mad enough to use that in practice?&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://code.jsoftware.com/wiki/Vocabulary/lt" target="_blank"&gt;Oh wait J does exactly that&lt;/a&gt;. J has an opaque datatype called a "box". A "table" is a function &lt;code&gt;Dim1 -&amp;gt; Dim2 -&amp;gt; Box&lt;/code&gt;. You can see some examples of what that looks like &lt;a href="https://code.jsoftware.com/wiki/DB/Flwor" target="_blank"&gt;here&lt;/a&gt;&lt;/p&gt;
-&lt;h3&gt;Misc Thoughts and Questions&lt;/h3&gt;
-&lt;p&gt;The heterogeneity barrier seems like it explains why we don't see multiple axes of table columns, while we do see multiple axes of array dimensions. But is that actually why? Is there a system out there that &lt;em&gt;does&lt;/em&gt; have multiple columnar axes?&lt;/p&gt;
-&lt;p&gt;The array &lt;code&gt;x = [[a, b, a], [b, b, b]]&lt;/code&gt; has type &lt;code&gt;1..2 -&amp;gt; 1..3 -&amp;gt; {a, b}&lt;/code&gt;. Can we rearrange it to &lt;code&gt;1..2 -&amp;gt; {a, b} -&amp;gt; 1..3&lt;/code&gt;? No. But we &lt;em&gt;can&lt;/em&gt; rearrange it to &lt;code&gt;1..2 -&amp;gt; {a, b} -&amp;gt; PowerSet(1..3)&lt;/code&gt;, which maps rows and characters to columns &lt;em&gt;with&lt;/em&gt; that character. &lt;code&gt;[(a -&amp;gt; {1, 3} ++ b -&amp;gt; {2}), (a -&amp;gt; {} ++ b -&amp;gt; {1, 2, 3}]&lt;/code&gt;. &lt;/p&gt;
-&lt;p&gt;We can also transform &lt;code&gt;Row -&amp;gt; PowerSet(Col)&lt;/code&gt; into &lt;code&gt;Row -&amp;gt; Col -&amp;gt; Bool&lt;/code&gt;, aka a boolean matrix. This makes sense to me as both forms are means of representing directed graphs.&lt;/p&gt;
-&lt;p&gt;Are other function combinators useful for thinking about arrays?&lt;/p&gt;
-&lt;p&gt;Does this model cover pivot tables? Can we extend it to relational data with multiple tables?&lt;/p&gt;
-&lt;hr/&gt;
-&lt;h3&gt;Systems Distributed Talk (will be) Online&lt;/h3&gt;
-&lt;p&gt;The premier will be August 6 at 12 CST, &lt;a href="https://www.youtube.com/watch?v=d9cM8f_qSLQ" target="_blank"&gt;here&lt;/a&gt;! I'll be there to answer questions / mock my own performance / generally make a fool of myself.&lt;/p&gt;
-&lt;div class="footnote"&gt;
-&lt;hr/&gt;
-&lt;ol&gt;
-&lt;li id="fn:1-indexing"&gt;
-&lt;p&gt;&lt;a href="https://buttondown.com/hillelwayne/archive/why-do-arrays-start-at-0/" target="_blank"&gt;Sacrilege&lt;/a&gt;! But it turns out in this context, it's easier to use 1-indexing than 0-indexing. In the years since I wrote that article I've settled on "each indexing choice matches different kinds of mathematical work", so mathematicians and computer scientists are best served by being able to choose their index. But software engineers need consistency, and 0-indexing is overall a net better consistency pick. &lt;a class="footnote-backref" href="#fnref:1-indexing" title="Jump back to footnote 1 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:associative"&gt;
-&lt;p&gt;This is &lt;em&gt;right-associative&lt;/em&gt;: &lt;code&gt;a -&amp;gt; b -&amp;gt; c&lt;/code&gt; means &lt;code&gt;a -&amp;gt; (b -&amp;gt; c)&lt;/code&gt;, not &lt;code&gt;(a -&amp;gt; b) -&amp;gt; c&lt;/code&gt;. &lt;code&gt;(1..3 -&amp;gt; 1..4) -&amp;gt; Int&lt;/code&gt; would be the associative array that maps length-3 arrays to integers. &lt;a class="footnote-backref" href="#fnref:associative" title="Jump back to footnote 2 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:typeclass"&gt;
-&lt;p&gt;Technically it has type &lt;code&gt;Num a =&amp;gt; a -&amp;gt; a -&amp;gt; a&lt;/code&gt;, since &lt;code&gt;(+)&lt;/code&gt; works on floats too. &lt;a class="footnote-backref" href="#fnref:typeclass" title="Jump back to footnote 3 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:name-dimension"&gt;
-&lt;p&gt;Notice that if each &lt;code&gt;Airport&lt;/code&gt; had a unique name, we &lt;em&gt;could&lt;/em&gt; pull it out into &lt;code&gt;AirportName -&amp;gt; Airport(flights, revenue)&lt;/code&gt;, but we still are stuck with two different values. &lt;a class="footnote-backref" href="#fnref:name-dimension" title="Jump back to footnote 4 in the text"&gt;↩&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/2000-words-about-arrays-and-tables/</guid>
-      <pubDate>Wed, 30 Jul 2025 13:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
