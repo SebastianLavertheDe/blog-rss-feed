@@ -5,7 +5,51 @@
     <link>https://it-notes.dragas.net</link>
     <description>Scattered IT Notes - by Stefano Marinelli</description>
     <language>en</language>
-    <lastBuildDate>Tue, 26 May 2026 03:59:33 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 26 May 2026 07:59:14 +0000</lastBuildDate>
+    <item>
+      <title>Copying Remote Command Output to Your macOS Clipboard</title>
+      <link>https://it-notes.dragas.net/2026/05/26/copying-remote-command-output-to-your-macos-clipboard/</link>
+      <description>&lt;p&gt;&lt;img src="https://it-notes.dragas.net/featured/terminal_htop.webp" alt="A terminal screen showing htop"&gt;&lt;/p&gt;&lt;p&gt;I use Apple devices very often. Overall, I like macOS. Certainly more than Windows.&lt;/p&gt;
+&lt;p&gt;One of the things I find extremely useful is a command I discovered not too long ago: &lt;code&gt;pbcopy&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;pbcopy&lt;/code&gt; can be used to copy to the clipboard whatever it receives from standard input. For example, when I am in a shell, I often use a command like this:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;cat filename.md | pbcopy
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;At that point I know that the content of the file is in the clipboard, and I can paste it wherever I need, calmly and without any additional steps.&lt;/p&gt;
+&lt;p&gt;There is one limitation, though: this only works locally. It works when I am using my Mac and I want to copy something from the macOS shell.&lt;/p&gt;
+&lt;p&gt;When I connect to a remote (*BSD, Linux, illumos based) server via ssh, &lt;code&gt;pbcopy&lt;/code&gt; is not available. Or, more precisely, even if I create a command with the same name on the server, that command cannot directly talk to the clipboard of my Mac in the usual way.&lt;/p&gt;
+&lt;p&gt;Luckily, modern terminal emulators have a few tricks available.&lt;/p&gt;
+&lt;p&gt;I use iTerm2 for most of my ssh sessions and, once I realised how useful it would be to have something similar to &lt;code&gt;pbcopy&lt;/code&gt; in remote sessions too, I created a small script that works both on Linux, the BSDs and illumox based OSes. &lt;/p&gt;
+&lt;p&gt;The caveat is that the remote server cannot "magically" access the clipboard of my Mac. So the trick works because the remote command prints a special terminal escape sequence, and the local terminal emulator interprets it.&lt;/p&gt;
+&lt;p&gt;The sequence is called OSC 52. In short, it allows a program running inside the terminal to ask the terminal emulator to put some base64-encoded text into the local clipboard. This means that support depends on the terminal emulator I am using locally.&lt;/p&gt;
+&lt;p&gt;I use iTerm2, which supports OSC 52. Other terminal emulators support it too, so the idea is not tied exclusively to iTerm2. However, Apple's default Terminal.app does not appear to support OSC 52, so I would not expect this specific solution to work there.&lt;/p&gt;
+&lt;p&gt;So, in practice:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;with iTerm2, it works;&lt;/li&gt;
+&lt;li&gt;with other OSC 52-compatible terminals, it should work (I haven't tested it, but should work with kitty, Ghostty, etc.);&lt;/li&gt;
+&lt;li&gt;with Apple's Terminal.app, at least at the time of writing, it should not.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Before creating the command on the remote server, a specific iTerm2 option needs to be enabled:&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Settings -&amp;gt; General -&amp;gt; Selection -&amp;gt; Applications in terminal may access clipboard&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;This option allows programs running inside the terminal to access the clipboard through escape sequences.&lt;/p&gt;
+&lt;p&gt;Of course, &lt;em&gt;this has security implications&lt;/em&gt;. A program running in the terminal, including a program running on a remote server through ssh, may be able to write to the local clipboard. For my use case this is acceptable, but it is worth knowing what is happening.&lt;/p&gt;
+&lt;p&gt;All I need to do is create a command, a small sh script. I log into the server where I want to create the command. In my case, I usually create a file called &lt;code&gt;/usr/local/bin/pbcopy&lt;/code&gt; with the following content:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;#!/bin/sh
+printf '\033]52;c;%s\a' &amp;quot;$(base64 | tr -d '\n')&amp;quot;
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Then I make it executable:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;chmod a+rx /usr/local/bin/pbcopy
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;From that moment on, I can use &lt;code&gt;pbcopy&lt;/code&gt; on the remote server too, piping another command into it:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-sh"&gt;cat filename.md | pbcopy
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;The content will not end up in the clipboard of the remote server. It will end up in the local clipboard of my Mac, because iTerm2 receives the OSC 52 sequence and updates the macOS clipboard.&lt;/p&gt;</description>
+      <guid isPermaLink="true">https://it-notes.dragas.net/2026/05/26/copying-remote-command-output-to-your-macos-clipboard/</guid>
+      <pubDate>Tue, 26 May 2026 09:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>FediMeteo, timezones, and the art of not breaking what already works</title>
       <link>https://it-notes.dragas.net/2026/05/25/fedimeteo-timezones-and-the-art-of-not-breaking-what-already-works/</link>
@@ -2616,121 +2660,6 @@ ssh user@backupServerIP -L8007:192.168.0.3:8007 -L8751:192.168.0.11:8751
 &lt;p&gt;That day, I celebrated. It was a stark reminder that while integrity might not always win the immediate skirmishes in such environments, the rot of corruption often consumes itself in the end. But the cost, for those caught in the interim, can be immense.&lt;/p&gt;</description>
       <guid isPermaLink="true">https://it-notes.dragas.net/2025/05/21/the_day_glusterfs_tried_to_kill_my_career/</guid>
       <pubDate>Wed, 21 May 2025 12:55:00 +0200</pubDate>
-    </item>
-    <item>
-      <title>The Server That Wasn't Meant to Exist</title>
-      <link>https://it-notes.dragas.net/2025/05/13/the_server_that_wasnt_meant_to_exist/</link>
-      <description>&lt;p&gt;&lt;img src="https://it-notes.dragas.net/featured/server_rack.webp" alt="A server, cables and lights"&gt;&lt;/p&gt;&lt;p&gt;Yesterday I read a piece of news that brought back an important - and painful - episode from my career.&lt;br /&gt;
-A story about trust, technology... and the kind of problems that can't always be solved.&lt;/p&gt;
-&lt;p&gt;About 16 years ago, I was contacted by an old friend. He was worried about a situation involving some mutual acquaintances.&lt;br /&gt;
-To keep it short: an entrepreneur - administrator and owner of several companies - had died suddenly.&lt;br /&gt;
-He was the kind of man who centralized everything, and his wife and children found themselves struggling to manage things.&lt;br /&gt;
-One of the sons decided to cash out and leave the family business (focusing on his own career), while the others chose to stay involved in day-to-day operations.&lt;br /&gt;
-The wife, elderly and retired for years, ended up at the helm, but she was clearly out of her depth.&lt;/p&gt;
-&lt;p&gt;The main issue was the complete lack of information flow: no digital systems of any kind were in place.&lt;br /&gt;
-Employees had their own PCs (sometimes even personal laptops), and there was zero control over anything.&lt;br /&gt;
-All the accounting and administrative data were scattered across individual machines, often taken home at the end of the day.&lt;br /&gt;
-From the owners’ perspective, all they saw was a huge cash flow coming in - yet the accounts were always in the red.&lt;/p&gt;
-&lt;p&gt;"If we keep going like this, we’ll be bankrupt in just a few years", I was told.&lt;br /&gt;
-What I could do was set up a proper IT system, structured to make data management transparent and traceable.&lt;/p&gt;
-&lt;p&gt;I planned - and got immediate approval for - the purchase of routers, switches, various networking devices and a server with several disks.&lt;br /&gt;
-&lt;a href="https://it-notes.dragas.net/2023/08/27/that-old-netbsd-server-running-since-2010/"&gt;The OS of choice, as was my habit at the time, was NetBSD&lt;/a&gt;. Thanks to XEN, I set up multiple VMs.&lt;br /&gt;
-One handled the NAS duties (using Samba, so PCs could connect and store files directly there), another ran &lt;a href="https://archivista.ch/"&gt;Archivista&lt;/a&gt;.&lt;br /&gt;
-I even worked on translating Archivista’s interface into Italian, since it wasn’t yet localized, just to make it easier for users.&lt;/p&gt;
-&lt;p&gt;As usual in those days, I added a caching proxy (Squid) and a content filter (DansGuardian), to ensure proper usage.&lt;br /&gt;
-The internet connection was very slow and often collapsed under heavy load - mostly recreational use, as logs revealed.&lt;br /&gt;
-There was no supervision, and many people were downloading movies and such on company time.&lt;/p&gt;
-&lt;p&gt;As often happens, not everyone was happy.  &lt;/p&gt;
-&lt;p&gt;One figure in particular - the late owner's former right-hand man - opposed the new system in every possible way.&lt;br /&gt;
-According to him, none of this was necessary. But the real alarm bell had been his sudden change in lifestyle.&lt;br /&gt;
-He’d made purchases that didn’t remotely align with his salary.&lt;br /&gt;
-At the time, the company had no oversight and dealt with a lot of cash. It was all technically legal, especially given the nature of the business. I won’t go into detail - privacy matters.&lt;/p&gt;
-&lt;p&gt;Once everything was up and running, we trained the employees to use the new system.&lt;br /&gt;
-Most were thrilled - finally able to work properly, with files in the right place and centralized document management.&lt;br /&gt;
-OCR, archiving, etc. were all seen as major time-savers and a big boost in efficiency.&lt;br /&gt;
-Some of the accounting staff remained skeptical, of course.&lt;/p&gt;
-&lt;p&gt;Since all of this was far from where I lived at the time, I went back to my life once the system was stable and everything in place.&lt;br /&gt;
-A few quiet days passed - then one morning, my phone rang:&lt;/p&gt;
-&lt;p&gt;"Good morning, this is XYZ - I handle some technical aspects of a software suite used by the company where you've just installed everything.&lt;br /&gt;
-We need to install our software, and I understand you set up the server. I’ll need the full server diagram and all the admin passwords".&lt;/p&gt;
-&lt;p&gt;I explained that it wasn’t a Windows machine, as he assumed (without even having seen it), but NetBSD, running NetBSD and Linux VMs.&lt;/p&gt;
-&lt;p&gt;A few seconds of silence.&lt;/p&gt;
-&lt;p&gt;"I see. Then I’ll have to wipe it and install Windows. I need Windows, and I don’t have time to wait for a new server - I’ll proceed tomorrow morning".&lt;/p&gt;
-&lt;p&gt;I froze. I told him that was not possible - the entire workflow now depended on that machine, and erasing it would be catastrophic.&lt;/p&gt;
-&lt;p&gt;"I’ll speak with the owners", I said, "and I’m sure they’ll provide you with a separate server within hours".&lt;/p&gt;
-&lt;p&gt;No use. He started to backpedal.&lt;br /&gt;
-To my (young) eyes, the goal was now obvious: that server had to disappear, and fast.&lt;br /&gt;
-He said he would "restore the previous situation", and claimed the server couldn’t remain as-is because &lt;em&gt;he&lt;/em&gt; needed it.&lt;/p&gt;
-&lt;p&gt;I immediately called the owners. Sadly, due to inexperience and inability to handle the situation, they panicked.&lt;br /&gt;
-They asked me to consider letting him do it, and then redoing the setup later, covering the cost of new hardware and my time.&lt;br /&gt;
-I refused. I was young, but I already had this mindset: do what’s right, even at the cost of profit.&lt;br /&gt;
-This was clearly a maneuver to eliminate controls - the server, the centralized filesystem.&lt;br /&gt;
-The goal was to hide the real accounting data from owners and auditors. Thousands of euros vanished every day through "transactions".&lt;br /&gt;
-The owners had started to understand, and this new pressure confirmed just how rotten things really were.&lt;/p&gt;
-&lt;p&gt;I called that man back and told him clearly: the server I’d built wasn’t to be shut down.&lt;br /&gt;
-If he needed one, I’d deliver a new server by that evening, just for him.&lt;/p&gt;
-&lt;p&gt;At that point, he finally spoke more openly:&lt;/p&gt;
-&lt;p&gt;"You don’t get it, do you? I need &lt;em&gt;that&lt;/em&gt; server. Not &lt;em&gt;a&lt;/em&gt; server.&lt;br /&gt;
-You’d better go along with this — or you’ll have serious trouble working in this area again".&lt;/p&gt;
-&lt;p&gt;And other similar, "nice" sentences. I replied calmly:&lt;br /&gt;
-"Look, I’m just doing a favor for some friends. I don’t have clients in your area — and I don’t want any.&lt;br /&gt;
-I’d rather do a good job for them than gain new clients".&lt;/p&gt;
-&lt;p&gt;No way through. He kept pushing - confident in his own sense of "power" - until I said what I had been trying to avoid.&lt;/p&gt;
-&lt;p&gt;Because I had recognized who he was.&lt;br /&gt;
-And the disappointment hit me twice as hard - I used to admire him.&lt;br /&gt;
-He, however, had not recognized me.&lt;/p&gt;
-&lt;p&gt;"Excuse me, but why are you talking to me like this? You’ve known me since I was a child. Don’t you remember? I’m the nephew of..."&lt;/p&gt;
-&lt;p&gt;He froze.&lt;br /&gt;
-He understood immediately.&lt;br /&gt;
-He connected the dots and knew full well that a single phone call to someone extremely close to me - someone he owed a great deal, both personally and professionally - would have the opposite effect he was aiming for.&lt;/p&gt;
-&lt;p&gt;That person had helped him greatly over the years. So much so that he folded:&lt;/p&gt;
-&lt;p&gt;"Oh... I’m so sorry... I didn’t recognize you. I’ll find another solution. Sorry again".&lt;/p&gt;
-&lt;p&gt;He hung up.&lt;br /&gt;
-Never heard from him again.&lt;/p&gt;
-&lt;p&gt;I informed the owners that the issue was resolved (leaving out most of the details), but it didn’t last long.&lt;br /&gt;
-Within days, a series of "unfortunate events" hit the server: the UPS failed, the server was "accidentally" unplugged and plugged back in incorrectly, and finally... it stopped responding on the network.&lt;/p&gt;
-&lt;p&gt;It was dead.&lt;br /&gt;
-And when we opened it, the hard disks were just... gone.&lt;/p&gt;
-&lt;p&gt;But there was one thing nobody (but the owners) knew.&lt;br /&gt;
-The server - slowly but surely - had been backing up externally.&lt;br /&gt;
-All the data up to that point had been copied to a device we’d quietly installed at the owners’ home: a tiny PCEngines Alix, running NetBSD with two USB drives.&lt;br /&gt;
-It was slow, yes - slow hardware, slow disks - but reliable.&lt;br /&gt;
-That very device still works today (with FreeBSD) and provides services elsewhere.&lt;/p&gt;
-&lt;p&gt;I handed all the data to the owners and asked what they intended to do.&lt;br /&gt;
-They took some time - days, then weeks.&lt;br /&gt;
-Eventually, they said they’d probably investigate whether there were grounds for a theft report.&lt;/p&gt;
-&lt;p&gt;I never heard more about it.&lt;/p&gt;
-&lt;p&gt;But then came a tempting offer:&lt;/p&gt;
-&lt;p&gt;"Come work for us. Manage our network infrastructure and help us overhaul our internal procedures.&lt;br /&gt;
-Even if you’ve just bought a house far from here, even if you’d have to leave your other clients -&lt;br /&gt;
-we’ll pay you enough to forget everything else. Name your price".&lt;/p&gt;
-&lt;p&gt;They would’ve done it, too.&lt;br /&gt;
-Our mutual friend urged me:&lt;br /&gt;
-"They’ve got a huge cash flow, but too many people are taking advantage of them due to lack of control.&lt;br /&gt;
-Take the job - they’ll treat you like gold, and you’ll really help them".&lt;/p&gt;
-&lt;p&gt;I didn’t think twice. &lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;I turned it down&lt;/strong&gt;.&lt;/p&gt;
-&lt;p&gt;I like my work.&lt;br /&gt;
-I like doing what I do - and the income is a consequence, not the cause.&lt;br /&gt;
-I would’ve had to give up my life, my path, to fight battles I don’t enjoy - and that I might not even win.&lt;/p&gt;
-&lt;p&gt;Because sometimes, dishonest people &lt;em&gt;do&lt;/em&gt; win.&lt;/p&gt;
-&lt;p&gt;I’ve never regretted declining that offer.&lt;br /&gt;
-I lost touch with all of them years ago, but I later heard things went as I predicted:&lt;br /&gt;
-the owners gradually backed out. &lt;/p&gt;
-&lt;p&gt;They made another request later on, which I tried to fulfill — but even that was blocked, just when everything was ready.&lt;/p&gt;
-&lt;p&gt;At some point, I had to walk away.&lt;br /&gt;
-Not because I wanted to abandon them in a time of need, but because they weren’t giving me the tools to do what was necessary.&lt;br /&gt;
-They were so overwhelmed, so unprepared, that they ended up yielding to pressure - often from the very people who were hurting them.&lt;/p&gt;
-&lt;p&gt;And of course, I’ve left out the worst parts of the story.&lt;/p&gt;
-&lt;p&gt;&lt;em&gt;(Author's note: Many readers, understandably struck by the severity of the events, have speculated about the involvement of organized crime. I want to clarify that, while the situation was extremely problematic and dishonest, that wasn't the case. The "worst parts" I alluded to referred to other internal dynamics, abuses of trust, and improprieties that I prefer not to detail further for privacy reasons and to avoid weighing down the narrative.)&lt;/em&gt;&lt;/p&gt;
-&lt;p&gt;That’s when I realized:&lt;br /&gt;
-Some situations are so rotten, they simply can’t be salvaged.&lt;/p&gt;
-&lt;p&gt;And that’s okay.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://it-notes.dragas.net/2024/10/03/i-solve-problems-eurobsdcon/"&gt;I solve problems&lt;/a&gt; - it’s what I do best.&lt;/p&gt;
-&lt;p&gt;But I can’t solve &lt;strong&gt;every&lt;/strong&gt; problem.&lt;br /&gt;
-Especially not when those involved choose to protect the problem instead of fixing it.&lt;/p&gt;</description>
-      <guid isPermaLink="true">https://it-notes.dragas.net/2025/05/13/the_server_that_wasnt_meant_to_exist/</guid>
-      <pubDate>Tue, 13 May 2025 16:13:36 +0200</pubDate>
     </item>
   </channel>
 </rss>
