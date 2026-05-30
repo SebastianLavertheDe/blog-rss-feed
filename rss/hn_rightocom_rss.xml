@@ -7,7 +7,255 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Sat, 30 May 2026 15:13:38 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 30 May 2026 17:14:22 +0000</lastBuildDate>
+    <item>
+      <title>Microcode inside the Intel 8087 floating-point chip: register exchange</title>
+      <link>http://www.righto.com/2026/05/microcode-inside-intel-8087-floating.html</link>
+      <description>&lt;p&gt;In 1980, Intel introduced the 8087 floating-point chip, a co-processor that made floating-point operations
+up to 100 times faster.
+This chip was highly influential, and today most processors use the floating-point standard introduced by the 8087.&lt;/p&gt;
+&lt;p&gt;The 8087 uses complicated algorithms to accurately compute functions such as square roots, tangents, and exponentials.
+These algorithms are implemented inside the chip in low-level code called microcode.
+I'm part of a group, the Opcode Collective, that is reverse-engineering this microcode.
+In this post, I take a close look at the microcode for one of the 8087's instructions&amp;mdash;&lt;code&gt;FXCH&lt;/code&gt;&amp;mdash;and explain how the microcode works.
+The &lt;code&gt;FXCH&lt;/code&gt; (Floating-point Exchange) instruction exchanges two floating-point registers. You might expect this instruction to be trivial,
+but there's more going on than you might expect; the microcode uses 14 micro-instructions to implement the exchange instruction.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fxch/8087-package.jpg"&gt;&lt;img alt="The Intel 8087 chip is packaged in a 40-pin DIP (dual in-line package)." class="hilite" height="211" src="https://static.righto.com/images/8087-fxch/8087-package-w400.jpg" title="The Intel 8087 chip is packaged in a 40-pin DIP (dual in-line package)." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The Intel 8087 chip is packaged in a 40-pin DIP (dual in-line package).&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;To explore the microcode, I opened up an 8087 chip and created a high-resolution image with a microscope.
+The large microcode ROM occupies a central position, holding the micro-instructions that control the chip. 
+The microcode engine on the left steps through the microcode, handling jumps and subroutine calls.
+The bottom half of the chip is the "datapath", the circuitry that performs floating-point calculations; it is split into a 16-bit datapath for the
+number's exponent and a 64-bit datapath for the number's fractional part (also known as the significand).&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fxch/8087-die-labeled.jpg"&gt;&lt;img alt="Die of the Intel 8087 floating-point unit chip, with main functional blocks labeled. The die is 5mm&amp;times;6mm.  Click for a larger image." class="hilite" height="587" src="https://static.righto.com/images/8087-fxch/8087-die-labeled-w450.jpg" title="Die of the Intel 8087 floating-point unit chip, with main functional blocks labeled. The die is 5mm&amp;times;6mm.  Click for a larger image." width="450" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Die of the Intel 8087 floating-point unit chip, with main functional blocks labeled. The die is 5mm&amp;times;6mm.  Click for a larger image.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;This post focuses on the temporary registers and stack registers that are highlighted in red.
+The chip has two temporary registers and eight stack registers, each holding a number's exponent and fraction.
+Each register also has two tag bits that label the type of value in the register.
+The &lt;a href="https://www.righto.com/2025/12/8087-stack-circuitry.html"&gt;stack control circuitry&lt;/a&gt; at the right manages the stack,
+keeping track of the top-of-stack position as values are pushed onto the stack or popped off the stack.&lt;/p&gt;
+&lt;h2&gt;The 8087's microcode&lt;/h2&gt;
+&lt;p&gt;Executing an 8087 instruction such as arctan requires hundreds of internal steps to compute the result.
+These steps are implemented in microcode with micro-instructions specifying each step of the algorithm.
+(Keep in mind the two levels of instructions: the assembly language instructions used by a programmer and the
+undocumented low-level micro-instructions inside the chip.)
+The microcode ROM holds 1648 micro-instructions, implementing the 8087's instruction set.
+Each micro-instruction is 16 bits long and performs a simple operation such as moving data inside the chip, adding two values, or &lt;a href="https://www.righto.com/2020/05/die-analysis-of-8087-math-coprocessors.html"&gt;shifting&lt;/a&gt; data.
+I'm working with the Opcode Collective to reverse-engineer the micro-instructions and fully understand the microcode (&lt;a href="https://github.com/a-mcego/granite/blob/main/tools/8087mc/bin/8087.md"&gt;link&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;The 8087's micro-instructions are complicated, with many corner cases and ad hoc functions, but I'll provide a simplified overview.
+Each micro-instruction consists of 16 bits, as shown below.
+The first three bits specify the type of the micro-instruction, which controls the meaning of the remaining bits.
+The first type indicates a transfer operation, transferring data from one internal register to another.
+The two fields specify the source and destination for the data. The three unspecified bits are used for various special cases.
+Next is a shift operation, which uses the barrel shifter to shift a value left or right.
+The third type of micro-instruction uses the adder/subtractor. It can also be used in a loop for multiplication or division.
+Fourth are various arithmetic control micro-instructions that configure the adder, set rounding modes, and so forth.
+The far jump and far call micro-instructions perform a jump or subroutine call to a target micro-address in a fixed list.
+The condition field allows conditional jumps/calls based on numerous &lt;a href="https://www.righto.com/2025/12/8087-microcode-conditions.html"&gt;conditions&lt;/a&gt;, while the last bit inverts the condition.
+A local jump allows a conditional jump to a nearby micro-instruction.
+Finally, the miscellaneous micro-instructions range from returning from a subroutine or raising an exception to 
+ending the microcode execution.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fxch/microcode-structure.jpg"&gt;&lt;img alt="Structure of an 8087 micro-instruction." class="hilite" height="277" src="https://static.righto.com/images/8087-fxch/microcode-structure-w500.jpg" title="Structure of an 8087 micro-instruction." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Structure of an 8087 micro-instruction.&lt;/div&gt;&lt;/p&gt;
+&lt;h2&gt;How values are stored inside the 8087 chip&lt;/h2&gt;
+&lt;p&gt;The 8087 supports a variety of data types: floating-point numbers of various sizes, integers, and binary-coded decimal.
+But internally, everything is stored as an 80-bit floating-point number. 
+A number has three parts: a 64-bit significand (the fractional part), a 15-bit exponent, and a sign bit.
+The chip has two separate data paths: one for the significand, and one for the exponent and sign.&lt;/p&gt;
+&lt;p&gt;The chip has eight registers to store numbers during calculations, the top registers in the diagram below.
+However, the registers are organized in an unusual way: as a stack, with
+numbers pushed to the stack and popped from the stack.
+Instead of accessing, say, register #3, you might access the third register from the top of the stack, denoted &lt;code&gt;ST(3)&lt;/code&gt;; as values are pushed or popped, &lt;code&gt;ST(3)&lt;/code&gt; changes.
+The stack-based architecture was intended to improve the instruction set, simplify compiler design, and make function calls more efficient, although it didn't work as well as hoped.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fxch/register-set.jpg"&gt;&lt;img alt="The register set of the 8087, as seen by the programmer. From 8086 Family Numerics Supplement." class="hilite" height="288" src="https://static.righto.com/images/8087-fxch/register-set-w400.jpg" title="The register set of the 8087, as seen by the programmer. From 8086 Family Numerics Supplement." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The register set of the 8087, as seen by the programmer. From &lt;a href="https://ethw.org/w/images/2/2f/Intel_8086_family_users_numeric_supp.pdf#page=117"&gt;8086 Family Numerics Supplement&lt;/a&gt;.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;Many 8087 instructions act on the top of the stack.
+For instance, the square root instruction replaces the value on the top of the stack with its square root.
+But what if you want to take the square root of a value in the middle of the stack?
+The solution is the &lt;code&gt;FXCH&lt;/code&gt; instruction, the focus of this article.
+This instruction exchanges the value on the top of the stack with a specified stack position, providing
+access to values inside the stack.&lt;/p&gt;
+&lt;p&gt;One more feature of the 8087 is important to this discussion: each value in the register stack has an associated "tag" value, labeling it as valid, special, zero, or empty.
+A "normal" floating-point value is tagged as &lt;em&gt;valid&lt;/em&gt;. If the floating-point value is infinity, Not a Number, or a denormalized value,
+then it is tagged as &lt;em&gt;special&lt;/em&gt;. A zero value is tagged as &lt;em&gt;zero&lt;/em&gt;.
+Finally, if a register is empty (e.g., its value has been popped off the stack), the register is tagged as &lt;em&gt;empty&lt;/em&gt;.
+The 8087 uses tags to optimize performance and detect errors.&lt;span id="fnref:tags"&gt;&lt;a class="ref" href="#fn:tags"&gt;1&lt;/a&gt;&lt;/span&gt;
+For instance, if a programmer pops too many values from the stack
+and tries to read a stack register that is tagged empty, the 8087 raises an "invalid operation" exception.&lt;/p&gt;
+&lt;p&gt;The eight stack registers are visible to the programmer, but the 8087 also has temporary registers that it uses internally.
+Two of these temporary registers are important for this article: &lt;code&gt;tmpA&lt;/code&gt; and &lt;code&gt;tmpB&lt;/code&gt;.
+Like the stack registers, each temporary register is an 80-bit register, along
+with two tag bits.&lt;/p&gt;
+&lt;h2&gt;The &lt;code&gt;FXCH&lt;/code&gt; microcode&lt;/h2&gt;
+&lt;p&gt;In this section, I'll explain how the microcode for the &lt;code&gt;FXCH&lt;/code&gt; exchange instruction works.
+This instruction exchanges the top-of-stack register with the register at a specified position in the stack.
+If either register is empty, the instruction will raise an "invalid operation" exception and replace the missing value(s) with the special value "Not a Number" (NaN).&lt;/p&gt;
+&lt;p&gt;The microcode for the instruction is below, consisting of 14 micro-instructions.&lt;span id="fnref:microcode"&gt;&lt;a class="ref" href="#fn:microcode"&gt;2&lt;/a&gt;&lt;/span&gt;
+The first micro-instruction is a transfer, where the source is the top of stack value &lt;code&gt;ST(0)&lt;/code&gt; and the destination is
+the temporary A register.
+The source specification causes the 64 significand to be placed on the fraction bus, the 16-bit
+exponent and sign to be placed on the exponent bus, and the two tag bits to be sent to the tag circuitry.
+The destination &lt;code&gt;tmpA&lt;/code&gt; causes the bus values to be stored into the temporary register.
+Thus, the bits in the micro-instruction cause the desired transfer to take place.
+The third micro-instruction is similar, but uses a register inside the stack, &lt;code&gt;ST(i)&lt;/code&gt;, with the index specified in the machine instruction.&lt;/p&gt;
+&lt;style&gt;
+  pre.microcode {font-family: courier, fixed; padding: 10px; background-color: #f5f5f5; display:inline-block;border:none;}
+  pre.microcode span {color: green; font-style:italic; font-family: sans-serif; font-size: 90%;}
+&lt;/style&gt;
+&lt;pre class="microcode"&gt;
+&lt;span&gt;FXCH entry point:&lt;/span&gt;
+#0200 ST(0) -&gt; tmpA           &lt;span&gt;read top of stack&lt;/span&gt;
+#0201 nop                     &lt;span&gt;Wait a cycle&lt;/span&gt;
+#0202 ST(i) -&gt; tmpB           &lt;span&gt;Read specified stack register&lt;/span&gt;
+#0203 if !(tmpA or tmpB empty) jmp #0210 &lt;span&gt;Jump if both registers exist&lt;/span&gt;
+#0204 set invalid exception   &lt;span&gt;Raise an invalid exception&lt;/span&gt;
+#0205 if (unmasked) jmp #0213 &lt;span&gt;If interrupt, end&lt;/span&gt;
+#0206 if !(tmpA empty) jmp #0208 &lt;span&gt;Check if tmpA is empty&lt;/span&gt;
+#0207 NaN -&gt; tmpA             &lt;span&gt;If so, move NaN to tmpA&lt;/span&gt;
+#0208 if !(tmpB empty) jmp #0210 &lt;span&gt;Check if tmpB is empty&lt;/span&gt;
+#0209 NaN -&gt; tmpB             &lt;span&gt;If so, move NaN to tmpB&lt;/span&gt;
+&lt;span&gt;The happy path and error path continue here:&lt;/span&gt;
+#0210 tmpB -&gt; ST(0)           &lt;span&gt;Save tmpB to the top of stack&lt;/span&gt;
+#0211 nop                     &lt;span&gt;Wait a cycle&lt;/span&gt;
+#0212 tmpA -&gt; ST(i)           &lt;span&gt;Save tmpA to the specified stack register&lt;/span&gt;
+#0213 RNI                     &lt;span&gt;End of routine: Run Next Instruction&lt;/span&gt;
+#0214 nop                     &lt;span&gt;Unused&lt;/span&gt;
+#0215 nop                     &lt;span&gt;Unused&lt;/span&gt;
+#0216 nop                     &lt;span&gt;Unused&lt;/span&gt;
+&lt;/pre&gt;
+
+&lt;p&gt;Next, the relative jump at micro-address &lt;code&gt;#0203&lt;/code&gt; illustrates a different type of micro-instruction: the conditional jump.
+The micro-instruction specifies a condition, in this case, testing if either temporary register is empty.
+(That is, the hardware tests the tag bits associated with the temporary registers to see if either is the "empty" tag.)
+The micro-instruction has a bit set to invert the condition.
+Finally, the micro-instruction has an offset of +6, yielding the jump target &lt;code&gt;#0210&lt;/code&gt;.
+The advantage of a relative offset over specifying a full micro-address is that the offset only requires six bits.
+(For more information on how conditions are evaluated, see my article &lt;a href="https://www.righto.com/2025/12/8087-microcode-conditions.html"&gt;Conditions in the Intel 8087 floating-point chip's microcode&lt;/a&gt;.)&lt;/p&gt;
+&lt;p&gt;If either register is empty, the next micro-instruction raises an "invalid" exception.
+As I'll explain in the next section, you can program the 8087 to either generate an interrupt on an exception or continue processing.
+The next instruction is a conditional jump that tests if the exception was "unmasked", indicating that an
+interrupt was generated. In this case, the microcode ends while the main 8086 processor handles the interrupt.&lt;/p&gt;
+&lt;p&gt;Assuming the interrupt was masked, the microcode now replaces empty values with the special Not a Number value, first checking
+&lt;code&gt;tmpA&lt;/code&gt; and then &lt;code&gt;tmpB&lt;/code&gt;.
+The source &lt;code&gt;NaN&lt;/code&gt; causes circuitry to pull the exponent bus to all 1's and the fraction bus to all 0's, except for the top two bits.
+This particular bit pattern represents Not a Number.&lt;span id="fnref:nan"&gt;&lt;a class="ref" href="#fn:nan"&gt;3&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;At micro-address &lt;code&gt;#0210&lt;/code&gt;, the empty-register path and the normal path join up to store the temporary registers in the stack registers.
+This is where the actual exchange operation happens, since &lt;code&gt;tmpA&lt;/code&gt; and &lt;code&gt;tmpB&lt;/code&gt; are written to the opposite stack positions from
+where they were read.
+Finally, &lt;code&gt;RNI&lt;/code&gt; (Run Next Instruction) indicates the end of the microcode routine. This stops the microcode
+engine and gets the 8087 ready for the next instruction.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;nop&lt;/code&gt; (no-operation) microcode instructions are interesting. Each pair of stack reads or writes has a &lt;code&gt;nop&lt;/code&gt; in the middle, probably
+due to timing constraints on the registers.
+The end of the microcode routine has three &lt;code&gt;nop&lt;/code&gt; instructions before the next microcode routine starts.
+These instructions appear to be wasted space in the microcode; maybe the &lt;code&gt;FXCH&lt;/code&gt; microcode was shortened by
+three words during development, causing this gap.&lt;/p&gt;
+&lt;h2&gt;Exceptions&lt;/h2&gt;
+&lt;p&gt;The 8087 has a complicated exception system to handle a variety of problems.
+Exceptions fall into six categories: invalid operation, denormalized operation, zero divide, overflow, underflow, or precision.
+An invalid operation occurs, for instance, if you take the square root of a negative number or try to perform an operation
+on an empty register.
+An overflow exception occurs if a value is too large to be represented, while an underflow exception occurs if a value is too small.
+A zero divide exception happens if you divide by zero.&lt;span id="fnref:zero"&gt;&lt;a class="ref" href="#fn:zero"&gt;4&lt;/a&gt;&lt;/span&gt;
+A precision exception occurs if a number cannot be exactly represented as a floating-point number (which is extremely common).
+Finally, a denormalized exception occurs if a value is too close to zero to be represented with full accuracy.&lt;/p&gt;
+&lt;!--
+An invalid operation can also occur if you try to use an empty register or overwrite a non-empty register; these typically happen due to stack underflow
+or stack overflow, respectively.
+--&gt;
+
+&lt;p&gt;What happens if an exception occurs? The 8087 allows the programmer to select exception behavior for each exception type.
+The first option is for an exception to trigger a CPU interrupt, so the software can handle the problem. For instance, the software could attempt to work
+around the problem, log an error, or simply terminate the program.
+Alternatively, the programmer can "mask" an exception. In this case, the 8087 continues the operation in a "reasonable" way.
+For instance, an overflowed value would be set to infinity, while an invalid value would be set to the special value: "Not a Number" (NaN).
+For a precision exception (e.g., 1/3), the value is rounded.
+The designers of the 8087 put a lot of effort into continuing after a masked exception in the best way;
+the manual has pages of details on all the special cases.&lt;span id="fnref:exceptions"&gt;&lt;a class="ref" href="#fn:exceptions"&gt;5&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;!--
+Dividing by zero results in infinity (positive or negative as appropriate), except 0 ÷ 0 yields "Not a Number".
+For a precision exception, the value would be rounded (e.g. 1/3). 
+--&gt;
+
+&lt;p&gt;Handling of exception conditions is split between microcode and hardware.
+For example, if the &lt;code&gt;FXCH&lt;/code&gt; microcode detects an empty register, it executes a &lt;code&gt;set invalid exception&lt;/code&gt; micro-instruction.
+This micro-instruction sets a latch indicating the invalid exception.
+The 8087's control register includes six mask bits, one for each type of exception, blocking interrupts for that
+exception type.
+The hardware combines the exception flip-flop signals with the mask bits in the control register and the exception flags in the
+status register to see if a new, unmasked interrupt has been triggered.
+If so, the 8087 circuitry sends an interrupt to the 8086 processor.&lt;/p&gt;
+&lt;p&gt;On the other hand, if the interrupt is masked, execution of the microcode continues. In the case of &lt;code&gt;FXCH&lt;/code&gt;, the microcode replaces empty registers with
+the Not a Number value.
+Finally, the microcode routine ends with RNI (Run Next Instruction). This triggers many hardware activities, but the relevant one
+is copying the state of the exception flip-flops into the status register. This sets the exception bit if the programmer wants to check
+it. The exception flip-flops are cleared when the next 8087 instruction starts.
+Since the hardware manages the flip-flops, status register, control register, and interrupt line,
+the microcode can be simpler and smaller.&lt;/p&gt;
+&lt;h2&gt;Extracting the microcode&lt;/h2&gt;
+&lt;p&gt;The 8087's microcode ROM contains 26,368 bits, specifying 1648 16-bit micro-instructions.
+At the time, this was a very large ROM; in order to fit it on the die, Intel used a special type of ROM that held two bits per transistor,
+twice the capacity of a standard ROM.
+This ROM is semi-analog, using four sizes of transistors to produce four voltage levels. Comparators convert the voltage level to a pair
+of bits.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fxch/rom.jpg"&gt;&lt;img alt="A close-up of the 8087's microcode ROM, showing 77 transistors. A transistor is formed where a vertical polysilicon line crosses a horizontal stripe of doped silicon." class="hilite" height="354" src="https://static.righto.com/images/8087-fxch/rom-w500.jpg" title="A close-up of the 8087's microcode ROM, showing 77 transistors. A transistor is formed where a vertical polysilicon line crosses a horizontal stripe of doped silicon." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A close-up of the 8087's microcode ROM, showing 77 transistors. A transistor is formed where a vertical polysilicon line crosses a horizontal stripe of doped silicon.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;To extract the microcode, I took high-resolution images of the ROM after dissolving the metal layer. Gloriouscow used a neural network to categorize the size of each transistor. (You can explore the full image and transistors &lt;a href="https://8087.martypc.net/"&gt;here&lt;/a&gt;.)
+The next step was determining how to map the transistors to bits.
+You might expect that the grid of transistors corresponds to the grid of microcode bits.
+But due to various hardware optimizations, rows and columns are shuffled and mirrored, which I sorted out by studying the
+circuitry.
+The result was the microcode, expressed as a table of 0's and 1's.&lt;/p&gt;
+&lt;p&gt;The next step was assigning meaning to the microcode. For the 8086 processor, the patent provided a lot of detail on the structure
+of the microcode and the hardware, but the 8087 patent didn't explain the microcode.
+Instead, we figured out the micro-instructions through a combination of examining the
+circuitry,
+looking for patterns in the microcode,
+and thinking about how instructions might be implemented.&lt;/p&gt;
+&lt;p&gt;Microcode is usually complicated, and the 8087 is worse than most.
+The 8087 was on the edge of what was possible at the time, so the designers resorted to special cases and
+hacks where necessary.
+For instance, some conditional jumps
+have side effects such as updating registers.
+Other instructions set flip-flops that change the behavior of later operations. We're still working to completely
+understand the micro-instructions at the hardware level.&lt;/p&gt;
+&lt;p&gt;I plan to continue reverse-engineering the 8087 microcode;
+for updates, follow me on
+ Bluesky (&lt;a href="https://bsky.app/profile/righto.com"&gt;@righto.com&lt;/a&gt;),
+Mastodon (&lt;a href="https://oldbytes.space/@kenshirriff"&gt;@kenshirriff@oldbytes.space&lt;/a&gt;),
+or &lt;a href="http://www.righto.com/feeds/posts/default"&gt;RSS&lt;/a&gt;.
+I've been working on this with the members of the "Opcode Collective", especially Smartest Blob and Gloriouscow, who converted the
+ROM images to microcode data and extensively analyzed the contents.
+See the &lt;a href="https://github.com/a-mcego/granite/tree/main/tools/8087mc"&gt;8087 repository&lt;/a&gt; on GitHub for more.&lt;/p&gt;
+&lt;h2&gt;Notes and references&lt;/h2&gt;
+&lt;div class="footnote"&gt;
+&lt;ol&gt;
+&lt;li id="fn:tags"&gt;
+&lt;p&gt;Tags are normally invisible to the programmer, but can be accessed through special operations.
+A programmer can access the 8087 tags by dumping the 8087's state to memory; the tags are stored in a 16-bit "tag word".&amp;#160;&lt;a class="footnote-backref" href="#fnref:tags" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:microcode"&gt;
+&lt;p&gt;The raw 8087 microcode is available &lt;a href="https://github.com/a-mcego/granite/blob/a1d48a37dff90e46eef11a17baa9c788339cd1d2/tools/8087mc/bin/8087mc_out.txt#L201"&gt;here&lt;/a&gt;, decoded by Smartest Blob. I've modified the microcode format for clarity.&amp;#160;&lt;a class="footnote-backref" href="#fnref:microcode" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:nan"&gt;
+&lt;p&gt;The 8087 indicates a bad value with a special "Not a Number" (NaN) value.
+The system allows many different representations of NaN: any value with an exponent of all 1's, a nonzero significand (a zero significand indicates negative infinity), and either sign.
+For an invalid operation, the 8087 uses one particular NaN value, called &lt;em&gt;real indefinite&lt;/em&gt;.
+For an internal 80-bit real number, this value has the top two bits of the significand set internally, and the rest zero, while the exponent bits and sign are all set.
+(See pages 87 (S-73) and 90 (S-76).)
+A 32-bit or 64-bit real uses a slightly different bit pattern for NaN; these number formats have an implied "1" bit for the significand, so only one bit of the significand is explicitly set for the
+&lt;em&gt;real indefinite&lt;/em&gt; NaN.&amp;#160;&lt;a class="footnote-backref" href="#fnref:nan" title="Jump back to footnote 3 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:zero"&gt;
+&lt;p&gt;Dividing by zero usually causes a zero divide exception, but 0 ÷ 0 causes an invalid operation exception, while infinity ÷ 0 is valid, yielding infinity.
+Just one reason why the microcode is so complicated.&amp;#160;&lt;a class="footnote-backref" href="#fnref:zero" title="Jump back to footnote 4 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:exceptions"&gt;
+&lt;p&gt;For more information on the 8087's exceptions, see &lt;a href="https://ethw.org/w/images/2/2f/Intel_8086_family_users_numeric_supp.pdf"&gt;8086 Family Numerics Supplement&lt;/a&gt;.
+The exception system is described on page 32 (S-18).
+The exception flags and exception masks are described on page 24 (S-10).
+The details of exception handling are described on page 89 (S-75).&amp;#160;&lt;a class="footnote-backref" href="#fnref:exceptions" title="Jump back to footnote 5 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-5917097192784199241</guid>
+      <pubDate>Sat, 30 May 2026 10:09:35 -0700</pubDate>
+    </item>
     <item>
       <title>Reverse engineering circuitry in a Spacelab computer from 1980</title>
       <link>http://www.righto.com/2026/05/reverse-engineering-spacelab-computer.html</link>
@@ -10232,265 +10480,6 @@ performance is better if you add PMOS transistors.)&amp;#160;&lt;a class="footno
 </description>
       <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-5364654464288584255</guid>
       <pubDate>Tue, 21 Jan 2025 08:48:00 -0800</pubDate>
-    </item>
-    <item>
-      <title>Reverse-engineering a carry-lookahead adder in the Pentium</title>
-      <link>http://www.righto.com/2025/01/pentium-carry-lookahead-reverse-engineered.html</link>
-      <description>&lt;p&gt;Addition is harder than you'd expect, at least for a computer.
-Computers use multiple types of adder circuits with different tradeoffs of size versus speed.
-In this article, I reverse-engineer an 8-bit adder in the Pentium's floating point unit.
-This adder turns out to be a carry-lookahead adder,
-in particular, a type known as "Kogge-Stone."&lt;span id="fnref:kogge-stone"&gt;&lt;a class="ref" href="#fn:kogge-stone"&gt;1&lt;/a&gt;&lt;/span&gt;
-In this article, I'll explain how a carry-lookahead adder works and I'll show how the Pentium implemented it.
-Warning: lots of Boolean logic ahead.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/pentium-adder/pentium-labeled.jpg"&gt;&lt;img alt="The Pentium die, showing the adder. Click this image (or any other) for a larger version." class="hilite" height="627" src="https://static.righto.com/images/pentium-adder/pentium-labeled-w600.jpg" title="The Pentium die, showing the adder. Click this image (or any other) for a larger version." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The Pentium die, showing the adder. Click this image (or any other) for a larger version.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The die photo above shows the main functional units of the Pentium.
-The adder, in the lower right, is a small component of the floating point unit.
-It is not a general-purpose adder, but is used only for determining quotient digits during division.
-It played a role in the famous
-Pentium FDIV division bug, which I wrote about &lt;a href="https://www.righto.com/2024/12/this-die-photo-of-pentium-shows.html"&gt;here&lt;/a&gt;.&lt;/p&gt;
-&lt;h2&gt;The hardware implementation&lt;/h2&gt;
-&lt;p&gt;The photo below shows the carry-lookahead adder used by the divider.
-The adder itself consists of the circuitry highlighted in red.
-At the top, logic gates compute signals in parallel for each of the 8 pairs of inputs: partial sum, carry generate, and carry propagate.
-Next, the complex carry-lookahead logic determines in parallel if there will be a carry at each position.
-Finally, XOR gates apply the carry to each bit.
-Note that the sum/generate/propagate circuitry consists of 8 repeated blocks, and the same with the carry XOR
-circuitry.
-The carry lookahead circuitry, however, doesn't have any visible structure since it is different for each bit.&lt;span id="fnref:8bit"&gt;&lt;a class="ref" href="#fn:8bit"&gt;2&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/pentium-adder/adder-silicon.jpg"&gt;&lt;img alt="The carry-lookahead adder that feeds the lookup table. This block of circuitry is just above the PLA on the die. I removed the metal layers, so this photo shows the doped silicon (dark) and the polysilicon (faint gray)." class="hilite" height="787" src="https://static.righto.com/images/pentium-adder/adder-silicon-w550.jpg" title="The carry-lookahead adder that feeds the lookup table. This block of circuitry is just above the PLA on the die. I removed the metal layers, so this photo shows the doped silicon (dark) and the polysilicon (faint gray)." width="550" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The carry-lookahead adder that feeds the lookup table. This block of circuitry is just above the PLA on the die. I removed the metal layers, so this photo shows the doped silicon (dark) and the polysilicon (faint gray).&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The large amount of circuitry in the middle is used for testing; see the footnote.&lt;span id="fnref:testing"&gt;&lt;a class="ref" href="#fn:testing"&gt;3&lt;/a&gt;&lt;/span&gt;
-At the bottom, the drivers amplify control signals for various parts of the circuit.&lt;/p&gt;
-&lt;h2&gt;The carry-lookahead adder concept&lt;/h2&gt;
-&lt;p&gt;The problem with addition is that carries make addition slow.
-Consider calculating 99999+1 by hand.
-You'll start with 9+1=10, then carry the one, generating another carry, which generates another carry, and so forth, until you go through all the digits.
-Computer addition has the same problem:
-If you're adding two numbers, the low-order bits can generate a carry that then propagates through all the bits.
-An adder that works this way&amp;mdash;known as a ripple carry adder&amp;mdash;will be slow because the carry has to ripple through
-all the bits.
-As a result, CPUs use special circuits to make addition faster.&lt;/p&gt;
-&lt;p&gt;One solution is the carry-lookahead adder. In this adder, all the carry bits are computed in parallel, before computing
-the sums. Then, the sum bits can be computed in parallel, using the carry bits.
-As a result, the addition can be completed quickly, without waiting for the carries to ripple through
-the entire sum.&lt;/p&gt;
-&lt;p&gt;It may seem impossible to compute the carries without computing the sum first, but there's a way to do it.
-For each bit position, you determine signals called "carry generate" and "carry propagate".
-These signals can then be used to determine all the carries in parallel.
-The &lt;em&gt;generate&lt;/em&gt; signal indicates that the position generates a carry. For instance, if you add binary
-&lt;code&gt;1xx&lt;/code&gt; and &lt;code&gt;1xx&lt;/code&gt; (where &lt;code&gt;x&lt;/code&gt; is an arbitrary bit), a carry will be generated from the top bit,
-regardless of the unspecified bits.
-On the other hand, adding &lt;code&gt;0xx&lt;/code&gt; and &lt;code&gt;0xx&lt;/code&gt; will never produce a carry.
-Thus, the &lt;em&gt;generate&lt;/em&gt; signal is produced for the first case but not the second.&lt;/p&gt;
-&lt;p&gt;But what about &lt;code&gt;1xx&lt;/code&gt; plus &lt;code&gt;0xx&lt;/code&gt;? We might get a carry, for instance, &lt;code&gt;111+001&lt;/code&gt;, but we might not get a carry,
-for instance, &lt;code&gt;101+001&lt;/code&gt;. In this "maybe" case, we set the &lt;em&gt;carry propagate&lt;/em&gt; signal, indicating that a carry into the
-position will get propagated out of the position. For example, if there is a carry out of
-the middle position, &lt;code&gt;1xx+0xx&lt;/code&gt; will have a carry from the top bit. But if there is no carry out of the middle position, then
-there will not be a carry from the top bit. In other words, the &lt;em&gt;propagate&lt;/em&gt; signal indicates that a carry into the top bit will be propagated out of the top
-bit.&lt;/p&gt;
-&lt;p&gt;To summarize, adding &lt;code&gt;1+1&lt;/code&gt; will generate a carry. Adding &lt;code&gt;0+1&lt;/code&gt; or &lt;code&gt;1+0&lt;/code&gt; will propagate a
-carry.
-Thus, the &lt;em&gt;generate&lt;/em&gt; signal is formed at each position by &lt;em&gt;G&lt;sub&gt;n&lt;/sub&gt; = A&lt;sub&gt;n&lt;/sub&gt;·B&lt;sub&gt;n&lt;/sub&gt;&lt;/em&gt;, where &lt;em&gt;A&lt;/em&gt; and &lt;em&gt;B&lt;/em&gt; are the inputs.
-The &lt;em&gt;propagate&lt;/em&gt; signal is &lt;em&gt;P&lt;sub&gt;n&lt;/sub&gt; = A&lt;sub&gt;n&lt;/sub&gt;+B&lt;sub&gt;n&lt;/sub&gt;&lt;/em&gt;,
-the logical-OR of the inputs.&lt;span id="fnref:propagate"&gt;&lt;a class="ref" href="#fn:propagate"&gt;4&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;Now that the &lt;em&gt;propagate&lt;/em&gt; and &lt;em&gt;generate&lt;/em&gt; signals are defined, they can be used to compute the carry &lt;em&gt;C&lt;sub&gt;n&lt;/sub&gt;&lt;/em&gt; at
-each bit position:
-&lt;br&gt;&lt;em&gt;C&lt;sub&gt;1&lt;/sub&gt; = G&lt;sub&gt;0&lt;/sub&gt;&lt;/em&gt;: a carry into bit 1 occurs if a carry is generated from bit 0.
-&lt;br&gt;&lt;em&gt;C&lt;sub&gt;2&lt;/sub&gt; = G&lt;sub&gt;1&lt;/sub&gt; + G&lt;sub&gt;0&lt;/sub&gt;P&lt;sub&gt;1&lt;/sub&gt;&lt;/em&gt;: A carry into bit 2 occur if bit 1 generates a carry or bit 1 propagates a carry from bit 0.
-&lt;br&gt;&lt;em&gt;C&lt;sub&gt;3&lt;/sub&gt; = G&lt;sub&gt;2&lt;/sub&gt; + G&lt;sub&gt;1&lt;/sub&gt;P&lt;sub&gt;2&lt;/sub&gt; + G&lt;sub&gt;0&lt;/sub&gt;P&lt;sub&gt;1&lt;/sub&gt;P&lt;sub&gt;2&lt;/sub&gt;&lt;/em&gt;: A carry into bit 3 occurs if bit 2 generates a carry, or bit 2 propagates a carry generated from bit 1, or bits 2 and 1 propagate a carry generated from bit 0.
-&lt;br&gt;&lt;em&gt;C&lt;sub&gt;4&lt;/sub&gt; = G&lt;sub&gt;3&lt;/sub&gt; + G&lt;sub&gt;2&lt;/sub&gt;P&lt;sub&gt;3&lt;/sub&gt; + G&lt;sub&gt;1&lt;/sub&gt;P&lt;sub&gt;2&lt;/sub&gt;P&lt;sub&gt;3&lt;/sub&gt; + G&lt;sub&gt;0&lt;/sub&gt;P&lt;sub&gt;1&lt;/sub&gt;P&lt;sub&gt;2&lt;/sub&gt;P&lt;sub&gt;3&lt;/sub&gt;&lt;/em&gt;: A carry into bit 4 occurs if a carry is generated from bit 3, 2, 1, or 0 along with the necessary propagate signals.
-&lt;br&gt;... and so forth, getting more complicated with each bit ...&lt;/p&gt;
-&lt;p&gt;The important thing about these equations is that they can be computed in parallel, without waiting for a
-carry to ripple through each position.
-Once each carry is computed, the sum bits can be computed in parallel: &lt;em&gt;S&lt;sub&gt;n&lt;/sub&gt; = A&lt;sub&gt;n&lt;/sub&gt; ⊕ B&lt;sub&gt;n&lt;/sub&gt; ⊕ C&lt;sub&gt;n&lt;/sub&gt;&lt;/em&gt;. In other words, the two input bits and the computed carry are combined with exclusive-or.&lt;/p&gt;
-&lt;h2&gt;Implementing carry lookahead with a parallel prefix adder&lt;/h2&gt;
-&lt;p&gt;The straightforward way to implement carry lookahead is to directly implement the equations above.
-However, this approach requires a lot of circuitry due to the complicated equations.
-Moreover, it needs gates with many inputs, which are slow for electrical reasons.&lt;span id="fnref:74181"&gt;&lt;a class="ref" href="#fn:74181"&gt;5&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;The Pentium's adder implements the carry lookahead in a different way, called the "parallel prefix adder."&lt;span id="fnref:parallel-prefix"&gt;&lt;a class="ref" href="#fn:parallel-prefix"&gt;7&lt;/a&gt;&lt;/span&gt;
-The idea is to produce the propagate and generate signals across ranges of bits, not just single bits as before.
-For instance, the &lt;em&gt;propagate&lt;/em&gt; signal &lt;em&gt;P&lt;sub&gt;32&lt;/sub&gt;&lt;/em&gt; indicates that a carry in to bit 2 would be propagated out of bit 3.
-And &lt;em&gt;G&lt;sub&gt;30&lt;/sub&gt;&lt;/em&gt; indicates that bits 3 to 0 generate a carry out of bit 3.&lt;/p&gt;
-&lt;p&gt;Using some mathematical tricks,&lt;span id="fnref:pg"&gt;&lt;a class="ref" href="#fn:pg"&gt;6&lt;/a&gt;&lt;/span&gt; you can take the &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; values for two smaller ranges and merge them into
-the &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; values for the combined range.
-For instance, you can start with the &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; values for bits 0 and 1, and produce &lt;em&gt;P&lt;sub&gt;10&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;G&lt;sub&gt;10&lt;/sub&gt;&lt;/em&gt;.
-These could be merged with &lt;em&gt;P&lt;sub&gt;32&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;G&lt;sub&gt;32&lt;/sub&gt;&lt;/em&gt; to produce &lt;em&gt;P&lt;sub&gt;30&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;G&lt;sub&gt;30&lt;/sub&gt;&lt;/em&gt;,
-indicating if a carry is propagated across bits 3-0 or generated by bits 3-0.
-Note that &lt;em&gt;G&lt;sub&gt;n0&lt;/sub&gt;&lt;/em&gt; is the carry-lookahead value we need for bit &lt;em&gt;n&lt;/em&gt;, so producing these &lt;em&gt;G&lt;/em&gt; values gives 
-the results that we need from the carry-lookahead implementation.&lt;/p&gt;
-&lt;p&gt;This merging process is more efficient than the "brute force" implementation of the carry-lookahead logic since
-logic subexpressions can be reused.
-This merging process can be implemented in many ways, including 
-&lt;a href="https://en.wikipedia.org/wiki/Kogge%E2%80%93Stone_adder"&gt;Kogge-Stone&lt;/a&gt;, &lt;a href="https://en.wikipedia.org/wiki/Brent%E2%80%93Kung_adder"&gt;Brent-Kung&lt;/a&gt;, and Ladner-Fischer.
-The different algorithms have different tradeoffs of performance versus circuit area.
-In the next section, I'll show how the Pentium implements the Kogge-Stone algorithm.&lt;/p&gt;
-&lt;h2&gt;The Pentium's implementation of the carry-lookahead adder&lt;/h2&gt;
-&lt;p&gt;The Pentium's adder is implemented with four layers of circuitry.
-The first layer produces the &lt;em&gt;propagate&lt;/em&gt; and &lt;em&gt;generate&lt;/em&gt; signals (&lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt;) for each bit, along with a partial sum (the sum
-without any carries).
-The second layer merges pairs of neighboring &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; values, producing, for instance &lt;em&gt;G&lt;sub&gt;65&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;P&lt;sub&gt;21&lt;/sub&gt;&lt;/em&gt;.
-The third layer generates the carry-lookahead bits by merging previous &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; values. 
-This layer is complicated because it has different circuitry for each bit.
-Finally, the fourth layer applies the carry bits to the partial sum, producing the final arithmetic sum.&lt;/p&gt;
-&lt;p&gt;Here is the schematic of the adder, from my reverse engineering.
-The circuit in the upper left is repeated 8 times to produce the propagate, generate, and partial sum for
-each bit. This corresponds to the first layer of logic.
-At the left are the circuits to merge the &lt;em&gt;generate&lt;/em&gt; and &lt;em&gt;propagate&lt;/em&gt; signals across pairs of bits. These circuits
-are the second layer of logic.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/pentium-adder/adder-schematic.jpg"&gt;&lt;img alt="Schematic of the Pentium's 8-bit carry-lookahead adder. Click for a larger version." class="hilite" height="522" src="https://static.righto.com/images/pentium-adder/adder-schematic-w500.jpg" title="Schematic of the Pentium's 8-bit carry-lookahead adder. Click for a larger version." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Schematic of the Pentium's 8-bit carry-lookahead adder. Click for a larger version.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The circuitry at the right is the interesting part&amp;mdash;it computes the carries in parallel and then computes the
-final sum bits using XOR. This corresponds to the third and fourth layers of circuitry respectively.
-The circuitry gets more complicated going from bottom to top as the bit position increases.&lt;/p&gt;
-&lt;p&gt;The diagram below is the standard diagram that illustrates how a
-&lt;a href="https://en.wikipedia.org/wiki/Kogge%E2%80%93Stone_adder"&gt;Kogge-Stone&lt;/a&gt; adder works.
-It's rather abstract, but I'll try to explain it.
-The diagram shows how the &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; signals are merged to produce each output at the bottom. 
-Each line coresponds to both the &lt;em&gt;P&lt;/em&gt; and the &lt;em&gt;G&lt;/em&gt; signal.
-Each square box generates the &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; signals for that bit.
-(Confusingly, the vertical and diagonal lines have the same meaning, indicating inputs going into a diamond
-and outputs coming out of a diamond.)
-Each diamond combines two ranges of &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; signals to generate new &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; signals for the combined
-range.
-Thus, the signals cover wider ranges as they progress downward, ending with the &lt;em&gt;G&lt;sub&gt;n0&lt;/sub&gt;&lt;/em&gt; signals that
-are the outputs.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/pentium-adder/kogge-stone7.png"&gt;&lt;img alt="A diagram of an 8-bit Kogge-Stone adder highlighting the carry out of bit 6 (green) and out of bit 2 (purple). Modification of the diagram by Robey Pointer, Wikimedia Commons." class="hilite" height="276" src="https://static.righto.com/images/pentium-adder/kogge-stone7-w350.png" title="A diagram of an 8-bit Kogge-Stone adder highlighting the carry out of bit 6 (green) and out of bit 2 (purple). Modification of the diagram by Robey Pointer, Wikimedia Commons." width="350" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A diagram of an 8-bit Kogge-Stone adder highlighting the carry out of bit 6 (green) and out of bit 2 (purple). Modification of the diagram by Robey Pointer, &lt;a href="https://commons.wikimedia.org/wiki/File:Kogge-stone-8-bit.png"&gt;Wikimedia Commons&lt;/a&gt;.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;It may be easier to understand the diagram by starting with the outputs.
-I've highlighted two circuits: The purple circuit computes the carry into bit 3 (out of bit 2),
-while the green circuit computes the carry into bit 7 (out of bit 6).
-Following the purple output upward, note that it forms a tree reaching bits 2, 1, and 0, so it generates the
-carry based on these bits, as desired.
-In more detail, the upper purple diamond combines the &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; signals for bits 2 and 1, generating &lt;em&gt;P&lt;sub&gt;21&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;G&lt;sub&gt;21&lt;/sub&gt;&lt;/em&gt;.
-The lower purple diamond merges in &lt;em&gt;P&lt;sub&gt;0&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;G&lt;sub&gt;0&lt;/sub&gt;&lt;/em&gt; to create &lt;em&gt;P&lt;sub&gt;20&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;G&lt;sub&gt;20&lt;/sub&gt;&lt;/em&gt;.
-Signal &lt;em&gt;G&lt;sub&gt;20&lt;/sub&gt;&lt;/em&gt; indicates of bits 2 through 0 generate a carry; this is the desired carry value into bit 3.&lt;/p&gt;
-&lt;p&gt;Now, look at the green output and see how it forms a tree going upward, combining bits 6 through 0.
-Notice how it takes advantage of the purple carry output, reducing the circuitry required.
-It also uses &lt;em&gt;P&lt;sub&gt;65&lt;/sub&gt;&lt;/em&gt;, &lt;em&gt;P&lt;sub&gt;43&lt;/sub&gt;&lt;/em&gt;, and the corresponding &lt;em&gt;G&lt;/em&gt; signals.
-Comparing with the earlier schematic shows how the diagram corresponds to the schematic, but abstracts out
-the details of the gates.&lt;/p&gt;
-&lt;p&gt;Comparing the diagram to the schematic, each square box corresponds to
-to the circuit in the upper left of the schematic that generates &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt;, the first layer of circuitry.
-The first row of diamonds corresponds to the pairwise combination circuitry on the left of the schematic, the
-second layer of circuitry.
-The remaining diamonds correspond to the circuitry on the right of the schematic, with each column
-corresponding to a bit, the third layer of circuitry. (The diagram ignores the final XOR step, the fourth layer of circuitry.)&lt;/p&gt;
-&lt;p&gt;Next, I'll show how the diagram above, the logic equations, and the schematic are related.
-The diagram below shows the logic equation for &lt;em&gt;C&lt;sub&gt;7&lt;/sub&gt;&lt;/em&gt; and how it is implemented with gates; this
-corresponds to the green diamonds above.
-The gates on the left below computes &lt;em&gt;G&lt;sub&gt;63&lt;/sub&gt;&lt;/em&gt;; this corresponds to the middle green diamond on the left.
-The next gate below computes &lt;em&gt;P&lt;sub&gt;63&lt;/sub&gt;&lt;/em&gt; from &lt;em&gt;P&lt;sub&gt;65&lt;/sub&gt;&lt;/em&gt; and &lt;em&gt;P&lt;sub&gt;43&lt;/sub&gt;&lt;/em&gt;; this corresponds to
-the same green diamond.
-The last gates mix in &lt;em&gt;C&lt;sub&gt;3&lt;/sub&gt;&lt;/em&gt; (the purple line above); this corresponds to the bottom green diamond.
-As you can see, the diamonds abstract away the complexity of the gates.
-Finally, the colored boxes below show how the gate inputs map onto the logic equation. Each input corresponds to multiple
-terms in the equation (6 inputs replace 28 terms), showing how this approach reduces the circuitry required.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/pentium-adder/term7.jpg"&gt;&lt;img alt="This diagram shows how the carry into bit 7 is computed, comparing the equations to the logic circuit." class="hilite" height="300" src="https://static.righto.com/images/pentium-adder/term7-w450.jpg" title="This diagram shows how the carry into bit 7 is computed, comparing the equations to the logic circuit." width="450" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;This diagram shows how the carry into bit 7 is computed, comparing the equations to the logic circuit.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;There are alternatives to the Kogge-Stone adder. For example, a &lt;a href="https://en.wikipedia.org/wiki/Brent%E2%80%93Kung_adder"&gt;Brent-Kung adder&lt;/a&gt; (below) uses a different arrangement with fewer diamonds but more layers. Thus, a Brent-Kung adder uses less circuitry but is slower.
-(You can follow each output upward to verify that the tree reaches the correct inputs.)&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/pentium-adder/brent-kung.png"&gt;&lt;img alt="A diagram of an 8-bit Brent-Kung adder. Diagram by Robey Pointer, Wikimedia Commons." class="hilite" height="300" src="https://static.righto.com/images/pentium-adder/brent-kung-w300.png" title="A diagram of an 8-bit Brent-Kung adder. Diagram by Robey Pointer, Wikimedia Commons." width="300" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A diagram of an 8-bit Brent-Kung adder. Diagram by Robey Pointer, &lt;a href="https://commons.wikimedia.org/wiki/File:Brent-kung-8-bit.png"&gt;Wikimedia Commons&lt;/a&gt;.&lt;/div&gt;&lt;/p&gt;
-&lt;h2&gt;Conclusions&lt;/h2&gt;
-&lt;p&gt;The photo below shows the adder circuitry. I've removed the top two layers of metal, leaving the bottom layer
-of metal. Underneath the metal, polysilicon wiring and doped silicon regions are barely visible; they form
-the transistors. At the top are eight blocks of gates to generate the partial sum, generate, and propagate signals
-for each bit.
-(This corresponds to the first layer of circuitry as described earlier.)
-In the middle is the carry lookahead circuitry. It is irregular since each bit has different circuitry.
-(This corresponds to the second and third layers of circuitry, jumbled together.)
-At the bottom, eight XOR gates combine the carry lookahead output with the partial sum to produce the adder's output.
-(This corresponds to the fourth layer of circuitry.)&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/pentium-adder/adder-m1.jpg"&gt;&lt;img alt="The Pentium's adder circuitry with the top two layers of metal removed." class="hilite" height="362" src="https://static.righto.com/images/pentium-adder/adder-m1-w700.jpg" title="The Pentium's adder circuitry with the top two layers of metal removed." width="700" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The Pentium's adder circuitry with the top two layers of metal removed.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The Pentium uses many adders for different purposes: in the integer unit, in the floating point unit, and for
-address calculation, among others.
-Floating-point division is known to use a carry-save adder to hold the partial remainder at each step;
-see my post on the &lt;a href="https://www.righto.com/2024/12/this-die-photo-of-pentium-shows.html"&gt;Pentium FDIV division bug&lt;/a&gt; for details.
-I don't know what types of adders are used in other parts of the chip, but maybe I'll reverse-engineer some of them.
-Follow me on Bluesky (&lt;a href="https://bsky.app/profile/righto.com"&gt;@righto.com&lt;/a&gt;) or &lt;a href="https://www.righto.com/feeds/posts/default"&gt;RSS&lt;/a&gt; for updates. (I'm no longer on Twitter.)&lt;/p&gt;
-&lt;h1&gt;Footnotes and references&lt;/h1&gt;
-&lt;div class="footnote"&gt;
-&lt;ol&gt;
-&lt;li id="fn:kogge-stone"&gt;
-&lt;p&gt;Strangely, the original paper by Kogge and Stone had nothing to do with addition and carries. Their 1973 &lt;a href="https://doi.org/10.1109/TC.1973.5009159"&gt;paper&lt;/a&gt; was titled, 
-"A Parallel Algorithm for the Efficient Solution of a General Class of Recurrence Equations."
-It described how to solve recurrence problems on parallel computers, in particular the massively parallel
-ILLIAC IV.
-As far as I can tell, it wasn't until 1987 that their algorithm was applied to carry lookahead, in
-&lt;a href="https://www.acsel-lab.com/Projects/fast_adder/references/papers/Han-Carlson-ARITH8.pdf"&gt;Fast Area-Efficient VLSI Adders&lt;/a&gt;.&amp;#160;&lt;a class="footnote-backref" href="#fnref:kogge-stone" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:8bit"&gt;
-&lt;p&gt;I'm a bit puzzled why the circuit uses an 8-bit carry-lookahead adder since only 7 bits are used.
-Moreover, the carry-out is unused.
-However, the adder's bottom output bit is not connected to anything.
-Perhaps the 8-bit adder was a standard logic block at Intel and was used as-is.&amp;#160;&lt;a class="footnote-backref" href="#fnref:8bit" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:testing"&gt;
-&lt;p&gt;I probably won't make a separate blog post on the testing circuitry, so I'll put details in this footnote.
-Half of the circuitry in the adder block is used to test the lookup table.
-The reason is that
-a chip such as the Pentium is very difficult to test: if one out of 3.1 million transistors goes bad, how do you detect it?  For a simple processor like the 8080, you can run through the instruction set and be fairly confident that any problem would turn up.
-But with a complex chip, it
-is almost impossible to come up with an instruction sequence that would test every bit of the microcode ROM, every bit of the cache, and so forth.
-Starting with the 386, Intel added circuitry to the processor solely to make testing easier; about 2.7% of the transistors in the 386 were for testing.&lt;/p&gt;
-&lt;p&gt;To test a ROM inside the processor, Intel added circuitry to scan the entire ROM and checksum its contents.
-Specifically, a pseudo-random number generator runs through each address, while another circuit computes a checksum of the ROM output, forming a "signature" word.
-At the end, if the signature word has the right value, the ROM is almost certainly correct.
-But if there is even a single bit error, the checksum will be wrong and the chip will be rejected.
-The pseudo-random numbers and the checksum are both implemented with linear feedback shift registers (LFSR), a shift register along with a few XOR gates to feed the output back to the input.
-For more information on testing circuitry in the 386, see &lt;a href="https://doi.org/10.1109/MDT.1987.295165"&gt;Design and Test of the 80386&lt;/a&gt;,
-written by Pat Gelsinger, who became Intel's CEO years later.
-Even with the test circuitry, 48% of the transistor sites in the 386 were untested.
-The instruction-level test suite to test the remaining circuitry took almost 800,000 clock cycles to run.
-The overhead of the test circuitry was about 10% more transistors in the blocks that were tested.&lt;/p&gt;
-&lt;p&gt;In the Pentium, the circuitry to test the lookup table PLA is just below the 7-bit adder.
-An 11-bit LFSR creates the 11-bit input value to the lookup table.
-A 13-bit LFSR hashes the two-bit quotient result from the PLA, forming a 13-bit checksum.
-The checksum is fed serially to test circuitry elsewhere in the chip, where it is merged with
-other test data and written to a register. If the register is 0 at the end, all the tests pass.
-In particular, if the checksum is correct, you can be 99.99% sure that the lookup table
-is operating as expected.
-The ironic thing is that this test circuit was useless for the FDIV bug: it ensured that the lookup table held the intended values, but the intended values were wrong.&lt;/p&gt;
-&lt;p&gt;Why did Intel generate test addresses with a pseudo-random sequence instead of a sequential
-counter?
-It turns out that a linear feedback shift register (LFSR) is slightly more compact than a
-counter.
-This LFSR trick was also used in a &lt;a href="https://www.righto.com/2017/08/inside-fake-ram-chip-i-found-something.html"&gt;touch-tone chip&lt;/a&gt; and the program counter of the Texas Instruments TMS 1000 microcontroller (1974).
-In the TMS 1000, the program counter steps through the
-program pseudo-randomly rather than sequentially.
-The program is shuffled appropriately in the ROM to counteract the
-sequence, so the program executes as expected and a few transistors are saved.&lt;/p&gt;
-&lt;p&gt;&lt;a class="footnote-backref" href="#fnref:testing" title="Jump back to footnote 3 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;a href="https://static.righto.com/images/pentium-adder/overall-schematic.jpg"&gt;&lt;img alt="Block diagram of the testing circuitry." class="hilite" height="437" src="https://static.righto.com/images/pentium-adder/overall-schematic-w600.jpg" title="Block diagram of the testing circuitry." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Block diagram of the testing circuitry.&lt;/div&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:propagate"&gt;
-&lt;p&gt;The bits &lt;code&gt;1+1&lt;/code&gt; will set &lt;em&gt;generate&lt;/em&gt;, but should &lt;em&gt;propagate&lt;/em&gt; be set too?
-It doesn't make a difference as far as the equations. This adder sets &lt;em&gt;propagate&lt;/em&gt; for &lt;code&gt;1+1&lt;/code&gt; but some
-other adders do not.
-The answer depends on if you use an inclusive-or or exclusive-or gate
-to produce the propagate signal.&amp;#160;&lt;a class="footnote-backref" href="#fnref:propagate" title="Jump back to footnote 4 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:74181"&gt;
-&lt;p&gt;One solution is to implement the carry-lookahead circuit in blocks of four.
-This can be scaled up with 
-a second level of carry-lookahead to provide the carry lookahead across each group of four blocks.
-A third level can provide carry lookahead for groups of four second-level blocks, and so forth.
-This approach requires &lt;em&gt;O(log(N))&lt;/em&gt; levels for N-bit addition.
-This approach is used by the venerable 74181 ALU, a chip used by many minicomputers in the 1970s;
-I reverse-engineered the 74181 &lt;a href="https://www.righto.com/2017/03/inside-vintage-74181-alu-chip-how-it.html"&gt;here&lt;/a&gt;.
-The 74182 chip provides carry lookahead for the higher levels.&amp;#160;&lt;a class="footnote-backref" href="#fnref:74181" title="Jump back to footnote 5 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:pg"&gt;
-&lt;p&gt;I won't go into the mathematics of merging &lt;em&gt;P&lt;/em&gt; and &lt;em&gt;G&lt;/em&gt; signals; see, for example, &lt;a href="https://bpb-us-w2.wpmucdn.com/sites.coecis.cornell.edu/dist/4/81/files/2019/06/4740_lecture21-adder-circuits.pdf#page=14"&gt;Adder Circuits&lt;/a&gt;, &lt;a href="https://pages.hmc.edu/harris/cmosvlsi/4e/lect/lect17.pdf"&gt;Adders&lt;/a&gt;, or
-&lt;a href="https://personal.utdallas.edu/~ivor/ce6305/m4.pdf"&gt;Carry Lookahead Adders&lt;/a&gt; for additional details.
-The important factor is that the carry merge operator is associative (actually a monoid),
-so the sub-ranges can be merged in any order. This flexibility is what allows different algorithms with
-different tradeoffs.&amp;#160;&lt;a class="footnote-backref" href="#fnref:pg" title="Jump back to footnote 6 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:parallel-prefix"&gt;
-&lt;p&gt;The idea behind a prefix adder is that we want to see if there is a carry out of bit 0, bits 0-1, bits 0-2, bits 0-3, 0-4, and so forth. These are all the prefixes of the word. Since the prefixes are computed in parallel,
-it's called a parallel prefix adder.&amp;#160;&lt;a class="footnote-backref" href="#fnref:parallel-prefix" title="Jump back to footnote 7 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-256338700959855937</guid>
-      <pubDate>Sat, 18 Jan 2025 10:19:00 -0800</pubDate>
     </item>
   </channel>
 </rss>
