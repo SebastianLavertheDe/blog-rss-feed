@@ -5,7 +5,148 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Mon, 01 Jun 2026 10:25:31 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 01 Jun 2026 16:43:03 +0000</lastBuildDate>
+    <item>
+      <title>Checking assembly with Z3</title>
+      <link>https://bernsteinbear.com/blog/asm-z3/?utm_source=rss</link>
+      <description>&lt;p&gt;Short post today. New ZJIT contributor dak2 &lt;a href="https://github.com/ruby/ruby/pull/17165"&gt;submitted a
+PR&lt;/a&gt; to fix an overflow bug in fixnum
+division in ZJIT. We did the division fine, but lied about the type of the
+result in the case of dividing &lt;code class="language-plaintext highlighter-rouge"&gt;FIXNUM_MIN&lt;/code&gt; by &lt;code class="language-plaintext highlighter-rouge"&gt;-1&lt;/code&gt;. You can see how this is
+special-cased in CRuby:&lt;/p&gt;
+
+&lt;div class="language-c highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="kr"&gt;inline&lt;/span&gt; &lt;span class="kt"&gt;void&lt;/span&gt;
+&lt;span class="nf"&gt;rb_fix_divmod_fix&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;divp&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;modp&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="c1"&gt;// ...&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;divp&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;divp&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LONG2NUM&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;modp&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;modp&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LONG2FIX&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+    &lt;span class="c1"&gt;// ...&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Since &lt;code class="language-plaintext highlighter-rouge"&gt;-FIXNUM_MIN&lt;/code&gt; (note the negative) does not fit in a fixnum, it gets
+promoted to a bignum. It’s one of two special cases in fixnum division that
+does not produce a fixnum, the other being dividing by zero (which produces an
+error).&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ irb
+irb(main):001&amp;gt; LONG_MAX = 2**63 - 1
+=&amp;gt; 9223372036854775807
+irb(main):002&amp;gt; FIXNUM_MAX = LONG_MAX / 2
+=&amp;gt; 4611686018427387903
+irb(main):003&amp;gt; LONG_MIN = -LONG_MAX - 1
+=&amp;gt; -9223372036854775808
+irb(main):004&amp;gt; FIXNUM_MIN = LONG_MIN / 2
+=&amp;gt; -4611686018427387904
+irb(main):005&amp;gt; (-FIXNUM_MIN) &amp;lt; FIXNUM_MAX
+=&amp;gt; false
+irb(main):006&amp;gt;
+$
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This is due to the numbers being &lt;a href="https://en.wikipedia.org/wiki/Two%27s_complement"&gt;two’s
+complement&lt;/a&gt; and therefore
+having more negative numbers than positive numbers (because of zero).&lt;/p&gt;
+
+&lt;p&gt;dak2’s proposed patch included a branchless test for this &lt;code class="language-plaintext highlighter-rouge"&gt;left == FIXNUM_MIN&lt;/code&gt; and
+&lt;code class="language-plaintext highlighter-rouge"&gt;right == -1&lt;/code&gt; case, making us leave JIT code and enter the interpreter rather
+than handle it inline. The patch encodes this branchless test as &lt;code class="language-plaintext highlighter-rouge"&gt;xor&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;xor&lt;/code&gt;,
+&lt;code class="language-plaintext highlighter-rouge"&gt;or&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;test&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;je&lt;/code&gt; in our platform-independent low-level IR (LIR):&lt;/p&gt;
+
+&lt;div class="language-rust highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;// Side exit on FIXNUM_MIN / -1, which overflows to a Bignum, not a Fixnum.&lt;/span&gt;
+&lt;span class="c1"&gt;// Branchless (left == FIXNUM_MIN &amp;amp;&amp;amp; right == -1): (left ^ MIN) | (right ^ -1) == 0.&lt;/span&gt;
+&lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;left_diff&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.xor&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;left&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;Opnd&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nn"&gt;VALUE&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;fixnum_from_isize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;RUBY_FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;)));&lt;/span&gt;
+&lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;right_diff&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.xor&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;right&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;Opnd&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nn"&gt;VALUE&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;fixnum_from_isize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)));&lt;/span&gt;
+&lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;combined&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.or&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;left_diff&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;right_diff&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.test&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;combined&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;combined&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+&lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.je&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nf"&gt;side_exit&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;FixnumDivOverflow&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;I didn’t understand why those were equivalent. Rather than try and bang my head
+against it, I thought I’d let Z3 try. After all, I’ve been watching &lt;a href="https://pypy.org/posts/2024/08/toy-knownbits.html"&gt;CF have
+fun with it&lt;/a&gt; &lt;a href="https://pypy.org/posts/2024/07/finding-simple-rewrite-rules-jit-z3.html"&gt;for a couple
+years now&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Z3 is an SMT solver. The core trick to use Z3 as a “proof engine” that I
+learned from CF&lt;sup id="fnref:standard" role="doc-noteref"&gt;&lt;a href="#fn:standard" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt; is to make Z3 search for counter-examples by negating the
+condition:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;#!/usr/bin/env python3
+# /// script
+# requires-python = "&amp;gt;=3.13"
+# dependencies = [
+#     "z3-solver",
+# ]
+# ///
+&lt;/span&gt;
+&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;z3&lt;/span&gt;
+
+&lt;span class="n"&gt;WORD_SIZE&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;64&lt;/span&gt;
+&lt;span class="n"&gt;LONG_MAX&lt;/span&gt;   &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;BitVecVal&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="o"&gt;**&lt;/span&gt;&lt;span class="mi"&gt;63&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;WORD_SIZE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;LONG_MIN&lt;/span&gt;   &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;LONG_MAX&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LONG_MIN&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;prove&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cond&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;solver&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Solver&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="n"&gt;solver&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;check&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Not&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cond&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unsat&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;solver&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+&lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;BitVec&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"left"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;WORD_SIZE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;BitVec&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"right"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;WORD_SIZE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# The original C condition
+&lt;/span&gt;&lt;span class="n"&gt;lhs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;And&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# The new branchless LIR
+&lt;/span&gt;&lt;span class="n"&gt;rhs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;^&lt;/span&gt; &lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;^&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;prove&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;lhs&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;rhs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This negation is required because the core model of Z3 is a machine that finds
+example values. This means that there is an implicit “exists” in front of your
+condition. To disprove this, Z3 needs to search all inputs. However, if you
+negate the condition, it becomes a “for all”. This means that in order to
+disprove the “for all”, Z3 only needs to find a single counterexample.&lt;/p&gt;
+
+&lt;div class="language-console highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;uv run prove_fixnum_min.py
+&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Z3 did not complain, so the new code must be fine. Just as a quick check, in
+case &lt;code class="language-plaintext highlighter-rouge"&gt;assert&lt;/code&gt; is turned off or something, I like to see tests fail. So after
+modifying one of the constants from &lt;code class="language-plaintext highlighter-rouge"&gt;-1&lt;/code&gt; to &lt;code class="language-plaintext highlighter-rouge"&gt;0&lt;/code&gt;:&lt;/p&gt;
+
+&lt;div class="language-console highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;uv run prove_fixnum_min.py
+&lt;span class="go"&gt;Traceback (most recent call last):
+&lt;/span&gt;&lt;span class="gp"&gt;  File "/path/prove_fixnum_min.py", line 26, in &amp;lt;module&amp;gt;&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;span class="go"&gt;    prove(lhs == rhs)
+    ~~~~~^^^^^^^^^^^^
+  File "/path/prove_fixnum_min.py", line 18, in prove
+    assert solver.check(z3.Not(cond)) == z3.unsat, solver.model()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: [right = 18446744073709551615, left = 13835058055282163712]
+&lt;/span&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt;
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Neat.&lt;/p&gt;
+
+&lt;h3 id="thanks"&gt;Thanks&lt;/h3&gt;
+
+&lt;p&gt;Thanks to &lt;a href="https://cfbolz.de/"&gt;CF Bolz-Tereick&lt;/a&gt; for reading and giving feedback
+on this post.&lt;/p&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:standard" role="doc-endnote"&gt;
+      &lt;p&gt;They note that this is a “standard technique” and they did not
+come up with it. &lt;a href="#fnref:standard" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/asm-z3/</guid>
+      <pubDate>Mon, 01 Jun 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Travel notes: RubyKaigi Hakodate</title>
       <link>https://bernsteinbear.com/blog/travel-notes-rubykaigi-hakodate/?utm_source=rss</link>
@@ -3192,345 +3333,6 @@ TBAA. I cover it in &lt;a href="/blog/toy-tbaa/"&gt;the next post&lt;/a&gt;. &l
 &lt;/div&gt;
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/toy-load-store/</guid>
-      <pubDate>Wed, 24 Dec 2025 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>ZJIT is now available in Ruby 4.0</title>
-      <link>https://bernsteinbear.com/blog/launch-zjit/?utm_source=rss</link>
-      <description>&lt;p&gt;&lt;em&gt;Originally published on &lt;a href="https://railsatscale.com/2025-12-24-launch-zjit/"&gt;Rails At Scale&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
-
-&lt;p&gt;ZJIT is a new just-in-time (JIT) Ruby compiler built into the reference Ruby
-implementation, &lt;a href="https://en.wikipedia.org/wiki/YARV"&gt;YARV&lt;/a&gt;, by the same compiler group that brought you YJIT.
-We (Aaron Patterson, Aiden Fox Ivey, Alan Wu, Jacob Denbeaux, Kevin Menard, Max
-Bernstein, Maxime Chevalier-Boisvert, Randy Stauner, Stan Lo, and Takashi
-Kokubun) have been working on ZJIT since the beginning of this year.&lt;/p&gt;
-
-&lt;p&gt;In case you missed the last post, we’re building a new compiler for Ruby
-because we want to both raise the performance ceiling (bigger compilation unit
-size and SSA IR) and encourage more outside contribution (by becoming a more
-traditional method compiler).&lt;/p&gt;
-
-&lt;p&gt;It’s been a long time since we gave an official update on ZJIT. Things are
-going well. We’re excited to share our progress with you. We’ve done a lot
-&lt;a href="/blog/merge-zjit/"&gt;since May&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h2 id="in-brief"&gt;In brief&lt;/h2&gt;
-
-&lt;p&gt;ZJIT is compiled by default—but not enabled by default—in Ruby 4.0. Enable
-it by passing the &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit&lt;/code&gt; flag or the &lt;code class="language-plaintext highlighter-rouge"&gt;RUBY_ZJIT_ENABLE&lt;/code&gt; environment variable
-or calling &lt;code class="language-plaintext highlighter-rouge"&gt;RubyVM::ZJIT.enable&lt;/code&gt; after starting your application.&lt;/p&gt;
-
-&lt;p&gt;It’s faster than the interpreter, but not yet as fast as YJIT. &lt;strong&gt;Yet.&lt;/strong&gt; But we
-have a plan, and we have some more specific numbers below. The TL;DR is we have
-a great new foundation and now need to pull out all the Ruby-specific stops to
-match YJIT.&lt;/p&gt;
-
-&lt;p&gt;We encourage you to experiment with ZJIT, but maybe hold off on deploying it in
-production for now. This is a very new compiler. You should expect crashes and
-wild performance degradations (or, perhaps, improvements). Please test locally,
-try to run CI, etc, and let us know what you run into on &lt;a href="https://bugs.ruby-lang.org/projects/ruby-master/issues?set_filter=1&amp;amp;tracker_id=1"&gt;the Ruby issue
-tracker&lt;/a&gt; (or, if you don’t want to make a Ruby Bugs account, we would
-also take reports &lt;a href="https://github.com/Shopify/ruby/issues"&gt;on GitHub&lt;/a&gt;).&lt;/p&gt;
-
-&lt;h2 id="state-of-the-compiler"&gt;State of the compiler&lt;/h2&gt;
-
-&lt;p&gt;To underscore how much has happened since the &lt;a href="/blog/merge-zjit/"&gt;announcement of being merged
-into CRuby&lt;/a&gt;, we present to you a series of comparisons:&lt;/p&gt;
-
-&lt;h3 id="side-exits"&gt;Side-exits&lt;/h3&gt;
-
-&lt;p&gt;Back in May, we could not side-exit from JIT code into the interpreter. This
-meant that the code we were running had to continue to have the same
-preconditions (expected types, no method redefinitions, etc) or the JIT would
-safely abort. &lt;strong&gt;Now,&lt;/strong&gt; we can side-exit and use this feature liberally.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;For example, we gracefully handle the phase transition from integer to string;
-a guard instruction fails and transfers control to the interpreter.&lt;/p&gt;
-
-  &lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;
-  &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-
-&lt;span class="n"&gt;add&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;
-&lt;span class="n"&gt;add&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;
-&lt;span class="n"&gt;add&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;
-&lt;span class="n"&gt;add&lt;/span&gt; &lt;span class="s2"&gt;"three"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;"four"&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;  &lt;/div&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;This enables running a lot more code!&lt;/p&gt;
-
-&lt;h3 id="more-code"&gt;More code&lt;/h3&gt;
-
-&lt;p&gt;Back in May, we could only run a handful of small benchmarks. &lt;strong&gt;Now,&lt;/strong&gt; we can
-run all sorts of code, including passing the full Ruby test suite, the test
-suite and shadow traffic of a large application at Shopify, and the test suite
-of GitHub.com! Also a bank, apparently.&lt;/p&gt;
-
-&lt;p&gt;Back in May, we did not optimize much; we only really optimized operations
-on fixnums (small integers) and method sends to the &lt;code class="language-plaintext highlighter-rouge"&gt;main&lt;/code&gt; object. &lt;strong&gt;Now,&lt;/strong&gt;
-we optimize a lot more: all sorts of method sends, instance variable reads
-and writes, attribute accessor/reader/writer use, struct reads and writes,
-object allocations, certain string operations, optional parameters, and more.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;For example, we can &lt;a href="https://en.wikipedia.org/wiki/Constant_folding"&gt;constant-fold&lt;/a&gt; numeric operations. Because we also have a
-(small, limited) inliner borrowed from YJIT, we can constant-fold the entirety
-of &lt;code class="language-plaintext highlighter-rouge"&gt;add&lt;/code&gt; down to &lt;code class="language-plaintext highlighter-rouge"&gt;3&lt;/code&gt;—and still handle redefinitions of &lt;code class="language-plaintext highlighter-rouge"&gt;one&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;two&lt;/code&gt;,
-&lt;code class="language-plaintext highlighter-rouge"&gt;Integer#+&lt;/code&gt;, …&lt;/p&gt;
-
-  &lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;one&lt;/span&gt;
-  &lt;span class="mi"&gt;1&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-
-&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;two&lt;/span&gt;
-  &lt;span class="mi"&gt;2&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-
-&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add&lt;/span&gt;
-  &lt;span class="n"&gt;one&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;two&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;  &lt;/div&gt;
-&lt;/blockquote&gt;
-
-&lt;h3 id="register-spilling"&gt;Register spilling&lt;/h3&gt;
-
-&lt;p&gt;Back in May, we could not compile many large functions due to limitations of
-our backend that we borrowed from YJIT. &lt;strong&gt;Now,&lt;/strong&gt; we can compile absolutely
-enormous functions just fine. And quickly, too. Though we have not been
-focusing specifically on compiler performance, we compile even large methods in
-under a millisecond.&lt;/p&gt;
-
-&lt;h3 id="c-methods"&gt;C methods&lt;/h3&gt;
-
-&lt;p&gt;Back in May, we could not even optimize calls to built-in C methods. &lt;strong&gt;Now,&lt;/strong&gt;
-we have a feature similar to JavaScriptCore’s DOMJIT, which allows us to emit
-inline HIR versions of certain well-known C methods. This allows the optimizer
-to reason about these methods and their effects (more on this in a future post)
-much more… er, effectively.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;For example, &lt;code class="language-plaintext highlighter-rouge"&gt;Integer#succ&lt;/code&gt;, which is defined as adding &lt;code class="language-plaintext highlighter-rouge"&gt;1&lt;/code&gt; to an integer, is a
-C method. It’s used in &lt;code class="language-plaintext highlighter-rouge"&gt;Integer#times&lt;/code&gt; to drive the &lt;code class="language-plaintext highlighter-rouge"&gt;while&lt;/code&gt; loop. Instead of
-emitting a call to it, our C method “inliner” can emit our existing &lt;code class="language-plaintext highlighter-rouge"&gt;FixnumAdd&lt;/code&gt;
-instruction and take advantage of the rest of the type inference and
-constant-folding.&lt;/p&gt;
-
-  &lt;div class="language-rust highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;inline_integer_succ&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;fun&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt; &lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;Function&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-                       &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;BlockId&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-                       &lt;span class="n"&gt;recv&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;InsnId&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-                       &lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;InsnId&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
-                       &lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;InsnId&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;Option&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;InsnId&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="nf"&gt;.is_empty&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt; &lt;span class="p"&gt;}&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;fun&lt;/span&gt;&lt;span class="nf"&gt;.likely_a&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;recv&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;types&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;Fixnum&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;fun&lt;/span&gt;&lt;span class="nf"&gt;.coerce_to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;recv&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;types&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;Fixnum&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-        &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;fun&lt;/span&gt;&lt;span class="nf"&gt;.push_insn&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nb"&gt;Const&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="n"&gt;val&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;Const&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;Value&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nn"&gt;VALUE&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;fixnum_from_usize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="p"&gt;});&lt;/span&gt;
-        &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;fun&lt;/span&gt;&lt;span class="nf"&gt;.push_insn&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;hir&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nn"&gt;Insn&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="n"&gt;FixnumAdd&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="n"&gt;left&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;right&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;state&lt;/span&gt; &lt;span class="p"&gt;});&lt;/span&gt;
-        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="nf"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;result&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="p"&gt;}&lt;/span&gt;
-    &lt;span class="nb"&gt;None&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;  &lt;/div&gt;
-&lt;/blockquote&gt;
-
-&lt;h3 id="fewer-c-calls"&gt;Fewer C calls&lt;/h3&gt;
-
-&lt;p&gt;Back in May, the machine code ZJIT generated called a lot of C functions from
-the CRuby runtime to implement our HIR instructions in LIR. We have pared this
-down significantly and now “open code” the implementations in LIR.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;For example, &lt;code class="language-plaintext highlighter-rouge"&gt;GuardNotFrozen&lt;/code&gt; used to call out to &lt;code class="language-plaintext highlighter-rouge"&gt;rb_obj_frozen_p&lt;/code&gt;. Now, it
-requires that its input is a heap-allocated object and can instead do a load, a
-test, and a conditional jump.&lt;/p&gt;
-
-  &lt;div class="language-rust highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;gen_guard_not_frozen&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;JITState&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-                        &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt; &lt;span class="n"&gt;Assembler&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-                        &lt;span class="n"&gt;recv&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Opnd&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-                        &lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;FrameState&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;Opnd&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;recv&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;recv&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-    &lt;span class="c1"&gt;// It's a heap object, so check the frozen flag&lt;/span&gt;
-    &lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;flags&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nn"&gt;Opnd&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;mem&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;64&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;recv&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;RUBY_OFFSET_RBASIC_FLAGS&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;
-    &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.test&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;flags&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;RUBY_FL_FREEZE&lt;/span&gt; &lt;span class="k"&gt;as&lt;/span&gt; &lt;span class="nb"&gt;u64&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="nf"&gt;.into&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;
-    &lt;span class="c1"&gt;// Side-exit if frozen&lt;/span&gt;
-    &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.jnz&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nf"&gt;side_exit&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;GuardNotFrozen&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;
-    &lt;span class="n"&gt;recv&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;  &lt;/div&gt;
-&lt;/blockquote&gt;
-
-&lt;h3 id="more-teammates"&gt;More teammates&lt;/h3&gt;
-
-&lt;p&gt;Back in May, we had four people working full-time on the compiler. &lt;strong&gt;Now,&lt;/strong&gt; we
-have more internally at Shopify—and also more from the community! We have
-had several interested people reach out, learn about ZJIT, and successfully
-land complex changes. For this reason, we have opened up &lt;a href="https://zjit.zulipchat.com"&gt;a chat
-room&lt;/a&gt; to discuss and improve ZJIT.&lt;/p&gt;
-
-&lt;h3 id="a-cool-graph-visualization-tool"&gt;A cool graph visualization tool&lt;/h3&gt;
-
-&lt;p&gt;You &lt;em&gt;have to&lt;/em&gt; check out our intern Aiden’s &lt;a href="https://railsatscale.com/2025-11-19-adding-iongraph-support/"&gt;integration of Iongraph into
-ZJIT&lt;/a&gt;. Now we
-have clickable, zoomable, scrollable graphs of all our functions and all our
-optimization passes. It’s great!&lt;/p&gt;
-
-&lt;p&gt;Try zooming (Ctrl-scroll), clicking the different optimization passes on the
-left, clicking the instruction IDs in each basic block (definitions and uses),
-and seeing how the IR for the below Ruby code changes over time.&lt;/p&gt;
-
-&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Point&lt;/span&gt;
-  &lt;span class="nb"&gt;attr_accessor&lt;/span&gt; &lt;span class="ss"&gt;:x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="ss"&gt;:y&lt;/span&gt;
-  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;initialize&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;
-    &lt;span class="vi"&gt;@x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;
-    &lt;span class="vi"&gt;@y&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;
-  &lt;span class="k"&gt;end&lt;/span&gt;
-&lt;span class="k"&gt;end&lt;/span&gt;
-
-&lt;span class="no"&gt;P&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Point&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="nf"&gt;freeze&lt;/span&gt;
-
-&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;test&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;P&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;x&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="no"&gt;P&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;y&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;iframe title="Iongraph Viewer" aria-label="Interactive compiler graph visualization" src="/assets/html/zjit-viewer.html" width="100%" height="400"&gt;&lt;/iframe&gt;
-
-&lt;h3 id="more"&gt;More&lt;/h3&gt;
-
-&lt;p&gt;…and so, so many garbage collection fixes.&lt;/p&gt;
-
-&lt;p&gt;There’s still a lot to do, though.&lt;/p&gt;
-
-&lt;h2 id="to-do"&gt;To do&lt;/h2&gt;
-
-&lt;p&gt;We’re going to optimize &lt;code class="language-plaintext highlighter-rouge"&gt;invokeblock&lt;/code&gt; (&lt;code class="language-plaintext highlighter-rouge"&gt;yield&lt;/code&gt;) and &lt;code class="language-plaintext highlighter-rouge"&gt;invokesuper&lt;/code&gt; (&lt;code class="language-plaintext highlighter-rouge"&gt;super&lt;/code&gt;)
-instructions, each of which behaves similarly, but not identically, to a
-normal &lt;code class="language-plaintext highlighter-rouge"&gt;send&lt;/code&gt; instruction. These are pretty common.&lt;/p&gt;
-
-&lt;p&gt;We’re going to optimize &lt;code class="language-plaintext highlighter-rouge"&gt;setinstancevariable&lt;/code&gt; in the case where we have to
-transition the object’s shape. This will help normal &lt;code class="language-plaintext highlighter-rouge"&gt;@a = b&lt;/code&gt; situations. It
-will also help &lt;code class="language-plaintext highlighter-rouge"&gt;@a ||= b&lt;/code&gt;, but I think we can even do better with the latter
-using some kind of value numbering.&lt;/p&gt;
-
-&lt;p&gt;We only optimize monomorphic calls right now—cases where a method send only
-sees one class of receiver while being profiled. We’re going to optimize
-polymorphic sends, too. Right now we’re laying the groundwork (a new register
-allocator; see below) to make this much easier. It’s not as much of an
-immediate focus, though, because most (high 80s, low 90s percent) of sends are
-monomorphic. &lt;!-- TODO throwback to Smalltalk-80 --&gt;&lt;/p&gt;
-
-&lt;p&gt;We’re in the middle of re-writing the register allocator after reading the
-entire history of linear scan papers and several implementations. That will
-unlock performance improvements and also allow us to make the IRs easier to
-use.&lt;/p&gt;
-
-&lt;p&gt;We don’t handle phase changes particularly well yet; if your method call
-patterns change significantly after your code has been compiled, we will
-frequently side-exit into the interpreter. Instead, we would like to use these
-side-exits as additional profile information and re-compile the function.&lt;/p&gt;
-
-&lt;p&gt;Right now we have a lot of traffic to the VM frame. JIT frame pushes are
-reasonably fast, but with every effectful operation, we have to flush our local
-variable state and stack state to the VM frame. The instances in which code
-might want to read this reified frame state are rare: frame unwinding due to
-exceptions, &lt;code class="language-plaintext highlighter-rouge"&gt;Binding#local_variable_get&lt;/code&gt;, etc. In the future, we will instead
-defer writing this state until it needs to be read.&lt;/p&gt;
-
-&lt;p&gt;We only have a limited inliner that inlines constants, &lt;code class="language-plaintext highlighter-rouge"&gt;self&lt;/code&gt;, and parameters.
-In the fullness of time, we will add a general-purpose method inlining
-facility. This will allow us to reduce the amount of polymorphic sends, do some
-branch folding, and reduce the amount of method sends.&lt;/p&gt;
-
-&lt;p&gt;We only support optimizing positional parameters, required keyword parameters,
-and optional parameters right now but we will work on optimizing optional
-keyword arguments as well. Most of this work is in marshaling the complex
-Ruby calling convention into one coherent form that the JIT can understand.&lt;/p&gt;
-
-&lt;h2 id="performance"&gt;Performance&lt;/h2&gt;
-
-&lt;p&gt;We have public performance numbers for a selection of macro- and
-micro-benchmarks on &lt;a href="https://rubybench.github.io/"&gt;rubybench&lt;/a&gt;. Here is a screenshot of what those
-per-benchmark graphs look like. The Y axis is speedup multiplier vs the
-interpreter and the X axis is time. Higher is better:&lt;/p&gt;
-
-&lt;figure style="margin: 0 auto; max-width: 80%;"&gt;
-  &lt;img src="/assets/img/zjit-benchmark.png" /&gt;
-  &lt;figcaption&gt;A line chart of ZJIT performance on railsbench&amp;mdash;represented as a
-  speedup multiplier when compared to the interpreter&amp;mdash;improving over
-  time, passing interpreter performance, catching up to YJIT.&lt;/figcaption&gt;
-&lt;/figure&gt;
-
-&lt;p&gt;You can see that we are improving performance on nearly all benchmarks over
-time. Some of this comes from from optimizing in a similar way as YJIT does
-today (e.g. specializing ivar reads and writes), and some of it is optimizing
-in a way that takes advantage of ZJIT’s high-level IR (e.g. constant folding,
-branch folding, more precise type inference).&lt;/p&gt;
-
-&lt;p&gt;We are using both raw time numbers and also our internal performance counters
-(e.g. number of calls to C functions from generated code) to drive
-optimization.&lt;/p&gt;
-
-&lt;h2 id="try-it-out"&gt;Try it out&lt;/h2&gt;
-
-&lt;p&gt;While Ruby now ships with ZJIT compiled into the binary by default, it is not
-&lt;em&gt;enabled&lt;/em&gt; by default at run-time. Due to performance and stability, YJIT is
-still the default compiler choice in Ruby 4.0.&lt;/p&gt;
-
-&lt;p&gt;If you want to run your test suite with ZJIT to see what happens, you
-absolutely can. Enable it by passing the &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit&lt;/code&gt; flag or the
-&lt;code class="language-plaintext highlighter-rouge"&gt;RUBY_ZJIT_ENABLE&lt;/code&gt; environment variable or calling &lt;code class="language-plaintext highlighter-rouge"&gt;RubyVM::ZJIT.enable&lt;/code&gt; after
-starting your application.&lt;/p&gt;
-
-&lt;h2 id="on-yjit"&gt;On YJIT&lt;/h2&gt;
-
-&lt;p&gt;We devoted a lot of our resources this year to developing ZJIT. While we did
-not spend much time on YJIT (outside of a great &lt;a href="https://railsatscale.com/2025-05-21-fast-allocations-in-ruby-3-5/"&gt;allocation speed
-up&lt;/a&gt;), YJIT isn’t going anywhere soon.&lt;/p&gt;
-
-&lt;h2 id="thank-you"&gt;Thank you&lt;/h2&gt;
-
-&lt;p&gt;This compiler was made possible by contributions to your &lt;del&gt;PBS station&lt;/del&gt; open
-source project from programmers like you. Thank you!&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;Aaron Patterson&lt;/li&gt;
-  &lt;li&gt;Abrar Habib&lt;/li&gt;
-  &lt;li&gt;Aiden Fox Ivey&lt;/li&gt;
-  &lt;li&gt;Alan Wu&lt;/li&gt;
-  &lt;li&gt;Alex Rocha&lt;/li&gt;
-  &lt;li&gt;André Luiz Tiago Soares&lt;/li&gt;
-  &lt;li&gt;Benoit Daloze&lt;/li&gt;
-  &lt;li&gt;Charlotte Wen&lt;/li&gt;
-  &lt;li&gt;Daniel Colson&lt;/li&gt;
-  &lt;li&gt;Donghee Na&lt;/li&gt;
-  &lt;li&gt;Eileen Uchitelle&lt;/li&gt;
-  &lt;li&gt;Étienne Barrié&lt;/li&gt;
-  &lt;li&gt;Godfrey Chan&lt;/li&gt;
-  &lt;li&gt;Goshanraj Govindaraj&lt;/li&gt;
-  &lt;li&gt;Hiroshi SHIBATA&lt;/li&gt;
-  &lt;li&gt;Hoa Nguyen&lt;/li&gt;
-  &lt;li&gt;Jacob Denbeaux&lt;/li&gt;
-  &lt;li&gt;Jean Boussier&lt;/li&gt;
-  &lt;li&gt;Jeremy Evans&lt;/li&gt;
-  &lt;li&gt;John Hawthorn&lt;/li&gt;
-  &lt;li&gt;Ken Jin&lt;/li&gt;
-  &lt;li&gt;Kevin Menard&lt;/li&gt;
-  &lt;li&gt;Max Bernstein&lt;/li&gt;
-  &lt;li&gt;Max Leopold&lt;/li&gt;
-  &lt;li&gt;Maxime Chevalier-Boisvert&lt;/li&gt;
-  &lt;li&gt;Nobuyoshi Nakada&lt;/li&gt;
-  &lt;li&gt;Peter Zhu&lt;/li&gt;
-  &lt;li&gt;Randy Stauner&lt;/li&gt;
-  &lt;li&gt;Satoshi Tagomori&lt;/li&gt;
-  &lt;li&gt;Shannon Skipper&lt;/li&gt;
-  &lt;li&gt;Stan Lo&lt;/li&gt;
-  &lt;li&gt;Takashi Kokubun&lt;/li&gt;
-  &lt;li&gt;Tavian Barnes&lt;/li&gt;
-  &lt;li&gt;Tobias Lütke&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;(via a lightly touched up &lt;code class="language-plaintext highlighter-rouge"&gt;git log --pretty="%an" zjit | sort -u&lt;/code&gt;)&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/launch-zjit/</guid>
       <pubDate>Wed, 24 Dec 2025 00:00:00 +0000</pubDate>
     </item>
   </channel>
