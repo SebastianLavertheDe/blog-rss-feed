@@ -5,7 +5,211 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 05 Jun 2026 18:05:23 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 05 Jun 2026 20:50:30 +0000</lastBuildDate>
+    <item>
+      <title>JAX backends and devices</title>
+      <link>https://www.gilesthomas.com/2026/06/jax-backends-and-devices</link>
+      <description>&lt;p&gt;There's nothing like writing your own code with a framework to clarify how things
+fit together!  Continuing with my port of my &lt;a href="/llm-from-scratch"&gt;PyTorch LLM code&lt;/a&gt; to
+&lt;a href="https://docs.jax.dev/"&gt;JAX&lt;/a&gt;, I wanted to load up a large dataset:
+the 10,248,871,837 16-bit unsigned integers in the &lt;code&gt;train&lt;/code&gt; split of
+&lt;a href="https://huggingface.co/datasets/gpjt/fineweb-gpt2-tokens"&gt;&lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt;&lt;/a&gt;.
+That's just over 19GiB of data.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;safetensors.flax&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;
+&lt;span class="o"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;full_dataset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dataset_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;When I ran that, I got a CUDA out-of-memory error:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;jax.errors.JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 19.09GiB.&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That makes sense!  The allocation it was trying to do is exactly the size of
+the data I was trying to load.  I have an RTX 3090 with 24 GiB, but some is already used up by
+the OS, various apps, and a model that the code creates earlier on.&lt;/p&gt;
+
+&lt;p&gt;But in PyTorch land, I was used to things being loaded into RAM by default, and only
+moved over to the GPU when I asked it to do that.  JAX was clearly loading to the GPU
+by default.  How could I stop it from doing that for this case?  The load into the GPU
+was happening inside Safetensors, in code I couldn't directly control.&lt;/p&gt;
+
+&lt;p&gt;Understanding how to do it helped me understand a little bit more about JAX.&lt;/p&gt;
+&lt;p&gt;JAX has a function that looks relevant: &lt;code&gt;jax.devices&lt;/code&gt;.
+Without reading the docs, let's try running it.  In my virtualenv, with the &lt;code&gt;jax[cuda13]&lt;/code&gt;
+package installed, I get this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;jax&lt;/span&gt;
+
+&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt;
+&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;CudaDevice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;id&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That seems a bit weird!  I do indeed have a CUDA device, but I also have a CPU, obviously.
+Why isn't it showing up?&lt;/p&gt;
+
+&lt;p&gt;Running the same code in another virtualenv, with just &lt;code&gt;jax&lt;/code&gt; installed -- no CUDA -- gets this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;jax&lt;/span&gt;
+
+&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="n"&gt;An&lt;/span&gt; &lt;span class="n"&gt;NVIDIA&lt;/span&gt; &lt;span class="n"&gt;GPU&lt;/span&gt; &lt;span class="n"&gt;may&lt;/span&gt; &lt;span class="n"&gt;be&lt;/span&gt; &lt;span class="n"&gt;present&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;this&lt;/span&gt; &lt;span class="n"&gt;machine&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;but&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="n"&gt;CUDA&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;enabled&lt;/span&gt; &lt;span class="n"&gt;jaxlib&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="n"&gt;installed&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt; &lt;span class="n"&gt;Falling&lt;/span&gt; &lt;span class="n"&gt;back&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;cpu&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+
+&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt;
+&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;CpuDevice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;id&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;OK, so it &lt;em&gt;did&lt;/em&gt; recognise it this time.  Feels like it might be time to RTFM.&lt;/p&gt;
+
+&lt;p&gt;The &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.devices.html"&gt;&lt;code&gt;jax.devices&lt;/code&gt; docs&lt;/a&gt; explain things
+a bit:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;&lt;code&gt;jax.devices(&lt;/code&gt;&lt;em&gt;&lt;code&gt;backend=None&lt;/code&gt;&lt;/em&gt;&lt;code&gt;)&lt;/code&gt;&lt;/p&gt;
+  
+  &lt;p&gt;Returns a list of all devices for a given backend.&lt;/p&gt;
+  
+  &lt;p&gt;...&lt;/p&gt;
+  
+  &lt;p&gt;If &lt;code&gt;backend&lt;/code&gt; is &lt;code&gt;None&lt;/code&gt;, returns all the devices from the default backend. The
+  default backend is generally &lt;code&gt;'gpu'&lt;/code&gt; or &lt;code&gt;'tpu'&lt;/code&gt; if available, otherwise &lt;code&gt;'cpu'&lt;/code&gt;.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;OK.  So JAX has multiple backends -- named that because they're classes of backend hardware that XLA
+(the compiler behind the JIT) targets.  There is a default one, which is essentially
+going to be the "best" one available given the hardware configuration and the parts of
+JAX that are installed.&lt;/p&gt;
+
+&lt;p&gt;When I had the CUDA version installed, it made the &lt;code&gt;gpu&lt;/code&gt; backend
+default, but when I didn't, it defaulted to &lt;code&gt;cpu&lt;/code&gt; (and warned me).  And because it
+only shows the devices on the default backend, when that was &lt;code&gt;gpu&lt;/code&gt;, I didn't see the CPU.&lt;/p&gt;
+
+&lt;p&gt;However, you can specify which backend you want to use with that &lt;code&gt;backend&lt;/code&gt; parameter, so let's go back to the
+virtualenv with CUDA:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;CpuDevice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;id&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Great!  So is there some way to list which backends are available?
+&lt;a href="https://github.com/jax-ml/jax/issues/6459"&gt;Apparently not&lt;/a&gt; -- the recommended
+way appears to be to try loading devices for the different possibilities, and
+catch &lt;code&gt;RuntimeErrors&lt;/code&gt; to see which ones aren't available.  Yuck.&lt;/p&gt;
+
+&lt;p&gt;But maybe that's not such a big deal.  In PyTorch-land I was very much used to putting
+code like this near the start of my code:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cuda&amp;quot;&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;cuda&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_available&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...then moving models to the device:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and then moving data to the model's device as needed:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nb"&gt;next&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;
+&lt;span class="o"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;inputs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;What I actually wanted was essentially what JAX does -- have everything on the fastest
+device available at all times -- but with specific exceptions.  In particular, the one
+that started off this investigation: how would I put this huge array of training
+data on the CPU's RAM rather than the GPU's VRAM?&lt;/p&gt;
+
+&lt;p&gt;I had a bit of a false start when I spotted that the &lt;code&gt;load_file&lt;/code&gt; function in the
+&lt;a href="https://huggingface.co/docs/safetensors/api/flax"&gt;Safetensors FLAX API&lt;/a&gt; has a &lt;code&gt;backend&lt;/code&gt;
+parameter, but that appears to be more to do with how it loads up the file -- a backend
+in a different sense.  And anyway, &lt;em&gt;backend&lt;/em&gt; is not the right concept in JAX-land, as
+the backend means just something generic like &lt;code&gt;gpu&lt;/code&gt; -- for what we're trying to do, we want
+to load it onto a specific &lt;em&gt;device&lt;/em&gt;.&lt;/p&gt;
+
+&lt;p&gt;After some digging around, I discovered that JAX has a concept of a &lt;em&gt;default device&lt;/em&gt;,
+which is the one used when it doesn't have any
+indication of where to put something.  It makes sense that this will be on the default
+backend -- indeed, it looks like it's essentially "the first device in the list that
+&lt;code&gt;jax.devices&lt;/code&gt; returns for the default backend".&lt;/p&gt;
+
+&lt;p&gt;There is a &lt;code&gt;jax_default_device&lt;/code&gt; config option which
+you can use to set it; you'd &lt;a href="https://docs.jax.dev/en/latest/config_options.html"&gt;normally use&lt;/a&gt; &lt;code&gt;jax.config.update&lt;/code&gt; or an environment
+variable to change it.&lt;/p&gt;
+
+&lt;p&gt;But what if you only want to change it temporarily?  I found &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.default_device.html"&gt;this documentation for
+&lt;code&gt;jax.default_device&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;The docs are more than a little confusing:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;&lt;code&gt;jax.default_device =&lt;/code&gt;&lt;em&gt;&lt;code&gt;&amp;lt;jax._src.config.State object&amp;gt;&lt;/code&gt;&lt;/em&gt;&lt;/p&gt;
+  
+  &lt;p&gt;Context manager for &lt;code&gt;jax_default_device&lt;/code&gt; config option.&lt;/p&gt;
+  
+  &lt;p&gt;Configure the default device for JAX operations. Set to a Device object (e.g.
+  &lt;code&gt;jax.devices("cpu")[0]&lt;/code&gt;) to use that Device as the default device for JAX
+  operations and jit’d function calls (there is no effect on multi-device
+  computations, e.g. pmapped function calls). Set to None to use the system
+  default device.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;That &lt;code&gt;=&lt;/code&gt; near the start tripped me up, as I missed the words "Context manager" just
+below, and the odd &lt;code&gt;State&lt;/code&gt; type, and tried this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="n"&gt;full_dataset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dataset_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I still got the CUDA OOM, though, so I reread the docs, spotted the "context manager" bit,
+swore violently, and tried this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]):&lt;/span&gt;
+    &lt;span class="n"&gt;full_dataset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dataset_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...which works.  It looks like the equals sign in the docs is being used to mean something
+very different to what you'd normally use it for, and they decided not to actually
+document the signature of the context manager.  Heigh ho.  I guess
+&lt;a href="https://www.reddit.com/r/ProgrammerHumor/comments/gv6yhy/documentation_hell/"&gt;documentation is hard&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Still, at least now I have a solution.  And as I said earlier, doc grumbles aside,
+the shape of the code might wind up being a little less fiddly than PyTorch.  The
+default location of things I create is the fastest hardware I have, which is what I want.
+And for the rare exceptions when I don't want to use that, there is a reasonably
+simple (now that I know it) way to say where I want things to go.&lt;/p&gt;
+
+&lt;p&gt;I'll call that a win :-)   The only thing I'll need to remember is that when, in
+my training loop, I want to use subsets of that in-RAM tensor, I'll need to move them
+to the GPU.  &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.device_put.html"&gt;&lt;code&gt;jax.device_put&lt;/code&gt;&lt;/a&gt; looks
+like the right tool for that.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">/2026/06/jax-backends-and-devices</guid>
+      <pubDate>Fri, 05 Jun 2026 19:30:00 +0000</pubDate>
+    </item>
     <item>
       <title>Using Safetensors with Flax</title>
       <link>https://www.gilesthomas.com/2026/06/flax-and-safetensors</link>
@@ -3916,765 +4120,6 @@ space at the start, that's tokens 47034 and 32663 in the GPT-2 tokeniser.&amp;#1
 </description>
       <guid isPermaLink="true">/2026/04/how-an-llm-becomes-more-coherent-over-training</guid>
       <pubDate>Fri, 17 Apr 2026 23:30:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 32k -- Interventions: training a better model locally with gradient accumulation</title>
-      <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation</link>
-      <description>&lt;p&gt;I've been working on a GPT-2-small-style LLM based on
-&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
-I've trained various versions of it in the cloud to
-&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;work out which interventions to the model and training code&lt;/a&gt;
-had the best effects on the loss it gets on a specific test dataset, and now
-I wanted to do a training run locally to match the best of those.
-For that, I wanted to match the batch size I was using for the cloud training
-runs.&lt;/p&gt;
-
-&lt;p&gt;When I first started learning this stuff, batching seemed like a performance
-thing -- with highly parallel systems like GPUs, it generally turned out that you could run
-a batch of (say) two inputs through a model in less than twice the time you could run one, so it made
-sense to batch them up.&lt;/p&gt;
-
-&lt;p&gt;For inference, that is exactly the advantage you get, but when training, it's become increasingly
-clear to me that you can also get an improvement in the quality of the model
-from batching.  The best intuitive model I have is that if you run inputs
-through one-by-one, adjusting parameters after each, then it's easy for the model to
-"overcorrect" each time.  With batches, you get an average set of gradients across
-all of the items -- which smooths things out and stabilises the training.&lt;/p&gt;
-
-&lt;p&gt;Of course, it's possible to overdo it.   As an extreme example, imagine that you
-were somehow able to fit your whole training set into one batch -- then you could
-train by running that single batch through, doing a single backward pass, and then adjusting the parameters
-once.  It's pretty clear that that would not work very well -- just one single update
-of the initially-random parameters.&lt;/p&gt;
-
-&lt;p&gt;When training on my local machine, I could fit a batch of six sequences into my RTX 3090.  I'd found that
-when I moved to cloud machines, it had a very positive effect on the loss I got
-out of the models when I tested them.  From &lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud#the-results"&gt;a quick-and-dirty bit of curve-fitting&lt;/a&gt;,
-I estimated that the optimal batch size for this model, with that training run,
-was somewhere around 97.  Conveniently, that was close to the maximum I could fit
-onto an 8x A100 40 GiB/GPU machine, so I used a batch size of 96 to test the different
-interventions I was trying.&lt;/p&gt;
-
-&lt;p&gt;And when I finally &lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;put all of the interventions that helped with training together&lt;/a&gt;,
-I found (somewhat to my surprise) that their combined effect -- an improvement in
-loss of 0.113765 -- was less than half of the loss improvement of 0.252474 that I had got from
-increasing the batch size.&lt;/p&gt;
-
-&lt;p&gt;What that all made clear was that if I wanted to do a local training run that matched
-the quality of the cloud-trained model, I'd need to not only add on the interventions
-that I'd been testing in detail, but I'd need to match the cloud batch size.  And for
-that, I needed to learn about gradient accumulation.&lt;/p&gt;
-&lt;h3 id="gradient-accumulation-basics"&gt;Gradient accumulation basics&lt;/h3&gt;
-
-&lt;p&gt;Gradient accumulation is pretty much what it sounds like; instead of the normal technique
-of doing a forward pass, working out the loss, getting gradients with a backward pass,
-and then applying them by stepping the optimiser, you do multiple forward-backward phases,
-letting the gradients accumulate, and then do one optimiser step after that.&lt;/p&gt;
-
-&lt;p&gt;When you do that, you're getting the training stabilisation benefits of a larger batch
-size, even though you're not getting the performance boost.  Sounds simple enough,
-and it is, in theory, but implementation got a little more complicated.&lt;/p&gt;
-
-&lt;p&gt;Let's work through it step-by-step.&lt;/p&gt;
-
-&lt;p&gt;To start with, imagine you have a really simple training loop:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-
-    &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-
-    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;zero_grad&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Adding gradient accumulation to that is really simple!&lt;/p&gt;
-
-&lt;p&gt;Let's assume that &lt;code&gt;batched_dataset&lt;/code&gt; has a length divisible by &lt;code&gt;gradient_accumulation_steps&lt;/code&gt;,
-the number of steps we want to run through before we step the optimiser.  As a first (not quite correct)
-cut, you could just do this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;enumerate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-
-    &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;%&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt; &lt;span class="ow"&gt;or&lt;/span&gt; &lt;span class="n"&gt;step&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;zero_grad&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;You can see that we're just stepping the optimiser every &lt;code&gt;gradient_accumulation_steps&lt;/code&gt; steps.
-An alternative way to do it would be with an inner loop:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;dataset_ix&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-&lt;span class="k"&gt;while&lt;/span&gt; &lt;span class="n"&gt;dataset_ix&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;ii&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;dataset_ix&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;=&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-            &lt;span class="k"&gt;break&lt;/span&gt;
-        &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dataset_ix&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-        &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="n"&gt;dataset_ix&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-
-    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;zero_grad&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-    &lt;span class="c1"&gt;# Other stuff&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Which of those is better would depend on the details of the training loop -- in general,
-if you wanted the "other stuff" to be done once per training batch, then you'd want to
-use the first option, whereas if you wanted it to be done once per optimiser step,
-the second would be easier.  As you'll see in a bit, I went for the second one for my
-code.&lt;/p&gt;
-
-&lt;p&gt;However, there's one small correction that we need to do to make either of these properly.  Remember
-that when you calculate loss across a batch -- for example, cross entropy loss like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;functional&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;cross_entropy&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;flatten&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;flatten&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...you're getting the &lt;em&gt;average&lt;/em&gt; loss across the batch, so when you do the backward
-pass, you're getting the average gradients.  By contrast, in the code above, we're
-doing a backward pass on the complete loss at each step, so the gradients that are
-being generated in each backward pass are being added to each other -- you wind up
-with the sum of all of them rather than the average.  So the gradients that the optimizer
-applied would be &lt;code&gt;gradient_accumulation_steps&lt;/code&gt; times larger than they should be --
-it would be as if we'd multiplied the learning rate by that number!&lt;/p&gt;
-
-&lt;p&gt;But that's easy enough to fix.  The average gradients over a number of steps are the sum divided by the
-number of steps, and we can do that division ahead of time just by scaling the loss down.
-Adding that into the first example above:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;enumerate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;logits&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;loss&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;%&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt; &lt;span class="ow"&gt;or&lt;/span&gt; &lt;span class="n"&gt;step&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;batched_dataset&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;zero_grad&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;And that's basically it; with those changes, the original basic training loop
-becomes one that uses gradient accumulation.  The effective batch size is whatever
-the real batch size is, times the number of gradient accumulation steps.&lt;/p&gt;
-
-&lt;h3 id="gradient-accumulation-in-practice"&gt;Gradient accumulation in practice&lt;/h3&gt;
-
-&lt;p&gt;However, the real training loop that I'm using for these experiments is a bit more
-complicated than that simple example.  There's checkpointing, AMP, and -- most importantly
--- it can handle multi-GPU training using DistributedDataParallel.  That made things
-a little bit more complicated.&lt;/p&gt;
-
-&lt;p&gt;The first thing was to look into the way I was selecting the data to train on.  My dataset was already
-in batches, but we had to split those batches up between GPUs.  The solution in the code
-was to work out how many global steps there were -- each global step being one batch
-going through each GPU on the machine -- like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;total_global_steps&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_ds&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;//&lt;/span&gt; &lt;span class="n"&gt;world_size&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;code&gt;world_size&lt;/code&gt;, if you remember from &lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud"&gt;the DDP post&lt;/a&gt;,
-is the number of processes running in a multi-GPU training run -- one per GPU.&lt;/p&gt;
-
-&lt;p&gt;Next, in the training loop, I iterated over the global steps:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;progress_bar&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;tqdm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-    &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;start_global_step&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;total_global_steps&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-    &lt;span class="n"&gt;disable&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;rank&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;global_step&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;progress_bar&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="c1"&gt;# Get the data&lt;/span&gt;
-    &lt;span class="c1"&gt;# Forward and backward pass&lt;/span&gt;
-    &lt;span class="c1"&gt;# Step the optimiser.&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...for each one, getting the appropriate batch out for the specific GPU that was
-running the code:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;train_ds&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;global_step&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;world_size&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;rank&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;code&gt;rank&lt;/code&gt; is a zero-indexed number, unique to each of the per-GPU processes.  So this
-basically split &lt;code&gt;train_ds&lt;/code&gt; into chunks of length &lt;code&gt;world_size&lt;/code&gt;, and then each GPU
-was fed the batch at its &lt;code&gt;rank&lt;/code&gt;'s offset into the chunk.&lt;/p&gt;
-
-&lt;p&gt;I wanted to keep things shaped such that when I was running with gradient accumulation
-locally, it would be similar to a cloud run with per-GPU batching.  Specifically: when
-I was training in the cloud, I had eight GPUs with a per-GPU microbatch size of 12, giving
-a total batch size of 96.  Locally, I could fit a batch size of six on my GPU, so I needed
-to do gradient accumulation over 96 / 6 = 16 steps.&lt;/p&gt;
-
-&lt;p&gt;To keep things as similar as possible, I decided that I wanted the concept of a
-"global step" to match between the runs.  In other words, it would expand slightly,
-from meaning "one batch per GPU" to being "one optimiser step per GPU".
-So, each time through that &lt;code&gt;global_step&lt;/code&gt; loop, we'd do multiple forward-backward
-passes, and then one optimiser step.  That would mean that the best way to do things
-would be with something much more like the second of the two bits of sample code
-above -- the one with the inner loop rather than the modulus.&lt;/p&gt;
-
-&lt;p&gt;Maybe that's easier to show in code:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;total_global_steps&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_ds&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;//&lt;/span&gt; &lt;span class="n"&gt;world_size&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;//&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;
-
-&lt;span class="o"&gt;...&lt;/span&gt;
-
-&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;global_step&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;progress_bar&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="o"&gt;...&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;accumulation_step&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-        &lt;span class="c1"&gt;# Forward and backward passes&lt;/span&gt;
-        &lt;span class="o"&gt;...&lt;/span&gt;
-
-    &lt;span class="c1"&gt;# Step the optimiser&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That required a change to the data lookup; I decided that &lt;code&gt;train_ds&lt;/code&gt; would be split
-into chunks of size &lt;code&gt;gradient_accumulation_steps * world_size&lt;/code&gt;, and then each of those
-would be split into chunks of size &lt;code&gt;world_size&lt;/code&gt;, so the code to get the appropriate
-batch for a given run through the loop became this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;train_ds&lt;/span&gt;&lt;span class="p"&gt;[((&lt;/span&gt;&lt;span class="n"&gt;global_step&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;accumulation_step&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;world_size&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;rank&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That required a corresponding change in &lt;code&gt;load_dataset&lt;/code&gt; to make sure that &lt;code&gt;train_ds&lt;/code&gt; was
-divisible by both the world size, the per-GPU batch ("microbatch") size, and the number of gradient accumulation steps, but that was easy:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;one_full_batch_tokens&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;world_size&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;microbatch_size&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;seq_length&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...became this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;one_full_batch_tokens&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;world_size&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;microbatch_size&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;seq_length&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That was enough to get the gradient accumulation happening!  Next, I needed to change
-the backward pass code to scale down the loss so that we got averaged rather than summed
-gradients.  Because we might be using AMP with a scaler, the code wasn't just a simple
-&lt;code&gt;loss.backward&lt;/code&gt;:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;scaler&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="n"&gt;train_loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...but the change was obvious enough:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;scaler&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;All of those changes put together, plus a bit of shuffling around of code,
-were enough to get a correct gradient accumulation
-training loop!  But there was one small tweak I needed to add.&lt;/p&gt;
-
-&lt;p&gt;When you're using DDP, gradients need to be synchronised between the different
-per-GPU processes.  As a reminder, what happens is:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Each process does a forward pass.&lt;/li&gt;
-&lt;li&gt;Each process does a backward pass.&lt;/li&gt;
-&lt;li&gt;When they have the gradients, they essentially share them so that each process has
-an average of the gradients from all of those backward passes.&lt;/li&gt;
-&lt;li&gt;Then they all step their optimisers to apply the average gradients to each process's
-copy of the model.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;Now, with my first cut of the gradient accumulation code above, what would have happened is this:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;For each gradient accumulation step:
-&lt;ul&gt;
-&lt;li&gt;Each process does a forward pass.&lt;/li&gt;
-&lt;li&gt;Each process does a backward pass.&lt;/li&gt;
-&lt;li&gt;The average is worked out&lt;/li&gt;
-&lt;/ul&gt;&lt;/li&gt;
-&lt;li&gt;They all step their optimisers based on the most recent average&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;That would be correct, but not very efficient.  We're sending out gradients and
-averaging on every accumulation step.  But because each of our per-GPU processes
-is keeping its own "local" average (by accumulating the scaled-down gradients), we only
-really need to send those local averages out and get a global average once, just before we step
-the optimiser.  If we do that, we can save quite a lot of work.&lt;/p&gt;
-
-&lt;p&gt;The trick to avoid that was to use the method &lt;code&gt;no_sync&lt;/code&gt; on the &lt;code&gt;DistributedDataParallel&lt;/code&gt; class
-that our own model is wrapped in.  What we wanted to do was suppress the gradient
-synchronisation for each of the accumulation steps apart from the last one.&lt;/p&gt;
-
-&lt;p&gt;It was easy to work out whether we were on the last gradient accumulation step:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;is_last&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;accumulation_step&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Now, what we needed to do was to wrap this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;scaler&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...in &lt;code&gt;model.no_sync&lt;/code&gt;, but &lt;em&gt;only if&lt;/em&gt; &lt;code&gt;is_last&lt;/code&gt; was false.&lt;/p&gt;
-
-&lt;p&gt;Conditional &lt;code&gt;with&lt;/code&gt; statements can be a little fiddly, but Python has a "do-nothing"
-&lt;a href="https://docs.python.org/3/library/contextlib.html#contextlib.nullcontext"&gt;&lt;code&gt;nullcontext&lt;/code&gt; context manager in &lt;code&gt;contextlib&lt;/code&gt;&lt;/a&gt; -- that is,&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;nullcontext&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
-    &lt;span class="n"&gt;do_something&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...is identical to just:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;do_something&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So we can combine that with the ternary operator like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;no_sync&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="n"&gt;is_last&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="n"&gt;nullcontext&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;scaler&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;scaler&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loss&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;gradient_accumulation_steps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...which does exactly what we want &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
-
-&lt;p&gt;With that change, I had something I was happy with; you can
-&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/c5d860e29848287abd2c1f9af11a8b849d260aba"&gt;see the diff here&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;So now it was time to do a training run!&lt;/p&gt;
-
-&lt;h3 id="the-new-local-baseline"&gt;The new local baseline&lt;/h3&gt;
-
-&lt;p&gt;I'd originally been planning to jump right in and do a training run based on my
-&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;last cloud run&lt;/a&gt;,
-with all of the interventions I'd decided were worth using, but locally with
-gradient accumulation.&lt;/p&gt;
-
-&lt;p&gt;However, I decided that it would be interesting to try doing a new "baseline" train
-first.  I'd done my local training runs, and then established a baseline version in
-the cloud by taking exactly the same configuration and doing the training run on
-an 8x A100 40 GiB with an overall batch size of 96.  So I could repeat that locally
-with gradient accumulation, and that would show two things (or perhaps, the same
-thing but in different lights):&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Whether the increased effective batch size had as positive an effect on the loss
-as the increased real batch size did when I did my cloud runs.&lt;/li&gt;
-&lt;li&gt;Whether the locally-trained gradient accumulation model was similar to the cloud-trained
-big-batch model in terms of its loss.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;That would help confirm my understanding that it was the
-increased batch size that helped in the cloud, and not, say, some architectural difference -- and would also act as a good test
-of the gradient accumulation code.&lt;/p&gt;
-
-&lt;p&gt;Here's &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/main/runs/1xrtx3090-baseline"&gt;the training run config&lt;/a&gt;.
-I kicked it off:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;torchrun&lt;span class="w"&gt; &lt;/span&gt;--nproc_per_node&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;ddp_train.py&lt;span class="w"&gt; &lt;/span&gt;1xrtx3090-baseline&lt;span class="w"&gt; &lt;/span&gt;datasets/
-Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;810&lt;/span&gt;.65it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Starting&lt;span class="w"&gt; &lt;/span&gt;rank&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;training&lt;span class="w"&gt; &lt;/span&gt;at&lt;span class="w"&gt; &lt;/span&gt;global&lt;span class="w"&gt; &lt;/span&gt;step&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                                  &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:04&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.991,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;,451&lt;span class="o"&gt;]&lt;/span&gt;
-
-
-Checkpoint
-
-Continuing&lt;span class="w"&gt; &lt;/span&gt;training
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                       &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;23&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;01&lt;/span&gt;:50&amp;lt;&lt;span class="m"&gt;43&lt;/span&gt;:29:50,&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;.72s/it,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;7&lt;/span&gt;.625,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;,549&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That looked like the right number of global steps; it matched the numbers I saw when
-training in the cloud.  And 44 hours for the training run seemed correct: my original
-local runs took 48, but with them I was spending quite a lot of time on validation,
-which this code didn't do.&lt;/p&gt;
-
-&lt;p&gt;Just less than two days later:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Training complete in 155,402.289 seconds
-Tokens seen: 3,260,252,160
-Throughput: 20,979 tokens/second
-Final train loss: 3.738
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;That all looked good.  The loss chart looked like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation/baseline-loss-chart.png" alt="The loss chart for the local baseline train" title="The loss chart for the local baseline train" /&gt;&lt;/p&gt;
-
-&lt;p&gt;For comparison, here's the one from the cloud training run with the same config
-(but using larger batches rather than gradient accumulation):&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32a-interventions-baseline-model/baseline-training-run-chart.png" alt="Baseline training run on an 8x A100 with 40 GiB/GPU" title="Baseline training run on an 8x A100 with 40 GiB/GPU" /&gt;&lt;/p&gt;
-
-&lt;p&gt;You can see that they're similar, but not identical.  That's pretty much what you'd expect!
-The two training runs were on different architectures -- RTX 3090 vs A100 -- and so there
-will probably be differences in the CUDA kernels, and also PyTorch's AMP (which uses
-16-bit instead of 32-bit in cases where it makes sense) might make different decisions.
-I think that if we'd run it on a machine with one A100, then the results of using gradient accumulation
-would be even closer (perhaps even identical) to a larger batch size, especially if we
-were training without AMP.&lt;/p&gt;
-
-&lt;p&gt;I &lt;a href="https://huggingface.co/gpjt/1xrtx3090-baseline"&gt;uploaded the model to Hugging Face&lt;/a&gt; and it
-was time for the evals.  The smoke test first:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you to a more realistic approach and is always welcome, especially for a younger child!
-I’
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;As usual, reasonably coherent.  But the important one was the loss on the test set:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Loss against our test dataset: 3.683835
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;That's solid!  The cloud-trained baseline model got 3.691526, so this local one was
-actually very slightly better, by 0.007691.  But that's very close indeed, which is
-what we wanted to see :-)&lt;/p&gt;
-
-&lt;p&gt;It was time to see what effect adding on the interventions would have.&lt;/p&gt;
-
-&lt;h3 id="the-local-run-with-the-interventions"&gt;The local run with the interventions&lt;/h3&gt;
-
-&lt;p&gt;As a reminder, here are the changes I made to the config for this run:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Gradient clipping at 3.5&lt;/li&gt;
-&lt;li&gt;Learning rate changed from 0.0004 to 0.0014, with a warmup over 5% of the run then a cosine decay to 0.00014.&lt;/li&gt;
-&lt;li&gt;Weight decay changed from 0.1 to 0.01&lt;/li&gt;
-&lt;li&gt;Dropout removed&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;It did not include QKV bias.&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/main/runs/1xrtx3090-stacked-interventions"&gt;Here's the config&lt;/a&gt;.
-I kicked it off, and:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;torchrun&lt;span class="w"&gt; &lt;/span&gt;--nproc_per_node&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;ddp_train.py&lt;span class="w"&gt; &lt;/span&gt;1xrtx3090-stacked-interventions&lt;span class="w"&gt; &lt;/span&gt;datasets
-Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;749&lt;/span&gt;.32it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Starting&lt;span class="w"&gt; &lt;/span&gt;rank&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;training&lt;span class="w"&gt; &lt;/span&gt;at&lt;span class="w"&gt; &lt;/span&gt;global&lt;span class="w"&gt; &lt;/span&gt;step&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                                  &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:04&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.994,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;,589&lt;span class="o"&gt;]&lt;/span&gt;
-
-
-Checkpoint
-
-Continuing&lt;span class="w"&gt; &lt;/span&gt;training
-&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                      &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;01&lt;/span&gt;:25&amp;lt;&lt;span class="m"&gt;40&lt;/span&gt;:52:06,&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;.44s/it,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.318,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;,867&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;It looked like it was going to take 40 hours; that matched what happened in the cloud
-runs, as removing dropout speeds things up quite a lot.&lt;/p&gt;
-
-&lt;p&gt;Just less than two days later:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Training complete in 146,299.816 seconds
-Tokens seen: 3,260,252,160
-Throughput: 22,285 tokens/second
-Final train loss: 3.519
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;The loss chart over the training run looked like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation/interventions-loss-chart.png" alt="The loss chart for the local interventions train" title="The loss chart for the local interventions train" /&gt;&lt;/p&gt;
-
-&lt;p&gt;That's very smooth, with no loss spikes.  For comparison, here's the chart when we did the same training run in the cloud;
-you can see that it was a bit choppier than the local one.&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-1-loss-chart.png" alt="The loss chart for the cloud interventions run" title="The loss chart for the cloud interventions run" /&gt;&lt;/p&gt;
-
-&lt;p&gt;The gradient norm chart was also interesting:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation/interventions-grad-norm-chart.png" alt="The gradient norm chart for the local interventions train" title="The gradient norm chart for the local interventions train" /&gt;&lt;/p&gt;
-
-&lt;p&gt;If you compare it to the one from the cloud training run below, you can see that
-the local one was actually noisier -- the cloud run has a few gradient spikes near
-the start but calms down from around global step 6,000 or so, whereas the local one is
-spiky up to about 3,000, then calm, but has a massive spike at around 10,000.&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud/stacked-interventions-1-grad-norm-chart.png" alt="The gradient norm chart for the cloud interventions run" title="The gradient norm chart for the cloud interventions run" /&gt;&lt;/p&gt;
-
-&lt;p&gt;The learning rate we don't need to compare, but it was worth sanity checking to make sure
-we really did train the right way:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation/interventions-learning-rate-chart.png" alt="The learning rate chart for the local interventions train" title="The learning rate chart for the local interventions train" /&gt;&lt;/p&gt;
-
-&lt;p&gt;So that all looked good.  The training run did have some differences to the cloud one,
-but (as with the previous baseline train) it looked similar enough.  Architectural
-differences between the A100s in the cloud and the local RTX 3090 seemed like a plausible
-cause.&lt;/p&gt;
-
-&lt;h3 id="evals"&gt;Evals&lt;/h3&gt;
-
-&lt;p&gt;I &lt;a href="https://huggingface.co/gpjt/1xrtx3090-stacked-interventions"&gt;uploaded the model to Hugging Face&lt;/a&gt;,
-and it was time to run the evals.  The smoke test first:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you to give your customers the opportunity you give them in the event of a failure.&amp;lt;|endoftext|&amp;gt;A couple friends
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Reasonably coherent -- and I think that's the first time I've seen an &lt;code&gt;&amp;lt;|endoftext|&amp;gt;&lt;/code&gt; token
-in a smoke test output!  But the important one is, as ever, the loss, and:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Loss against our test dataset: 3.538161
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Let's add both this one and the local baseline to the results table for all interventions:&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test set loss&lt;/th&gt;
-  &lt;th&gt;Improvement vs baseline&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;8xa100m40-weight-tying&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.874305&lt;/td&gt;
-  &lt;td&gt;-0.182779&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;8xa100m40-weight-decay-cerebras&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.813856&lt;/td&gt;
-  &lt;td&gt;-0.122330&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;8xa100m40-baseline&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.691526&lt;/td&gt;
-  &lt;td&gt;-&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation"&gt;1xrtx3090-baseline&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.683835&lt;/td&gt;
-  &lt;td&gt;0.007691&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;8xa100m80-no-amp&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.678968&lt;/td&gt;
-  &lt;td&gt;0.012558&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;8xa100m40-gradient-clipping&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.678317&lt;/td&gt;
-  &lt;td&gt;0.013209&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;8xa100m40-qkv-bias&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.669385&lt;/td&gt;
-  &lt;td&gt;0.022141&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;8xa100m40-weight-decay-gpt2&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.642940&lt;/td&gt;
-  &lt;td&gt;0.048586&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;8xa100m40-remove-dropout&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.641282&lt;/td&gt;
-  &lt;td&gt;0.050244&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;8xa100m40-stacked-interventions-2&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.604342&lt;/td&gt;
-  &lt;td&gt;0.087184&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/03/llm-from-scratch-32e-interventions-learning-rate"&gt;8xa100m40-schedule-learning-rate&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.601917&lt;/td&gt;
-  &lt;td&gt;0.089609&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;8xa100m40-stacked-interventions-3&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.590266&lt;/td&gt;
-  &lt;td&gt;0.101260&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;8xa100m40-stacked-interventions-1&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.577761&lt;/td&gt;
-  &lt;td&gt;0.113765&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;a href="/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation"&gt;1xrtx3090-stacked-interventions&lt;/a&gt;&lt;/td&gt;
-  &lt;td&gt;3.538161&lt;/td&gt;
-  &lt;td&gt;0.153365&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;That's really weird!  The local run with the interventions, &lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;,
-is 0.039600 points better than the cloud version of the
-same training run, &lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;.  That's nice, in that lower loss is always better, but it's also
-rather confusing -- that's a bigger loss improvement than some of the interventions.&lt;/p&gt;
-
-&lt;p&gt;In theory, all that we changed between the cloud version of this training run,
-and the local one
-was the architecture.  I was expecting that to have an effect, but thought that
-it would be small -- as, indeed, it was with the baseline trains &lt;code&gt;8xa100m40-baseline&lt;/code&gt;
-and &lt;code&gt;1xrtx3090-baseline&lt;/code&gt;, where you can see the loss difference was just 0.007691 --
-about five times smaller.&lt;/p&gt;
-
-&lt;p&gt;Now, when I was looking into
-&lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;the effects of noise on training loss&lt;/a&gt;,
-I found that changing the random seed that was used to initialise the weights (but starting
-the training run itself at the same random seed) had
-a much bigger effect on the resulting model quality than keeping the weights identical
-but varying the seed at the start of the post-initialisation phase of the training run.
-The standard deviation of the varied-weights, same-train models was about double the SD of the
-same-weights, varied-train.&lt;/p&gt;
-
-&lt;p&gt;That was interesting, though not directly comparable -- those tests were done with
-the same training run, but the architecture held constant -- a 8x A100 40 GiB machine
-for each test.&lt;/p&gt;
-
-&lt;p&gt;However, it felt like it would be a good idea to at least see whether we started with
-the same weights locally and when training in the cloud.  My suspicion was that we probably
-would; the weight initialisation uses deterministic non-GPU code, so with the same seed
-we'd expect the same weights regardless of the computer.  The similarity of the loss
-results for the local and cloud baseline training runs also seemed to point in that
-direction.&lt;/p&gt;
-
-&lt;p&gt;But it was worth testing.  I created a throwaway branch of the training code, which
--- after creating the model --
-just dumped the model weights to a file, then exited.
-I ran it locally using
-the &lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt; config, and
-then I fired up yet another 8x A100 40 GiB machine on Lambda, ran the same code there,
-this time with the &lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt; config, and
-then &lt;code&gt;scp&lt;/code&gt;ed down the weights.&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;dump-weights&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;diff&lt;span class="w"&gt; &lt;/span&gt;cloud-init-weights.safetensors&lt;span class="w"&gt; &lt;/span&gt;local-init-weights.safetensors
-giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;dump-weights&lt;span class="o"&gt;)&lt;/span&gt;$
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Identical.  That was reassuring!&lt;/p&gt;
-
-&lt;p&gt;I considered doing more analysis on this; for example, in my investigations into noise,
-I found that keeping the same weights but altering the random seed for the rest of the
-training run, I got results with a standard deviation of 0.008672 -- more than four times
-smaller than the difference between the local and cloud trains with the interventions.
-Might that be a number I could use for some kind of comparison?&lt;/p&gt;
-
-&lt;p&gt;However, I decided that it's not really comparable.  That number was from varying the random seed, but
-keeping the same architecture.  There's not really any solid reason to believe that
-keeping the seed constant but changing the architecture would cause the same kind of differences.
-They might be more similar, they might be less.&lt;/p&gt;
-
-&lt;p&gt;I think that all we can really say here is that the change of machine changed some
-aspects of the training dynamics in a way that happened to get us a lower loss.  I
-can easily imagine that if I'd done something slightly different -- used a local
-RTX 4090, for example -- it could equally well have gone in the other direction.&lt;/p&gt;
-
-&lt;p&gt;And at least it's reassuring that the improvement was smaller than the
-interventions I was most convinced by; the only smaller ones were full-fat float32, gradient clipping, and
-QKV bias -- ones that I'd already decided might have only been beneficial due to noise.
-Most importantly, it was orders of magnitude smaller than the 0.252474 improvement
-I originally saw when I moved from local training to larger-batch cloud training.&lt;/p&gt;
-
-&lt;h3 id="conclusion"&gt;Conclusion&lt;/h3&gt;
-
-&lt;p&gt;So, I think that that brings me to the end of this set of training experiments.
-We started with a locally-trained model that got a loss of 3.943522 on our test set,
-compared to the original GPT-2 small model, which got 3.499677 &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
-
-&lt;p&gt;I've tried a bunch of interventions to try to get my model closer, and finally I've
-managed to get almost all of the way there, to 3.538161.  That's really pleasing!&lt;/p&gt;
-
-&lt;p&gt;I think that there are two things to do before I can fully wrap up this "interventions"
-mini-series, and get back to the main-line LLM from scratch stuff.&lt;/p&gt;
-
-&lt;p&gt;Firstly, I should
-revisit the instruction fine-tuning tests, which I put on hold while doing these
-training runs.  That would give us some indication as to whether the loss improvement was just a technical improvement
-that made a number go down, or whether it actually improved the usefulness of the model.&lt;/p&gt;
-
-&lt;p&gt;Secondly, I think I really need to write a wrap-up.  I've been working on this stuff
-on and off since December, and I think a summary of what I did would be quite nice!&lt;/p&gt;
-
-&lt;p&gt;I'll post soon; don't touch that dial :-)&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;Thanks to &lt;a href="https://stackoverflow.com/a/34798330"&gt;this Stack Overflow answer&lt;/a&gt; for that trick.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-2"&gt;
-&lt;p&gt;I'm going to switch to six decimal places from now on -- previously I was
-rounding it to three, hence 3.500.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation</guid>
-      <pubDate>Wed, 15 Apr 2026 20:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
