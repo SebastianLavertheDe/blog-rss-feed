@@ -9,7 +9,38 @@ http://antirez.com
 </link>
     <description>Description pending</description>
     <language>en</language>
-    <lastBuildDate>Sun, 07 Jun 2026 09:21:03 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 07 Jun 2026 11:53:00 +0000</lastBuildDate>
+    <item>
+      <title>
+A new era for software testing
+</title>
+      <link>
+http://antirez.com/news/168
+</link>
+      <description>Automatic programming dramatically speeds up writing software in certain use cases and in the right hands. In my experience the output does not reach the structural quality and economy of complexity of the best hand-written software. However, not all the software is stellar, and my feeling is that automatic programming surpasses most of the times (and if well managed) the quality of decently developed hand-written code.
+&lt;br&gt;
+&lt;br&gt;Yet, there is a tradeoff between quality and time, in the case of writing new software with AI. This tradeoff in certain projects I developed can be brutal, that is, completing projects that may take many months in a few weeks. However, there are domains where LLMs simply open new strictly more powerful ways to automate processes, without any compromise on quality. One of those domains is software QA and testing.
+&lt;br&gt;
+&lt;br&gt;Traditionally software is tested using test suites that are composed of locally-scoped tests and integration tests (think of Redis: one thing is testing if SET foo 10 will be matched by GET foo =&gt; 10, another thing is testing if replication works in this case). And then by QA passes that are usually manually executed, and that can capture holes in the runnable test suite. It is a known fact that covering all the lines of the code does not mean covering all the possible states. Moreover integration testing is structurally hard: there are a number of timing issues, setups, and certain quality outputs that can only be visually inspected and not automatically checked that leave a lot of testing opportunities not really exploited because of time or logistic constraints.
+&lt;br&gt;
+&lt;br&gt;LLMs offer a new way to do QA on top of the existing testing methodologies. The idea is to create a markdown file where an AI agent is asked to work as a QA engineer, performing a number of manual testings on the new release. For instance, in the case of DwarfStar (an inference engine for open weights LLMs) I use the following approach. In the markdown file, the agent is asked to check what are the new commits on top of the already released version of the software project. Then the model is told a list of things that should be performed, like:
+&lt;br&gt;
+&lt;br&gt;- Check that distributed inference works across MacBook A and MacBook B, making sure the output is coherent, the inference works with all the GGUF files we have in both the machines, ...
+&lt;br&gt;- Make sure this release does not contain any speed regression.
+&lt;br&gt;
+&lt;br&gt;And so forth. Notably, in the speed regression part, I don't have to tell the agent what was the previous expected speed, as this is a moving target that changes with new releases and new optimizations. Similarly the integration test for distributed inference does not require many instructions, at the start of the file there are just SSH endpoints and the key to use, the paths, and so forth.
+&lt;br&gt;
+&lt;br&gt;The agent is asked to check the long list of QA activities *especially* in light of the added commits, starting with an inspection of the changes and with the identification of what could be affected, so that the QA pass specializes trying to find specific regressions.
+&lt;br&gt;
+&lt;br&gt;In the case of Redis Arrays, I used a similar methodology asking the agent to build a large array-based Redis application, to setup a production environment with replication and persistency, to simulate the usage of the application for days and with many users, checking if something was odd.
+&lt;br&gt;
+&lt;br&gt;Testing that uses these approaches may also move in the more psychological side of software quality, asking the agent to identify all the new features that may look surprising, not documented enough, or generally sloppy from the POV of the user. All things that needed to be executed manually before, and that most of the times were mostly skipped.
+&lt;br&gt;
+&lt;br&gt;I have the feeling that the introduction of automatic QA may raise the bar of quality for new releases of software, and maybe partially compensate for the lower quality of the code produced at high speed with the use of automatic programming.
+&lt;a href="http://antirez.com/news/168"&gt;Comments&lt;/a&gt;</description>
+      <guid isPermaLink="true">http://antirez.com/news/168</guid>
+      <pubDate>Sun, 07 Jun 2026 11:46:06 +0200</pubDate>
+    </item>
     <item>
       <title>
 Distributing LLM inference in DwarfStar
@@ -7521,35 +7552,6 @@ http://antirez.com/news/69
 &lt;a href="http://antirez.com/news/69"&gt;Comments&lt;/a&gt;</description>
       <guid isPermaLink="true">http://antirez.com/news/69</guid>
       <pubDate>Wed, 18 Dec 2013 16:32:21 +0100</pubDate>
-    </item>
-    <item>
-      <title>
-Redis as AP system, reloaded
-</title>
-      <link>
-http://antirez.com/news/68
-</link>
-      <description>So finally something really good happened from the Redis criticism thread.
-&lt;br&gt;
-&lt;br&gt;At the end of the work day I was reading about Redis as AP and merge operations on Twitter. At the same time I was having a private email exchange with Alexis Richardson (from RabbitMQ, and, my boss). Alexis at some point proposed that perhaps a way to improve safety was to asynchronously ACK the client about what commands actually were not received so that the client could retry. This seemed a lot of efforts in the client side, but somewhat totally opened my view on the matter.
-&lt;br&gt;
-&lt;br&gt;So the idea is, we can't go for synchronous replication, but indeed we get ACKs from the replicas, asynchronous ACKS, specifically.
-&lt;br&gt;What about retaining all the writes not acknowledged into a buffer, and "re-play" them to the current master when the partition heals?
-&lt;br&gt;The window we need to require to take the log is very small if the ACKs are frequent enough (currently the frequency is 1 per second, but this could be more easily).
-&lt;br&gt;If we give up Availability after N times the window we can say, ok, no more room, we now start to reply with errors to queries.
-&lt;br&gt;
-&lt;br&gt;The HUGE difference with this approach is that this works regardless of the size of values. There are also semantical differences since the stream of operations is preserved instead of the value itself, so there is more context. Think for example about INCR.
-&lt;br&gt;
-&lt;br&gt;Of course this would not work for anything, but one could mark in the command table what command to reply and what to discard. SADD is an example of perfect command since the order of operations does not matter. DEL is likely something to avoid replying. And so forth. In turn if we reply against the wrong (stale) master, it will accumulate the commands and so forth. Details may vary, but this is the first thing that really makes a difference.
-&lt;br&gt;
-&lt;br&gt;Probably many of you that are into eventually consistent databases know about the log VS merge strategies already, but I had to re-invent the wheel as I was not aware. This is the kind of feedback I expected in the Redis thread that I did not received.
-&lt;br&gt;
-&lt;br&gt;Another cool thing about this approach is that it's pretty opt-in, it can be just a state in the connection. Send a command and the connection is of "safe" type, so all the commands sent will be retained and replayed if not acknowledged, and so forth.
-&lt;br&gt;
-&lt;br&gt;This is not going to be in the first version of Redis Cluster as I'm more happy to ship ASAP the current design, but it is a solid incremental idea that could be applied later, so a little actual result into the evolution of the design.
-&lt;a href="http://antirez.com/news/68"&gt;Comments&lt;/a&gt;</description>
-      <guid isPermaLink="true">http://antirez.com/news/68</guid>
-      <pubDate>Wed, 11 Dec 2013 22:19:21 +0100</pubDate>
     </item>
   </channel>
 </rss>
