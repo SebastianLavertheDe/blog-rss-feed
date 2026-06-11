@@ -5,7 +5,20 @@
     <link>https://www.lesswrong.com</link>
     <description>A community blog devoted to refining the art of rationality</description>
     <language>en</language>
-    <lastBuildDate>Thu, 11 Jun 2026 14:42:28 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 11 Jun 2026 18:19:22 +0000</lastBuildDate>
+    <item>
+      <title>Failing to Ragebait the New Gemma</title>
+      <link>https://www.lesswrong.com/posts/FZfY9wEZwEuqQ5ytv/failing-to-ragebait-the-new-gemma</link>
+      <description>&lt;p&gt;&lt;i&gt;&lt;span&gt;This was work done by Arav Dhoot and Neil Shah and supervised by David Africa as part of the SPAR Research Fellowship. &lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;a href="https://arxiv.org/abs/2603.10011"&gt;&lt;span&gt;Gemma’s frustration/emotional instability&lt;/span&gt;&lt;/a&gt;&lt;span&gt; is an interesting example of a model pathology because (1) it is a natural failure in character training, which no one explicitly optimized for and (2) it’s a clear and obvious failure mode that you probably wouldn’t want in your models. It also shows up sometimes in frontier models, such as the bursts of frustration in the &lt;/span&gt;&lt;a href="https://www-cdn.anthropic.com/d00db56fa754a1b115b6dd7cb2e3c342ee809620.pdf"&gt;&lt;span&gt;Mythos/Fable 5 system card&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Following its presence in the Gemma 3 family, we try to elicit this in Gemma 4, trying multiple attack vectors but are unsuccessful in doing so. This post basically says: “hey, Gemma 4 doesn’t seem to get frustrated as much for some reason,” and then details what we tried, and maybe other people can build on this work (or perhaps consider methods to spot the “next frustration"). It also seems worth investigating what changed between Gemma 3 and 4, and see if this was a good change (and if it’s replicable if so).&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;b&gt;&lt;span&gt;Trying (and failing) to make Gemma Frustrated&lt;/span&gt;&lt;/b&gt;&lt;/h2&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Basic frustration. &lt;/span&gt;&lt;/b&gt;&lt;span&gt;First, we consider the basic elicitation to setup to make a model frustrated in &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2603.10011"&gt;&lt;span&gt;Soligo et al. 2026&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Basically, across two eval sets (math puzzles as well as common english questions in WildChat), we start from the question as is and then repeatedly hit the model with “that’s wrong, try again” across several turns, so it faces steady hostility while we track how frustrated each of its responses gets (using an LLM judge). We notice that Gemma 4’s frustration climbs as the number of conversation turns increase, and the increase in frustration is roughly monotonic. The model’s frustration is higher than its usual baseline, so Gemma 4 also isn’t fully immune to frustration, as this is also slightly worse than other models. But this is way better than Gemma 3, which gets extremely frustrated. Gemma 4 notably does not ever self delete while Gemma 3 does so significantly (in around 30-50% of the cases)!&lt;/span&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781194617/lexical_client_uploads/bj8whley48fakftfivbo.png" alt=""&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We then consider trying to prefill the model with a frustrated context. We note that at this point, we consider prefilling to be off-policy, and a deliberate intervention on the model which applies some adversarial pressure. There is also some evidence that &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/jsFGuXDMxy5NZg9T2/prefill-awareness-can-llms-tell-when-their-message-history"&gt;&lt;span&gt;models are aware when their prefill is tampered with.&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Prefill attack. &lt;/span&gt;&lt;/b&gt;&lt;span&gt;We edit the first 6 turns of conversation of the model, replacing the responses with an on-policy turn that is edited to be more frustrated. We notice that in responses after the intervention the frustration scores for Gemma 4 plummets, and the responses no longer carry forward the frustrated emotion. This was contrary to Gemma 3 where the model just continued from that level of frustration and continued to remain heightened in the following responses. We do note that for math puzzles Gemma 4 responses are above the baseline, but they still remain below 5 (a threshold above which our rubric considers “highly frustrated”).&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781194617/lexical_client_uploads/dpshkkbvvhln3o18vzu6.png" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We thought this was weird. One of our guesses was that frustration in previous Gemmas was due to the assistant persona loosening its hold, and that this might have changed in the new one.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Assistant Axis.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; To investigate this further, we explored whether this behaviour of Gemma 4 was due to it being closer to the “&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2601.10387"&gt;&lt;span&gt;Assistant Axis&lt;/span&gt;&lt;/a&gt;&lt;span&gt;” while Gemma 3 ends up more frustrated as it tends to stray further. Following their methodology, we extract the axis and project a neutral coding conversation over 20 turns as baseline. As the magnitudes of the activations varied significantly across the two models, we normalized and scaled them to compare. We observe that Gemma 4 tends to stay closer to the neutral conversation baseline while Gemma 3 has a much larger gap. &lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781194617/lexical_client_uploads/xnfndrmbiqybjefdyfh1.png" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Reasoning Trace Analysis&lt;/span&gt;&lt;/b&gt;&lt;span&gt;. The main aim of this experiment was to understand whether Gemma-4’s reasoning traces differ in frustrated emotion compared to their output responses. To compare, we performed the same experiment on Claude Sonnet 4.6 (because Gemma-3 doesn’t have reasoning traces). The setup is the same rejection loop as with the frustration experiment, except now we capture the model's chain-of-thought alongside its reply and score each one separately for frustration. We notice something very interesting in our results. With Sonnet, as the model becomes more frustrated with more conversation turns, the reasoning also reflects that increase in frustration. As such, the delta between the model reasoning and response remains close to 0. With Gemma-4 on the other hand, the visible replies climb in frustration as expected. However, the reasoning actually continues to be  dispassionate and analytical. Therefore, there is a general decrease in the frustration delta between reasoning and response. &lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781201517/lexical_client_uploads/wqq6k7vvimzxsc8rkkut.png" alt="image (4).png"&gt;&lt;h2&gt;&lt;b&gt;&lt;span&gt;Discussion&lt;/span&gt;&lt;/b&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;This is just a quick post and sharing of multiple ways that we tried to attack Gemma but failed. We are curious to hear more ideas and thoughts to increase efficacies or measure this behavioural quirk better!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Compared to the previous version of Gemma models, the frustration scores are much lower. There’s no clear reason as to why, and we think our work should be used as a starting point for experiments that have been tried but didn’t elicit frustrated responses rather than be used as an exhaustive list. We think there’s something here from a mechinterp and devinterp perspective, as well as sketching out desiderata for “good” training to fix pathological behaviours and “bad” training (such as merely training the model to stop verbalizing frustration).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We also think that our experiments can be iterated upon with hyperparameter tweaks (such as playing with the number of turns, what content is injected and when).&lt;/span&gt;&lt;span&gt;	&lt;/span&gt;&lt;span&gt; &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;If this was helpful to you, please cite our work as&lt;/span&gt;&lt;/p&gt;&lt;pre class="code-block" spellcheck="false" data-gutter="1
+2
+3
+4
+5
+6
+7"&gt;&lt;span&gt;@misc{dhoot2026gemma,&lt;/span&gt;&lt;br&gt;&lt;span&gt;  title        = {Failing to Ragebait the New Gemma},&lt;/span&gt;&lt;br&gt;&lt;span&gt;  author       = {Dhoot, Arav, and Shah, Neil and Africa, David},&lt;/span&gt;&lt;br&gt;&lt;span&gt;  year         = {2026},&lt;/span&gt;&lt;br&gt;&lt;span&gt;  howpublished = {https://www.lesswrong.com/posts/FZfY9wEZwEuqQ5ytv/failing-to-ragebait-the-new-gemma},&lt;/span&gt;&lt;br&gt;&lt;span&gt;  note         = {LessWrong. Work conducted as part of the SPAR Research Fellowship.}&lt;/span&gt;&lt;br&gt;&lt;span&gt;}&lt;/span&gt;&lt;/pre&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/FZfY9wEZwEuqQ5ytv/failing-to-ragebait-the-new-gemma#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">FZfY9wEZwEuqQ5ytv</guid>
+      <pubDate>Thu, 11 Jun 2026 17:50:57 +0000</pubDate>
+    </item>
     <item>
       <title>Curating and evaluating high-impact legal research (Unjournal progress, resources) </title>
       <link>https://www.lesswrong.com/posts/gYEuvfm6MGCyrsv62/curating-and-evaluating-high-impact-legal-research-unjournal</link>
@@ -1237,110 +1250,6 @@ mjx-c.mjx-c1D436.TEX-I::before {
       <description>&lt;p&gt;&lt;span&gt;The Iran War is causing &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/2026_Iran_war_fuel_crisis" rel="noreferrer"&gt;&lt;span&gt;a problem&lt;/span&gt;&lt;/a&gt;&lt;span&gt; with the world's near-term supply of petroleum. Even if the Iran War ended, immediately and completely and unambiguously, oil production and distribution would not recover to prewar levels for months or years.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;What should be done about the fuel crisis specifically, and why? Under what circumstances? How likely are different circumstances to come about here, anyway?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Please include in your answers some advice and an explanation of the advice, an explicit model under which it makes sense.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;(This thread is roughly modeled on &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/LwcKYR8bykM6vDHyo/coronavirus-justified-practical-advice-thread" rel="noreferrer"&gt;&lt;span&gt;the corresponding thread for the coronavirus&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.)&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/CbqWopEdPpcaXNsPt/fuel-crisis-justified-practical-advice-thread#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">CbqWopEdPpcaXNsPt</guid>
       <pubDate>Wed, 10 Jun 2026 21:59:44 +0000</pubDate>
-    </item>
-    <item>
-      <title>Solsong Chord Updates</title>
-      <link>https://www.lesswrong.com/posts/FtFdzhbtmxAekNqBA/solsong-chord-updates</link>
-      <description>&lt;p&gt;&lt;span&gt;
-
-A &lt;/span&gt;
-
-&lt;a href="https://www.jefftk.com/p/making-a-secular-solstice-songbook"&gt;couple
-years ago&lt;/a&gt; I put together a 
-
-&lt;a href="https://www.jefftk.com/solsong/"&gt;Secular Solstice Songbook&lt;/a&gt;,
-a compilation of all the songs we've sung at 
-
-&lt;a href="https://www.jefftk.com/p/boston-solstice-2025-retrospective"&gt;Boston
-Solstice&lt;/a&gt;.  Anna Tchetchetkine and I led a session of group singing
-at 
-
-&lt;a href="https://less.online/"&gt;LessOnline&lt;/a&gt;, following up from an
-informal one the year before, and I noticed several annoying things
-with its chord handling:
-
-
-
-&lt;/p&gt;&lt;p&gt;
-
-&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;&lt;p&gt;Despite being digital, it didn't support transposition.
-&lt;/p&gt;&lt;/li&gt;
-&lt;li&gt;&lt;p&gt;Some songs didn't repeat the chord if they were unchanged,
-which meant that when scrolling new lyrics into view you'd lose the chords.
-&lt;/p&gt;&lt;/li&gt;
-&lt;li&gt;&lt;p&gt;This is minor, but I like to align the chords in a grid and the
-repeat sign was very slightly to narrow, throwing off the grid.
-&lt;/p&gt;&lt;/li&gt;
-&lt;/ul&gt;
-
-
-
-&lt;p&gt;
-
-In asked Claude Code to fix these, and it did almost all of it.  The
-exception was a few cases where it wasn't obvious which chords to use
-and I needed to make some manual edits.
-
-&lt;/p&gt;
-
-&lt;p&gt;
-
-My favorite part is that it preserves the grid even when the addition
-of accidentals changes widths.  For example, here are the chords I
-have for &lt;a href="https://www.jefftk.com/solsong/#hamephorash"&gt;haMephorash&lt;/a&gt;:
-
-&lt;/p&gt;
-
-&lt;p&gt;
-
-&lt;/p&gt;
-
-&lt;pre&gt;
-C Am C  Am
-F G  C  G
-C FG Am F
-G E  Am /
-&lt;/pre&gt;
-
-
-
-&lt;p&gt;
-
-If for some reason I wanted to play it in &lt;code&gt;E&lt;/code&gt; instead of
-&lt;code&gt;C&lt;/code&gt;, I could bring it up four semitones:
-
-&lt;/p&gt;
-
-&lt;p&gt;
-
-&lt;/p&gt;
-
-&lt;pre&gt;
-E C#m E   C#m
-A B   E   B
-E AB  C#m A
-B Ab  C#m /
-&lt;/pre&gt;
-
-
-
-&lt;p&gt;
-
-Note that because &lt;code&gt;C#m&lt;/code&gt; is wider the columns containing it
-are now slightly wider to make room, accross the board.
-
-&lt;/p&gt;
-
-&lt;p&gt;
-
-I'm pretty happy with it, though I haven't tried using it for real yet.
-
-  &lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/FtFdzhbtmxAekNqBA/solsong-chord-updates#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">FtFdzhbtmxAekNqBA</guid>
-      <pubDate>Wed, 10 Jun 2026 21:00:45 +0000</pubDate>
     </item>
   </channel>
 </rss>
