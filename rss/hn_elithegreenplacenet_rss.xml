@@ -7,7 +7,239 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Sun, 14 Jun 2026 00:13:59 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 14 Jun 2026 05:55:11 +0000</lastBuildDate>
+    <item>
+      <title>Plugins case study: Pluggy</title>
+      <link>https://eli.thegreenplace.net/2026/plugins-case-study-pluggy/</link>
+      <description>&lt;p&gt;Recently I came upon &lt;a class="reference external" href="https://pluggy.readthedocs.io/en/latest/"&gt;Pluggy&lt;/a&gt;,
+a Python library for developing plugin systems. It was originally developed
+as part of the &lt;tt class="docutils literal"&gt;pytest&lt;/tt&gt; project - known for its rich plugin ecosystem - and
+later extracted into a standalone library. You're supposed to reach out for
+Pluggy if you want to add a plugin system to your tool or library and want
+to use something proven rather than rolling your own.&lt;/p&gt;
+&lt;p&gt;In this post I will share some notes on how Pluggy works, and will
+then review how it aligns with the
+&lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;fundamental concepts of plugin infrastructures&lt;/a&gt;.&lt;/p&gt;
+&lt;img alt="Pluggy plug logo" class="align-center" src="https://eli.thegreenplace.net/images/2026/pluggy-plug.png" /&gt;
+&lt;div class="section" id="using-pluggy"&gt;
+&lt;h2&gt;Using Pluggy&lt;/h2&gt;
+&lt;p&gt;Pluggy is built around the concept of &lt;em&gt;hooks&lt;/em&gt;: functions that host
+applications or tools (from here on, just &amp;quot;hosts&amp;quot;) expose and plugins implement.
+A host exposes hooks by using
+a decorator returned from &lt;tt class="docutils literal"&gt;pluggy.HookspecMarker&lt;/tt&gt; and a plugin implements this
+hook using a decorator returned from &lt;tt class="docutils literal"&gt;pluggy.HookimplMarker&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;Pluggy's &lt;a class="reference external" href="https://pluggy.readthedocs.io/en/stable/"&gt;documentation&lt;/a&gt; explains
+this fairly well; in this post, I'll show how to implement the &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt; tool
+with some plugins, introduced in &lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;the original article in my plugin series&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;As a reminder, &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt; is a toy tool that takes markup notation similar to
+reStructuredText, and converts it to to HTML. It supports plugins to handle
+custom &amp;quot;roles&amp;quot; like:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;some text :role:`customized text` and more text
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;As well as plugins that do arbitrary processing on the entire text.&lt;/p&gt;
+&lt;div class="section" id="defining-hooks"&gt;
+&lt;h3&gt;Defining hooks&lt;/h3&gt;
+&lt;p&gt;&lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2026/plugin-pluggy/htmlize/htmlize"&gt;Out host&lt;/a&gt; defines two hooks:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;pluggy&lt;/span&gt;
+
+&lt;span class="n"&gt;hookspec&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;pluggy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;HookspecMarker&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;htmlize&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="nd"&gt;@hookspec&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;firstresult&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;htmlize_role_handler&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;role_name&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="sd"&gt;&amp;quot;&amp;quot;&amp;quot;Return a function accepting role contents.&lt;/span&gt;
+
+&lt;span class="sd"&gt;    The function will be called with a single argument - the role contents, and&lt;/span&gt;
+&lt;span class="sd"&gt;    should return what the role gets replaced with.&lt;/span&gt;
+&lt;span class="sd"&gt;    &amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    &lt;span class="k"&gt;pass&lt;/span&gt;
+
+&lt;span class="nd"&gt;@hookspec&lt;/span&gt;
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;htmlize_contents&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;post&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="sd"&gt;&amp;quot;&amp;quot;&amp;quot;Return a function accepting full document contents.&lt;/span&gt;
+
+&lt;span class="sd"&gt;    The function will be called with a single argument - the document contents&lt;/span&gt;
+&lt;span class="sd"&gt;    (after paragraph splitting and role processing), and should return the&lt;/span&gt;
+&lt;span class="sd"&gt;    transformed contents.&lt;/span&gt;
+&lt;span class="sd"&gt;    &amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    &lt;span class="k"&gt;pass&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;A hook is created by calling &lt;tt class="docutils literal"&gt;HookspecMarker&lt;/tt&gt; with the project's name. This
+project name has to match between the host and its plugins. Pluggy is permissive
+about what hooks accept as parameters and what they return; for maximal
+flexibility and to stay true to the original &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt; example, our hooks
+return functions.&lt;/p&gt;
+&lt;p&gt;To accompany this &lt;tt class="docutils literal"&gt;HookspecMarker&lt;/tt&gt;, the host also defines a &lt;tt class="docutils literal"&gt;HookimplMarker&lt;/tt&gt; with
+the same name:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="n"&gt;hookimpl&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;pluggy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;HookimplMarker&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;htmlize&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This is used by plugins to attach to hooks when they're loaded.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="loading-plugins-in-the-host"&gt;
+&lt;h3&gt;Loading plugins in the host&lt;/h3&gt;
+&lt;p&gt;The host's main function loads plugins at startup as follows:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="n"&gt;pm&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;pluggy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;PluginManager&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;htmlize&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;pm&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_hookspecs&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;hookspecs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;pm&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load_setuptools_entrypoints&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;htmlize&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;&lt;tt class="docutils literal"&gt;hookspecs&lt;/tt&gt; is our Python module containing the hooks shown above.
+&lt;tt class="docutils literal"&gt;load_setuptools_entrypoints&lt;/tt&gt; is Pluggy's helper for loading plugins that
+were &lt;tt class="docutils literal"&gt;pip&lt;/tt&gt;-installed into the same environment and registered as
+setuptools &lt;a class="reference external" href="https://setuptools.pypa.io/en/latest/userguide/entry_point.html"&gt;entry points&lt;/a&gt;.
+It's a way to signal - in one's &lt;tt class="docutils literal"&gt;setup.py&lt;/tt&gt; or &lt;tt class="docutils literal"&gt;pyproject.toml&lt;/tt&gt; file - some
+metadata that projects can review at runtime. In our project, the plugins
+register themselves with this section in the &lt;tt class="docutils literal"&gt;pyproject.toml&lt;/tt&gt; file:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;[project.entry-points.htmlize]
+tt = &amp;quot;tt&amp;quot;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This says &amp;quot;for entry point &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt;, define a new entry named &lt;tt class="docutils literal"&gt;tt&lt;/tt&gt;&amp;quot;.
+Pluggy's &lt;tt class="docutils literal"&gt;load_setuptools_entrypoints&lt;/tt&gt; then uses &lt;a class="reference external" href="https://docs.python.org/3/library/importlib.metadata.html"&gt;importlib.metadata&lt;/a&gt;
+to access this information.&lt;/p&gt;
+&lt;p&gt;Note that Pluggy doesn't require using this mechanism. Hosts can implement any
+plugin discovery method they want, and add plugins directly to their
+&lt;tt class="docutils literal"&gt;PluginManager&lt;/tt&gt; with the &lt;tt class="docutils literal"&gt;register&lt;/tt&gt; method. But this is the mechanism used
+for &lt;tt class="docutils literal"&gt;pytest&lt;/tt&gt; and many other projects; it makes it very easy to
+automatically discover and register plugins that are installed with &lt;tt class="docutils literal"&gt;pip&lt;/tt&gt; and
+equivalent tools.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="invoking-plugins"&gt;
+&lt;h3&gt;Invoking plugins&lt;/h3&gt;
+&lt;p&gt;Once &lt;tt class="docutils literal"&gt;PluginManager&lt;/tt&gt; loads the plugins, invoking them is straightforward;
+here's how &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt; invokes the contents hooks &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="c1"&gt;# Build full contents back again, and ask plugins to act on&lt;/span&gt;
+&lt;span class="c1"&gt;# contents.&lt;/span&gt;
+&lt;span class="n"&gt;contents&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;join&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;parts&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;handler&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;plugin_manager&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;hook&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;htmlize_contents&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;post&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;post&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;contents&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;handler&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;contents&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;contents&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Generally, hook invocations return a &lt;em&gt;list&lt;/em&gt; of all the hooks attached to by
+different plugins (a single host application can have multiple plugins installed
+and attaching to the same hook). When the host invokes the hook as shown above,
+the default order is LIFO, but plugins can affect this with
+&lt;a class="reference external" href="https://pluggy.readthedocs.io/en/stable/#call-time-order"&gt;hook options&lt;/a&gt;
+like &lt;tt class="docutils literal"&gt;tryfirst&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;trylast&lt;/tt&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="implementing-hooks-in-plugins"&gt;
+&lt;h3&gt;Implementing hooks in plugins&lt;/h3&gt;
+&lt;p&gt;Here's our entire &lt;tt class="docutils literal"&gt;narcissist&lt;/tt&gt; plugin that's attaching to the contents hook:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;htmlize&lt;/span&gt;
+
+&lt;span class="nd"&gt;@htmlize&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;hookimpl&lt;/span&gt;
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;htmlize_contents&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;post&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;repl&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;&amp;lt;b&amp;gt;I (&lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;post&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;author&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s1"&gt;)&amp;lt;/b&amp;gt;&amp;#39;&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;hook&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;contents&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;re&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sub&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sa"&gt;r&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;\bI\b&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;repl&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;contents&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;hook&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Some notes:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;It expects &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt; to be installed; as discussed previously, we rely on
+Pluggy's default install-based approach where both the host and plugins are
+installed into the same Python environment and can thus find each other.
+However, Pluggy supports any custom discovery method.&lt;/li&gt;
+&lt;li&gt;It uses the &lt;tt class="docutils literal"&gt;hookimpl&lt;/tt&gt; exported value shown earlier.&lt;/li&gt;
+&lt;li&gt;It returns a function that acts on contents; this is the &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt;-specific
+contract (ABI, if you will) we've discussed before.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="fundamental-plugin-concepts-in-this-case-study"&gt;
+&lt;h2&gt;Fundamental plugin concepts in this case study&lt;/h2&gt;
+&lt;p&gt;Let's see how this case study of Pluggy measures against the
+&lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;Fundamental plugin concepts&lt;/a&gt;
+that were covered &lt;a class="reference external" href="https://eli.thegreenplace.net/tag/plugins"&gt;several times on this blog&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;It's important to remember that Pluggy is not a specific host application with
+a bespoke plugin system; rather, it's a reusable library for creating such
+plugin systems. Therefore, this is more of a &lt;em&gt;meta&lt;/em&gt; case study.&lt;/p&gt;
+&lt;div class="section" id="discovery"&gt;
+&lt;h3&gt;Discovery&lt;/h3&gt;
+&lt;p&gt;Generally, Pluggy leaves discovery logic to the user's discretion. Its
+&lt;tt class="docutils literal"&gt;PluginManager&lt;/tt&gt; has a &lt;tt class="docutils literal"&gt;register&lt;/tt&gt; method for adding plugins, and these can
+be discovered in any way the application chooses.&lt;/p&gt;
+&lt;p&gt;That said, Pluggy comes with one discovery mechanism built in - through the
+entry points process of Python packaging, as shown above. This is hugely
+convenient for a large number of applications, as long as both the application
+and its plugins are installed via standard Python packaging tools (which is
+a very reasonable assumption in the Python ecosystem).&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="registration"&gt;
+&lt;h3&gt;Registration&lt;/h3&gt;
+&lt;p&gt;In the entry point process, plugins register themselves by adding a
+&lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;[project.entry-points.&amp;lt;HOST-ID&amp;gt;]&lt;/span&gt;&lt;/tt&gt; section in their &lt;tt class="docutils literal"&gt;pyproject.toml&lt;/tt&gt;
+file.&lt;/p&gt;
+&lt;p&gt;Otherwise - as in the previous section - users are free to devise their own
+registration schemes.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="hooks"&gt;
+&lt;h3&gt;Hooks&lt;/h3&gt;
+&lt;p&gt;This one is easy, since it's called &lt;em&gt;hooks&lt;/em&gt; in Pluggy parlance as well!
+Pluggy's implementation of hooks is rather elegant, with function decorators
+available for plugins to set. We've seen an example of this above with
+&lt;tt class="docutils literal"&gt;&amp;#64;htmlize.hookimpl&lt;/tt&gt; decorating &lt;tt class="docutils literal"&gt;htmlize_contents&lt;/tt&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="exposing-an-application-api-to-plugins"&gt;
+&lt;h3&gt;Exposing an application API to plugins&lt;/h3&gt;
+&lt;p&gt;Since Pluggy is designed for Python hosts and Python plugins, this one is
+fairly straightforward. The plugins typically assume the host project is
+already installed in the Python environment and its modules can be imported.&lt;/p&gt;
+&lt;p&gt;In our example, &lt;tt class="docutils literal"&gt;hookimpl&lt;/tt&gt; is imported from &lt;tt class="docutils literal"&gt;htmlize&lt;/tt&gt; by the plugin to
+accomplish this. It also shows how host data is passed to the plugin - the
+&lt;tt class="docutils literal"&gt;post&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;db&lt;/tt&gt; parameters. These are APIs exposed by the host for the
+plugins' use.&lt;/p&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="conclusion-is-pluggy-worth-it"&gt;
+&lt;h2&gt;Conclusion - is Pluggy worth it?&lt;/h2&gt;
+&lt;p&gt;In footnote 2 of my original &lt;a class="reference external" href="https://eli.thegreenplace.net/2012/08/07/fundamental-concepts-of-plugin-infrastructures"&gt;fundamental concepts of plugin infrastructures&lt;/a&gt;
+post, I wrote &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;:&lt;/p&gt;
+&lt;blockquote&gt;
+This is probably why there are very few well-established plugin frameworks
+in existence (even in low-level languages like C or C++). It's too easy (and
+tempting) to roll your own.&lt;/blockquote&gt;
+&lt;p&gt;I still believe my statement is true - plugin frameworks are very easy
+to create, and the functionality they provide is relatively small compared to
+their large surface area. In other words, this is a &lt;em&gt;shallow API&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;That said, Pluggy does provide some nice functionality for the more advanced
+uses of plugins:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;Automatic entry point registration mechanism - if you need it&lt;/li&gt;
+&lt;li&gt;Signature validation&lt;/li&gt;
+&lt;li&gt;Consistent plugin result collection across multiple hook attachments in a
+single plugin and across many plugins&lt;/li&gt;
+&lt;li&gt;Plugin ordering with &lt;tt class="docutils literal"&gt;firstresult&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;tryfirst&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;trylast&lt;/tt&gt;, etc.&lt;/li&gt;
+&lt;li&gt;Hook &amp;quot;wrappers&amp;quot; for some special use cases&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Are these worthwhile for your project? It really depends on the project,
+and it's always worth keeping the &lt;a class="reference external" href="https://eli.thegreenplace.net/2017/benefits-of-dependencies-in-software-projects-as-a-function-of-effort/"&gt;tradeoff between dependencies and project
+effort&lt;/a&gt;
+in mind.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="code"&gt;
+&lt;h2&gt;Code&lt;/h2&gt;
+&lt;p&gt;The full code repository for this post &lt;a class="reference external" href="https://github.com/eliben/code-for-blog/tree/main/2026/plugin-pluggy"&gt;is available here&lt;/a&gt;.&lt;/p&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;Here &lt;tt class="docutils literal"&gt;plugin_manager&lt;/tt&gt; is the value previously returned from
+&lt;tt class="docutils literal"&gt;pluggy.PluginManager&lt;/tt&gt;; in the previous code snippet it's saved into
+&lt;tt class="docutils literal"&gt;pm&lt;/tt&gt; - the different variable name is because a function call is made
+and &lt;tt class="docutils literal"&gt;plugin_manager&lt;/tt&gt; is the parameter name.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;To be fair, that post predates the creation of Pluggy!&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-06-13:/2026/plugins-case-study-pluggy/</guid>
+      <pubDate>Sat, 13 Jun 2026 20:21:00 -0700</pubDate>
+    </item>
     <item>
       <title>Thoughts on starting new projects with LLM agents</title>
       <link>https://eli.thegreenplace.net/2026/thoughts-on-starting-new-projects-with-llm-agents/</link>
@@ -933,106 +1165,6 @@ are known to produce the same value (redundant load elimination).&lt;/p&gt;
 </description>
       <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-04-29:/2026/thoughts-on-webassembly-as-a-stack-machine/</guid>
       <pubDate>Wed, 29 Apr 2026 19:28:00 -0700</pubDate>
-    </item>
-    <item>
-      <title>Debugging WASM in Chrome DevTools</title>
-      <link>https://eli.thegreenplace.net/2026/debugging-wasm-in-chrome-devtools/</link>
-      <description>&lt;p&gt;When I was working on the &lt;a class="reference external" href="https://eli.thegreenplace.net/2026/compiling-scheme-to-webassembly/"&gt;WASM backend for my Scheme compiler&lt;/a&gt;,
-I ran into several tricky situations with debugging generated WASM code. It
-turned out that Chrome has a very capable WASM debugger in its DevTools, so in
-this brief post I want to share how it can be used.&lt;/p&gt;
-&lt;div class="section" id="the-setup-and-harness"&gt;
-&lt;h2&gt;The setup and harness&lt;/h2&gt;
-&lt;p&gt;I'll be using an example from my &lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples"&gt;wasm-wat-samples project&lt;/a&gt; for this post. In fact,
-everything is already in place in the &lt;a class="reference external" href="https://github.com/eliben/wasm-wat-samples/tree/main/gc-print-scheme-pairs"&gt;gc-print-scheme-pairs&lt;/a&gt;
-sample. This sample shows how to construct Scheme-like s-exprs in WASM using gc
-references and print them out recursively. The sample supports nested pairs
-of integers, booleans and symbols.&lt;/p&gt;
-&lt;p&gt;To see this in action, we have to first compile the WAT file to WASM, for
-example using &lt;a class="reference external" href="https://github.com/eliben/watgo"&gt;watgo&lt;/a&gt;:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;$ cd gc-print-scheme-pairs
-$ watgo parse gc-print-scheme-pairs.wat -o gc-print-scheme-pairs.wasm
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;The &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;browser-loader.html&lt;/span&gt;&lt;/tt&gt; file in that directory already expects to load
-&lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;gc-print-scheme-pairs.wasm&lt;/span&gt;&lt;/tt&gt;. But we can't just open it
-directly from the file-system; since it loads WASM, this file needs to be
-served with a local HTTP server. I personally use &lt;a class="reference external" href="https://github.com/eliben/static-server/"&gt;static-server&lt;/a&gt;
-for this, but you can use anything else - like Python's built-in &lt;tt class="docutils literal"&gt;http.server&lt;/tt&gt;:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;$ static-server
-2026/04/10 08:55:20.244096 Serving directory &amp;quot;.&amp;quot; on http://127.0.0.1:8080
-...
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;Now it can be opened in the browser by following the printed link and selecting
-the &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;browser-loader.html&lt;/span&gt;&lt;/tt&gt; file.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="the-debugging-process"&gt;
-&lt;h2&gt;The debugging process&lt;/h2&gt;
-&lt;p&gt;Open the Chrome DevTools, and in &lt;em&gt;Sources&lt;/em&gt;, open the &lt;em&gt;Page&lt;/em&gt; view on the left.
-It should have one entry under &lt;em&gt;wasm&lt;/em&gt;, which will show the decompiled WAT
-code for our module. Note: this code is disassembled from the binary WASM, so
-it will lose some WAT syntactic sugar (like folded instructions):&lt;/p&gt;
-&lt;img alt="Screenshot showing where WASM source is in DevTools" class="align-center" src="https://eli.thegreenplace.net/images/2026/wasm-debug-screenshot1.png" /&gt;
-&lt;p&gt;You can set a breakpoint by clicking on the address column to the left of the
-code, and then refresh the page. The DevTools debugger will run the program
-again and stop at the breakpoint:&lt;/p&gt;
-&lt;img alt="Screenshot showing debugger stopping on the breakpoint line" class="align-center" src="https://eli.thegreenplace.net/images/2026/wasm-debug-screenshot2.png" /&gt;
-&lt;p&gt;Here you can step over, into, see local values and call stack, etc - a real
-debugger!&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="debugging-unexpected-exceptions"&gt;
-&lt;h2&gt;Debugging unexpected exceptions&lt;/h2&gt;
-&lt;p&gt;The most important use case for me while developing the compiler was debugging
-unexpected exceptions (coming from instructions like &lt;tt class="docutils literal"&gt;ref.cast&lt;/tt&gt;). Notice
-the checkboxes saying &amp;quot;Pause on ... exceptions&amp;quot; on the right-hand side of the
-previous screenshot. With these selected, the DevTools debugger will
-automatically stop on an exception and show where it is coming from. Let's
-modify the &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;gc-print-scheme-pairs.wat&lt;/span&gt;&lt;/tt&gt; sample to see this in action. The
-&lt;tt class="docutils literal"&gt;$emit_value&lt;/tt&gt; function performs a set of &lt;tt class="docutils literal"&gt;ref.test&lt;/tt&gt; checks to see which kind
-of reference it's dealing with before casting; let's add this line at the
-very start:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;(call $emit_bool (ref.cast (ref $Bool) (local.get $v)))
-&lt;/pre&gt;&lt;/div&gt;
-&lt;p&gt;It's clearly wrong to assume that &lt;tt class="docutils literal"&gt;$v&lt;/tt&gt; is a bool reference without first
-testing it; this is just for demonstration purposes.&lt;/p&gt;
-&lt;p&gt;Without setting any breakpoints, recompiling this code with &lt;tt class="docutils literal"&gt;watgo&lt;/tt&gt; and
-reloading the page, we get:&lt;/p&gt;
-&lt;img alt="Screenshot showing debugger stopping on an exception" class="align-center" src="https://eli.thegreenplace.net/images/2026/wasm-debug-screenshot3.png" /&gt;
-&lt;p&gt;The debugger stopped at the instruction causing the exception; moreover, in the
-&lt;em&gt;Scope&lt;/em&gt; pane on the right we can see that the actual type of &lt;tt class="docutils literal"&gt;$v&lt;/tt&gt; is
-&lt;tt class="docutils literal"&gt;(ref $Pair)&lt;/tt&gt;, so it's immediately clear what's going on.&lt;/p&gt;
-&lt;p&gt;I've found this capability extremely valuable when writing (or emitting from
-a compiler) non-trivial chunks of WASM code using gc types and instructions.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="debugger-vs-printfs-in-wasm"&gt;
-&lt;h2&gt;Debugger vs. printfs in wasm&lt;/h2&gt;
-&lt;p&gt;&amp;quot;Should I use a debugger or just printfs&amp;quot; is a common topic of debate among
-programmers. While I'm usually in the &amp;quot;printf debugging&amp;quot;
-camp, I'm not dogmatic, and will certainly reach for a debugger when
-the situation calls for it.&lt;/p&gt;
-&lt;p&gt;Specifically, when investigating reference exceptions in WASM, two strong
-factors tilt the decision towards using a debugger:&lt;/p&gt;
-&lt;ol class="arabic"&gt;
-&lt;li&gt;&lt;p class="first"&gt;In general, WASM's printf capabilities aren't great. We can import print-like
-functions from the host (and - in fact - our sample does just that), but
-they're not very flexible and dealing with strings in WASM is painful in
-general. This is compounded even more when working with gc types, because
-these aren't even visible to the host (they're opaque references). If we want
-to do printf debugging of gc values, we have to build &lt;em&gt;a lot&lt;/em&gt; of scaffolding
-first.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;&lt;p class="first"&gt;Exception debugging - in general - is much easier with a supportive debugger
-in hand. Our &lt;tt class="docutils literal"&gt;ref.cast&lt;/tt&gt; exception from the example above could have
-happened &lt;em&gt;anywhere&lt;/em&gt; in the code. Imagine having to debug a very large
-WASM program (emitted by a compiler) to find the source of a failed
-&lt;tt class="docutils literal"&gt;ref.cast&lt;/tt&gt;; the debugger takes you right to the spot!&lt;/p&gt;
-&lt;p&gt;In fact, even for C programming, I've always found &lt;tt class="docutils literal"&gt;gdb&lt;/tt&gt; most useful for
-pinpointing the source of segmentation faults and similar crashes.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-04-22:/2026/debugging-wasm-in-chrome-devtools/</guid>
-      <pubDate>Wed, 22 Apr 2026 19:23:00 -0700</pubDate>
     </item>
   </channel>
 </rss>
