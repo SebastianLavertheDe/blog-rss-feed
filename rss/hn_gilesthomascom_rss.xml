@@ -5,7 +5,156 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Mon, 15 Jun 2026 18:44:02 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 15 Jun 2026 21:48:07 +0000</lastBuildDate>
+    <item>
+      <title>JAX: commitment issues</title>
+      <link>https://www.gilesthomas.com/2026/06/jax-commitment-issues</link>
+      <description>&lt;p&gt;Imagine you have JAX code like this, and run it on a machine with CUDA set up:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;key&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;42&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+    &lt;span class="n"&gt;cpu0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+    &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cpu0&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;array&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+            &lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;530640&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;6&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1024&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
+            &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;50_000&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;numpy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;uint16&lt;/span&gt;
+        &lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;block_until_ready&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+    &lt;span class="n"&gt;item&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+    &lt;span class="n"&gt;item&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;block_until_ready&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;We're creating a big array, blocking until it's ready (JAX is asynchronous, so
+this makes sure that it's actually finished creating it), then getting
+the first item, and as a belt-and-braces thing making sure that that is ready too.
+How long do you think those last two lines -- a simple retrieval of a 6 x 1024 array
+from a larger one -- will take?  Some tiny fraction of a second would seem
+reasonable.&lt;/p&gt;
+
+&lt;p&gt;But running it on my machine just now, the answer is a bit of a surprise: just over 5 seconds.  And if you try to
+get &lt;code&gt;array[1]&lt;/code&gt; immediately afterwards, it still takes about 1.2s.  Further lookups into
+&lt;code&gt;array&lt;/code&gt; consistently take more than a second -- so while the larger
+initial number might be something to do with setup -- maybe internal stuff being JITted -- that's clearly not the whole story.
+Something is making these seemingly-simple array lookups take much longer than you'd
+expect them to.&lt;/p&gt;
+
+&lt;p&gt;Let's dig into that.&lt;/p&gt;
+&lt;h3 id="a-bit-of-background"&gt;A bit of background&lt;/h3&gt;
+
+&lt;p&gt;First things first, why would you want to do that slightly strange dance with the
+&lt;code&gt;jax.default_device&lt;/code&gt; context manager in the first place, rather than telling &lt;code&gt;randint&lt;/code&gt; what
+device you want to use (eg. with &lt;code&gt;out_sharding&lt;/code&gt;)?&lt;/p&gt;
+
+&lt;p&gt;I'm writing some LLM training
+code, and want to load my training dataset.  I don't want to load it into the VRAM
+on the GPU -- that would be a waste of valuable GPU resources -- so I need it in
+the CPU-side memory.  I'm using Safetensors, which will
+&lt;a href="/2026/06/jax-backends-and-devices"&gt;load stuff onto the system's default device&lt;/a&gt;.
+So I need to override that temporarily to make sure that the dataset is loaded onto
+the device where I want it.&lt;/p&gt;
+
+&lt;p&gt;I initially discovered this problem when I tried to iterate over the resulting array in my training
+loop; the code above is a simplified version of that -- a minimal repro of the issue.
+And it's a serious one!  If each iteration has an overhead of 1.2s just to get 6,144 tokens
+ready for the model, JAX will max out at about 5,000 tokens per second
+of training speed &lt;em&gt;just due to that overhead&lt;/em&gt; -- a real forward and backward pass plus
+an optimiser step will obviously make things even slower.  For comparison, my PyTorch training loop managed almost 20,000 tokens/second
+on the same hardware: all steps from getting the training data, putting it on the GPU,
+and doing the actual training.&lt;/p&gt;
+
+&lt;h3 id="debugging"&gt;Debugging&lt;/h3&gt;
+
+&lt;p&gt;So, let's look at that code again.  We've created
+our variable &lt;code&gt;array&lt;/code&gt; on the CPU explicitly, and indeed if you print &lt;code&gt;array.device&lt;/code&gt;,
+it says &lt;code&gt;CpuDevice(id=0)&lt;/code&gt;.  But if you print the device of the &lt;code&gt;item&lt;/code&gt;, you get
+&lt;code&gt;CudaDevice(id=0)&lt;/code&gt;.  What's worse, if you watch &lt;code&gt;nvtop&lt;/code&gt; while the code is running,
+as soon as it hits the lookup into the array, it starts using the GPU -- for each one,
+there's a spike in GPU usage.&lt;/p&gt;
+
+&lt;p&gt;So, what gives?  We asked JAX to put the array on the CPU, but now it's doing
+GPU work, and putting the items there.&lt;/p&gt;
+
+&lt;p&gt;The problem is that when you create an array using the &lt;code&gt;default_device&lt;/code&gt; context manager,
+it is placed on the specified device, but it's not &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.committed.html"&gt;committed&lt;/a&gt; to it.
+If an array is not committed to its device, then JAX will feel free to move it
+around to others.&lt;/p&gt;
+
+&lt;p&gt;In order to commit an array to a device, you need to use &lt;code&gt;jax.device_put&lt;/code&gt; explicitly
+stating which device you want it on.  Running
+the same code, but with this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;array&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;device_put&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;cpu0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...immediately before the lookup into the array changes the numbers drastically;
+the first lookup takes about 0.95s on my machine, the second 0.0002s, and then
+subsequent ones less than 0.0001s.&lt;/p&gt;
+
+&lt;h3 id="some-more-detailed-tests"&gt;Some more detailed tests&lt;/h3&gt;
+
+&lt;p&gt;I decided to exercise this in depth, and wrote &lt;a href="https://github.com/gpjt/jax-gpt2-from-scratch/blob/3d28bf64c87e92a62dceac26f32eaa2248ece12c/array_speed_test.py"&gt;this script&lt;/a&gt;.
+If you run it without the &lt;code&gt;--commit&lt;/code&gt; command line flag, it will create the array,
+then iterate over the first ten items, measuring how long it takes to get each one.
+Running it just now:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Getting the zeroth item from the array took about 5.4s.&lt;/li&gt;
+&lt;li&gt;Each subsequent one consistently took about 1.2s&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;With the &lt;code&gt;--commit&lt;/code&gt; flag, it uses &lt;code&gt;device_put&lt;/code&gt; to explicitly commit the array to the
+CPU.  Running that:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Getting the zeroth item from the array took about 0.95s&lt;/li&gt;
+&lt;li&gt;Each subsequent one took less than 0.0002s.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Now, that didn't quite cover my use case -- what if, I wondered, the slow operation
+was putting things onto the GPU?  The script also has a &lt;code&gt;--put_items_to_gpu&lt;/code&gt; flag to
+do that -- after getting each item, it uses &lt;code&gt;device_put&lt;/code&gt;.  With that flag:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Getting the zeroth item from the array took about 0.86s, and putting it on the GPU took 0.02s.&lt;/li&gt;
+&lt;li&gt;Subsequent items had "get" times similar to the previous run,
+and "put" times of about 0.0006s.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;So, there's still a small startup penalty -- perhaps JAX is having to JIT some of
+its internal stuff -- but a perfectly decent speed after that.  Commitment works!&lt;/p&gt;
+
+&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
+
+&lt;p&gt;I'm still building my mental model of how JAX works, and working out exactly what
+is going on here is proving a bit tricky.  The split between a committed and an
+uncommitted array seems clear; the former is tied to a device, while JAX will move
+the latter around as needed.&lt;/p&gt;
+
+&lt;p&gt;It also makes a certain amount of sense that it would want to move the items to the GPU;
+it is, after all, the default device.  But I'm less clear on why that was so slow, compared
+to the manual process of getting the item then putting it there.&lt;/p&gt;
+
+&lt;p&gt;Hypothesis: the array is on the CPU's RAM, but not committed there.  We ask for an item
+from that array, and maybe JAX wants that to be on the default device, the GPU.  So it moves the entire
+"parent" array there, extracts that item, and then returns that.  Then next time around
+when we ask for the next item, it does the same thing again.&lt;/p&gt;
+
+&lt;p&gt;Plausible?  Maybe, but it does sound a bit pathological!&lt;/p&gt;
+
+&lt;p&gt;Anyway, at the end of the day, I have a solid new heuristic of my own: if you want something
+to definitely be on some specific device, make sure that you nail it down there with
+&lt;code&gt;device_put&lt;/code&gt;.  And then you won't have commitment issues like these.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">/2026/06/jax-commitment-issues</guid>
+      <pubDate>Mon, 15 Jun 2026 21:30:00 +0000</pubDate>
+    </item>
     <item>
       <title>JAX backends and devices</title>
       <link>https://www.gilesthomas.com/2026/06/jax-backends-and-devices</link>
@@ -3944,182 +4093,6 @@ on to the final steps in my LLM from scratch journey.  See you then!&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests</guid>
       <pubDate>Mon, 20 Apr 2026 20:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>How an LLM becomes more coherent as we train it</title>
-      <link>https://www.gilesthomas.com/2026/04/how-an-llm-becomes-more-coherent-over-training</link>
-      <description>&lt;p&gt;I remember finding it interesting when, back
-in 2015, Andrej Karpathy posted about RNNs and
-&lt;a href="https://karpathy.github.io/2015/05/21/rnn-effectiveness/#the-evolution-of-samples-while-training"&gt;gave an example of how their output improves over the course of a training run&lt;/a&gt;.
-What might that look like for a (relatively) modern transformers-based LLM?&lt;/p&gt;
-
-&lt;p&gt;I recently trained a GPT-2-small-style LLM, with 163 million parameters, on about
-3.2 billion tokens (that's about 12.8 GiB of text) from the Hugging Face
-&lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb"&gt;FineWeb&lt;/a&gt; dataset, and
-over the course of that training run, I saved the current model periodically
--- 57 checkpoints over two days.&lt;/p&gt;
-
-&lt;p&gt;Here's what it looked like -- the start, the end, and some interesting waypoints
-in between.&lt;/p&gt;
-&lt;p&gt;For each checkpoint, I asked it to generate a completion to the words "Every effort
-moves you". &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;  When the model was first created, before any training had been done, it
-came up with this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves youhhhh esoteric Suns 1896ricia enormous initially
-speculative arenaelse anth Zimmerman Insight Sketch demonstr despicable
-capitalists clamp flung condemnation
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;If you've read the Karpathy essay, you'll see one important difference -- it's already got words in there.
-His RNNs were generating complete noise at this stage.
-Even by the 100th iteration, he gives an example like this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;tyntd-iafhatawiaoihrdemot  lytdws  e ,tfti, astai f ogoh eoase rrranbyne
-'nhthnee e plia tklrgd t o idoe ns,smtt   h ne etie h,hregtrs nigtike,aoaenns lng
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;That's an important difference between the RNNs he was talking about, which were
-character-based and had to learn about words and the like, and LLMs like this one,
-where the text is input and then output one token at a time.
-(&lt;a href="/2025/08/what-ai-chatbots-are-doing-under-the-hood"&gt;More info here&lt;/a&gt;).&lt;/p&gt;
-
-&lt;p&gt;Still, even though it has what looks like words, it's essentially content-free token
-salad with no structure or coherence &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;.  Let's see what happens if we train it more.&lt;/p&gt;
-
-&lt;p&gt;In my training loop, it sees 96 sequences of 1,024 tokens, and then we update it
-based on its loss (an index of how wrong it was at predicting next tokens), so that's 98,304 tokens for each step.
-After 617 of these &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt; it seems to have mostly learned something about which
-tokens are most common:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you and to was, in the, a, The
- your of- and
-| to the The
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;By the next checkpoint at step 1234, we've got
-something that's starting to come together.
-It doesn't make sense, but there's some kind of glimmering of meaning:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you’ll take the rest of the mainstay in all of his team. This
-year with a
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;And just a little while later, at the checkpoint at step 2468, we have something
-that actually makes some kind of sense (at least at the start)!&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you to a different country. For all the most part, a world
-map can only see the world map
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Now, the training data I'm using was scraped from the Internet, and unsurprisingly
-there's a lot of somewhat cheesy business content there.  By step 9255, we're starting
-to get a lot of stuff like this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you forward and it is important to make sure that your
-clients are satisfied. A number of people have
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;...or even more cheesy self-help stuff (step 10489):&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you to be the best that you will ever have. To be your best,
-you should be able to
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;To be fair, the starting point of "Every effort moves you" is probably biasing things
-a bit there.&lt;/p&gt;
-
-&lt;p&gt;But let's be clear: by this point it's seen 1,031,110,656 tokens -- that is, it's about
-one third trained.  And it's coming up with pretty coherent text!  The rest of the training
-run is more about refining things -- the loss chart for this training run looks like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation/interventions-loss-chart.png" alt="The loss chart for the local interventions train" title="The loss chart for the local interventions train" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Loosely speaking, the lower the loss number, the better the model is, so you can see that the bulk of the improvement had happened by this point.
-From here on, I'll just give a few of the more interesting samples:&lt;/p&gt;
-
-&lt;p&gt;By step 14191, it's started using bullet points...&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you towards your goals.
-- Develop meaningful habits or habits that promote your business
-- Keep personal and
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Step 24680 -- more motivational stuff:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you forward and keeps you motivated. You make sure you don’t
-leave it alone.
-A
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Step 25297 -- small models like this do like repeating themselves.  You might remember
-seeing ChatGPT output back in 2023 or so that had tics like this:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you from a simple position to a complex issue of complexity
-and complexity.
-As soon as the book takes
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;And again at step 26531&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you, the company, the company, the community and all those
-involved. I will be pleased to say
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;At step 27765 it decides that it has had enough after generating just a couple of
-words and tries to start a new document:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you to the next level.&amp;lt;|endoftext|&amp;gt;Hip Hop: The New York
-Times, April 23, 2017
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;But step 28382 is actually rather good.  I particularly like the "however":&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you, however, towards a better future, and that’s what counts
-as a win.
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;And finally, the training run finishes at step 33164 with these wise words of caution:&lt;/p&gt;
-
-&lt;pre&gt;&lt;code&gt;Every effort moves you, and you’re rewarded, but not to your potential. You’ve
-got to
-&lt;/code&gt;&lt;/pre&gt;
-
-&lt;p&gt;Well worth remembering, I'm sure we can all agree.  I wonder what deep wisdom
-we'd have gained if I had asked it to generate more than 20 new tokens...&lt;/p&gt;
-
-&lt;p&gt;What I found most surprising when I first
-started playing with this is how &lt;em&gt;fast&lt;/em&gt; even simple LLMs got to a stage where they could generate
-plausible text.  Just one third of the way through the training run, this model
-was making some kind of sense.&lt;/p&gt;
-
-&lt;p&gt;The problem, of course, is that we don't just want generators of plausible content --
-we want that content to make sense and be correct.  And that's why it's worth
-grinding through the other two thirds -- in the hope that when you ask it to complete
-"The capital of France is", it will reply with "Paris" rather than a coherent but
-wrong answer like "Rouen".&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;Technical details: 20 GPT-2 tokens generated on top of the initial text, with
-a temperature of 1.  I've added line breaks to make it easier to read the samples.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-2"&gt;
-&lt;p&gt;Well, it mentions " despicable capitalists", but I suspect that's just randomness
-rather than some kind of primitive political consciousness.  Including the
-space at the start, that's tokens 47034 and 32663 in the GPT-2 tokeniser.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-3"&gt;
-&lt;p&gt;So, 60,653,568 tokens seen.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/04/how-an-llm-becomes-more-coherent-over-training</guid>
-      <pubDate>Fri, 17 Apr 2026 23:30:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
