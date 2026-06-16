@@ -9,7 +9,54 @@
 		
 		</description>
     <language>en</language>
-    <lastBuildDate>Tue, 16 Jun 2026 19:47:03 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 16 Jun 2026 22:17:33 +0000</lastBuildDate>
+    <item>
+      <title>Debugging on Prod </title>
+      <link>https://idiallo.com/blog/debugging-on-prod</link>
+      <description>
+					
+			&lt;p&gt;The worst type of bug is one that only happens on prod. And only on prod. If you checked this blog in the past few weeks, you might have encountered a big fat 500 error.&lt;/p&gt;			&lt;p&gt;I'd had the same design for 10 years, and I wanted something fresh. But who can redesign without also improving the underlying code? I deleted a whole bunch of things: old templates that were never used, &lt;code&gt;post.new7.old.php&lt;/code&gt;, a pile of unused CSS. I just had to.&lt;/p&gt;
+&lt;p&gt;I deployed a first version and all the pages worked just fine. But then I got cocky. I decided to also improve the underlying code using GitHub Copilot. I was vigilant at first, reviewing every single line of generated code. None of it was complex really, just refactoring functions and the like. But along the way, I got lazy. I let the AI update deprecated functions on its own.&lt;/p&gt;
+&lt;p&gt;The next time I deployed, the website returned a 500 error. When I checked the logs, nothing came back. No errors. I looked at running processes and noticed several PHP processes pinned at 100%. I reverted the code, but the server was still stuck. I restarted the web server, restarted PHP-FPM, and neither helped. The only thing that worked was restarting the whole machine.&lt;/p&gt;
+&lt;p&gt;I ran the same code on my own machine and it worked fine. That's when I noticed I was running an older version of PHP on prod: PHP 8.3 vs. PHP 8.4 locally. No problem, I thought, and upgraded prod, which of course failed to fix anything. I waited for nighttime, redeployed the broken code, and debugged line by line until I found that Copilot had gone out of its way to "update" code in the Markdown library I use. If you know anything about Markdown, you know it's complex. This particular change was causing infinite recursion while parsing Markdown. I had no intention of reading through all that code to figure out exactly how it was failing, so I just reverted it.&lt;/p&gt;
+&lt;p&gt;I redeployed and the problem seemed solved. Then I got an email: "Your website is down," a reader wrote in the middle of the night. While my American readers are asleep, Europeans are up bright and early reading my blog, for some reason (thank you, really).&lt;/p&gt;
+&lt;p&gt;So debugging live on production was not an option. I reverted to the old code again. But how was the website still failing after I'd fixed the Markdown issue? And worse, it still worked fine locally. Just in case, I upgraded that very old Markdown library to something cooler and more modern: &lt;a href="https://parsedown.org/"&gt;Parsedown&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;That didn't solve it either. The moment I deployed, the entire website failed, including pages that don't even use Markdown. Now it was personal. How do you debug a website that only fails in prod? I had a few tricks up my sleeve.&lt;/p&gt;
+&lt;p&gt;First, I wrote a bash script to quickly switch between versions of the website. All it really did was flip a symlink between the "latest" folder and another folder I chose arbitrarily.&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language-bash"&gt;&amp;gt; ln -s /path/to/latest/working/version current
+&amp;gt; ln -s /path/to/selected/version current&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Since I run PHP and every request is short-lived, I could switch to the broken version, debug, then switch back to the working version almost instantly. It's not like I have millions of readers hammering my server.&lt;/p&gt;
+&lt;p&gt;This method worked, but it was slow, and it exposed internal information to the thousands of RSS readers scouring my website. Between 30,000 and 60,000 RSS reader requests hit the site daily. I couldn't afford to expose debugging code to that much traffic.&lt;/p&gt;
+&lt;p&gt;So I used a second method: an even better way to debug live on prod without breaking URLs or throwing 500 errors at unsuspecting RSS readers. What if I ran both versions of the site simultaneously? Visit the regular domain and you'd get the latest working version. Visit a custom subdomain and you'd get the broken version.&lt;/p&gt;
+&lt;p&gt;I achieved this by creating a new Apache configuration pointing to the latest (broken) path. This way, I had all the time in the world to debug the issue right on prod, without interfering with regular traffic.&lt;/p&gt;
+&lt;p&gt;I eventually found the root cause. It was an orchestrated failure. Locally, I ran PHP directly. On prod, I ran PHP-FPM. Why the difference? Because Apache on prod runs HTTP/2 that requires an SSL connection, which I didn't need locally, and serving PHP over HTTP/2 requires PHP-FPM. PHP-FPM is essentially a process manager for your PHP instances. That explained the difference between the two setups, but not the actual cause of the bug.&lt;/p&gt;
+&lt;p&gt;The real issue was in my caching mechanism. When a page is served from cache, I set the header:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;X-FROM-CACHE: 1&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;That's just a custom header. When the page isn't from cache, I set the value to &lt;code&gt;0&lt;/code&gt;. Here's the code that sets the headers:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language-php"&gt;public function process() {
+    foreach ($this-&amp;gt;header as $key =&amp;gt; $value) {
+        if (!empty($value)) {
+            header("$key: $value");
+        } else {
+            header("$key");
+        }
+    }
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now, what can go wrong here? When a page isn't served from cache, &lt;code&gt;$value&lt;/code&gt; is set to &lt;code&gt;0&lt;/code&gt;. You see it now, don't you? &lt;code&gt;0 == empty()&lt;/code&gt; evaluates to &lt;code&gt;true&lt;/code&gt; in PHP. So whenever a page wasn't served from cache, or the first time a page was hit after a deployment cleared the cache, this code ran instead:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language-php"&gt;header("X-FROM-CACHE");&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;That's an invalid header. So why did it fail on prod but not locally? Because Apache silently ignores invalid headers, but PHP-FPM doesn't. It throws a 500 error:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;malformed header from script 'index.php': Bad header:
+Error parsing script headers
+AH01075: Error dispatching request to :&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Headers need to follow the key-value rules defined in the internet standards (RFC 9110). Removing the condition and always using &lt;code&gt;header("$key: $value")&lt;/code&gt; solved the problem.&lt;/p&gt;
+&lt;hr /&gt;
+&lt;p&gt;The blog engine runs on multiple machines I own locally. I never had to worry about the setup because both apache and php are tolerant to mistakes. In a talk, Rasmus Lerdorf once said that PHP works better when you don't know what you are doing. The header condition has its uses. For example, if you want to set that a page is 404 you can return:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language-php"&gt;header("HTTP/1.0 404 Not Found");&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;But I don't use this in my case. While copilot was of some help, it's a reminder that LLM generated code is to be treated with scrutiny. It reinforces my belief that I can never &lt;a href="https://idiallo.com/blog/i-can-never-embrace-llms-to-write-code"&gt;truly become a 10x engineer&lt;/a&gt;, because the more code I generate the more I have to review. And the more I trust it, the more likely it will bite my behind.&lt;/p&gt;			
+				</description>
+      <guid isPermaLink="true">https://idiallo.com/blog/debugging-on-prod</guid>
+      <pubDate>Tue, 16 Jun 2026 20:18:00 +0000</pubDate>
+    </item>
     <item>
       <title>I can never fully embrace LLMs for code </title>
       <link>https://idiallo.com/blog/i-can-never-embrace-llms-to-write-code</link>
@@ -72,7 +119,10 @@ function Navbar() {
     &amp;lt;/nav&amp;gt;
   );
 }&lt;/code&gt;&lt;/pre&gt;
-&lt;p&gt;Please, just use a native link and you won't have to worry about anything else.&lt;/p&gt;			
+&lt;p&gt;Please, just use a native link and you won't have to worry about anything else.&lt;/p&gt;
+&lt;hr /&gt;
+&lt;p&gt;&lt;strong&gt;Honorable mention:&lt;/strong&gt; a reader shared this one:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language-js"&gt;&amp;lt;a href="javascript:window.open('/home')"&amp;gt;Home&amp;lt;/a&amp;gt;&lt;/code&gt;&lt;/pre&gt;			
 				</description>
       <guid isPermaLink="true">https://idiallo.com/blog/use-a-link-please</guid>
       <pubDate>Wed, 10 Jun 2026 20:30:00 +0000</pubDate>
@@ -286,41 +336,6 @@ function Navbar() {
 				</description>
       <guid isPermaLink="true">https://idiallo.com/blog/the-commencement-speech-that-shook-the-world</guid>
       <pubDate>Sat, 23 May 2026 01:14:24 +0000</pubDate>
-    </item>
-    <item>
-      <title>How to Talk to Your Coworkers </title>
-      <link>https://idiallo.com/blog/how-to-talk-to-your-coworkers</link>
-      <description>
-					
-			&lt;p&gt;You know you've explained the same issue before in two or three different places, yet here they are asking again. Why don't they understand you? Why do they ask the same question when you've already given them the answer right there on Jira? Are they stupid? Lazy, maybe? Do they not take the time to read?&lt;/p&gt;			&lt;p&gt;I often hear this from developers. They write clear documentation and instructions, and people still bother them to hop on a call. This happens so frequently that I think it is worth addressing. An over-abundance of information is just as confusing as too little. But something I should add is that repetition is normal. In fact, repetition should be a tool you use frequently.&lt;/p&gt;
-&lt;p&gt;To do our jobs as developers, we read instructions. Our tasks are usually carefully written and specced out as a document we can implement and check off. There are usually bullet points, requirements, and acceptance criteria. Sometimes, you could implement a feature by following the instructions without even knowing or understanding what the feature actually does.&lt;/p&gt;
-&lt;p&gt;In other jobs, non-technical people derive their work from conversation. A lossy format. For example, when a non-technical manager wants a new feature, they'll have a conversation with a software architect. A conversation that the architect then has to turn into a spec that a developer can implement.&lt;/p&gt;
-&lt;p&gt;One group talks in instructions, the other in conversations. Which is why they often talk past each other.&lt;/p&gt;
-&lt;p&gt;Whenever I hear developers complain that someone keeps pestering them with questions they've already answered, I know it's because they're speaking two different languages.&lt;/p&gt;
-&lt;p&gt;Just because you provided an answer doesn't mean everyone saw it or understood it. You might think you're giving a fine explanation of how a feature works by describing how the different APIs interact. But you fail to see that your audience has no frame of reference for understanding that APIs are supposed to work together, or what an API even is.&lt;/p&gt;
-&lt;p&gt;In that same vein, a manager who wants to have meetings and conversations about every step of development might find that people are declining their invites. For that manager, meetings and discussions are how work gets done, while others are expecting purely documented instructions.&lt;/p&gt;
-&lt;p&gt;In simple terms, the answer to this problem is: &lt;strong&gt;Translate and Repeat.&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;By translation, I don't mean language, I mean frame of reference. There is always a temptation to provide all available information, whether it's too technical or too detailed. Again, too much information &lt;code&gt;===&lt;/code&gt; no information. Instead of explaining how you are solving a problem, focus on what your solution does.&lt;/p&gt;
-&lt;p&gt;For example, I recently worked on a widget that was showing the incorrect number of sales for the month, and only a handful of customers were complaining. Long story short, it turned out that running a job at what we call nighttime is someone else's daytime. Those customers were accessing the widget before the job ran, and the data was cached for a full day. Meaning they were seeing stale data for up to 24 hours. Our fix involved revamping how we display data, we removed caching and created a de-normalized table that updates in real time, eliminating the need for a complex query.&lt;/p&gt;
-&lt;p&gt;Internally, we had created new APIs and restructured database tables. What looked like a handful of numbers on the UI was far more complicated under the hood. But when explaining this to a manager, they don't need to know about the cron job, the caching strategy, or how the old system compared to the new one.&lt;/p&gt;
-&lt;p&gt;All they need to know is:&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;"We've updated the widget to display real-time data, and we've added a smarter caching strategy for performance."&lt;/p&gt;
-&lt;/blockquote&gt;
-&lt;p&gt;That's the whole answer. If they want the nitty-gritty details, we can have a separate conversation.&lt;/p&gt;
-&lt;p&gt;But developers often start with the technical autopsy first because that's what we would want if another developer asked us. We want the root cause, the stack trace, the PR link. The problem is, different audiences require different information.&lt;/p&gt;
-&lt;p&gt;While leading with the technical breakdown might make you sound thorough in a meeting, non-technical attendees will walk out clueless and ping you on Slack asking the same questions. The goal isn't to eliminate questions entirely. In fact, no matter how well you tailor your message to your audience, someone will still come back with the same question you already answered. That's exactly why repetition matters.&lt;/p&gt;
-&lt;p&gt;It's fascinating to watch children learn. When I'm doing first-grade math with my kids, we use the same strategy for additions and subtractions. At first, it just doesn't click. I count on my fingers, I use popsicle sticks, and to make it fun I even use my toes. My method doesn't always make sense to them. We'll complete a whole packet of homework and I can tell they're just going through the motions. But we repeat it every day, the same way, no deviation. And somehow, eventually, they just know how to do the math.&lt;/p&gt;
-&lt;p&gt;Not to compare your coworkers to children, but repetition works the same way on everyone. Every time they hear your explanation, they pick up one or two more pieces of it. When you keep saying "we upgraded the payment SDK," they don't know what that means, and stopping to explain that one concept isn't going to unlock the whole picture. But maybe they Google "SDK" on their own later. Then "payment SDK." The next time you repeat your explanation, they're better equipped to follow along. Each repetition gets them a little closer to understanding the full picture.&lt;/p&gt;
-&lt;p&gt;The same applies to managers who rely on conversation to communicate with developers. While it can be hard to extract a clear requirement from a meeting, the information is in there. It just needs to be surfaced and shaped. And honestly a conversation is often a good way to kick things off. &lt;/p&gt;
-&lt;p&gt;Imagine if the manager came in with rigid, detailed instructions while having no understanding of how the codebase actually works. Through conversation, a feature can take shape. Developers can push back, raise concerns, and adjust the scope to something realistic for the current state of the infrastructure.&lt;/p&gt;
-&lt;p&gt;That back and forth is what filters raw ideas into actionable instructions.&lt;/p&gt;
-&lt;hr /&gt;
-&lt;p&gt;So when you post a Jira comment or Slack message with a detailed explanation of the authentication flow and token expiry logic and it goes ignored, it's not because your coworker is lazy. It was ignored because it was written in a language they don't speak. They asked again not to annoy you, but because they couldn't extract the answer they needed from what you gave them.&lt;/p&gt;
-&lt;p&gt;You don't need to write longer comments or bold more words. Instead, ask yourself whether what you wrote was intended for the right audience, then translate it into something digestible. And be prepared to repeat it a few more times until it lands.&lt;/p&gt;			
-				</description>
-      <guid isPermaLink="true">https://idiallo.com/blog/how-to-talk-to-your-coworkers</guid>
-      <pubDate>Fri, 22 May 2026 19:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
