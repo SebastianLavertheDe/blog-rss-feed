@@ -5,7 +5,339 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Wed, 17 Jun 2026 00:22:23 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 17 Jun 2026 06:19:15 +0000</lastBuildDate>
+    <item>
+      <title>Flax debugging: making a hash of things</title>
+      <link>https://www.gilesthomas.com/2026/06/hashing-jax-parameters</link>
+      <description>&lt;p&gt;I was debugging an issue with a JAX/Flax NNX training loop the other day, and found a neat
+little trick to help debug it.  Specifically, I wanted to see if the issue
+was with my model, my loss function, my optimiser settings, or the "plumbing" of the
+training loop itself -- were gradients actually coming through and being applied to the parameters?&lt;/p&gt;
+
+&lt;p&gt;I could print out the loss and the gradients, but printing out the parameters to see
+if they were changing was unhelpful -- any given update might only change a small number
+of parameters, or might change them such a small amount that I'd not notice -- especially given
+that the model had 77 million of them!&lt;/p&gt;
+
+&lt;p&gt;Let's take a look.&lt;/p&gt;
+&lt;h3 id="the-worlds-worst-llm"&gt;The world's worst LLM&lt;/h3&gt;
+
+&lt;p&gt;I am building an LLM from scratch in JAX and Flax NNX, and at this stage I'm trying to
+get the training loop right.  As a simple test, I've just implemented the "shell" of
+the LLM -- the token embeddings on the input side, and the final linear layer for an
+output head, wired directly together.  My plan was to train that so that given a sequence, instead of predicting
+next tokens for each position, it would "predict" the sequence itself -- that is, I might
+train it with the input&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;The fat cat sat on the mat&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and the target&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;The fat cat sat on the mat&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...rather than the normal setup for an LLM, where you feed it&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;The fat cat sat on the&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and give it targets of&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;fat cat sat on the mat&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So, in LLM terms, I'd be training a model to project from vocab space to a learned embedding
+space where each token had a distinct-enough embedding for the output head to be able
+to reliably project back to logits in vocab space.  There's
+&lt;a href="/2025/05/llm-from-scratch-15-from-context-vectors-to-logits"&gt;a bit of background here if that was all Greek to you&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Here's the core part of the code I was working with, the &lt;code&gt;train_step&lt;/code&gt; function, which
+seems to be the traditional JAX name for the JITted part of your code that does the
+forward pass through the model, works out the gradients, and then applies them to update
+the model:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="nd"&gt;@jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;
+&lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;train_step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;value_and_grad&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;)(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;loss&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I'd based it on the &lt;a href="https://flax.readthedocs.io/en/stable/#basic-usage"&gt;"Basic Usage" example&lt;/a&gt; that's
+currently right there on the front page of the Flax site.  Seasoned Flax veterans will probably
+spot the issue right away, but it wasn't obvious to me -- so it was time to dig in.&lt;/p&gt;
+
+&lt;h3 id="dealing-with-loss"&gt;Dealing with loss&lt;/h3&gt;
+
+&lt;p&gt;The problem was that loss was not dropping -- indeed, taken to two decimal places, it was stuck at 10.82. The digits
+to the right of that changed for each batch, but the first four did not.  Now, this model was
+using the GPT-2 tokeniser, and 10.82 is exactly the loss that you'd expect if the model
+was essentially guessing randomly -- if you convert it to
+&lt;a href="/2025/10/llm-from-scratch-21-perplexed-by-perplexity"&gt;perplexity&lt;/a&gt; by
+calculating &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;e&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;10.82&lt;/mn&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;, you get about 50,011 -- which is very close to the GPT-2
+vocab size of 50,257.  Perplexity is, loosely, the number of tokens that the model
+was trying to choose between for a typical input -- so a perplexity equal to the vocab size
+is what you'd expect of a random model that is getting it right about one in 50,257
+times.&lt;/p&gt;
+
+&lt;p&gt;That said, getting that loss consistently was a solid validation of my loss function!
+It's vanishingly unlikely that it would have been getting that specific number so consistently
+if I'd made a mess of that.  The tiny variations I was seeing in the third and subsequent
+decimal places would make sense, as they could easily be due to the variations in the
+contents of the different batches.&lt;/p&gt;
+
+&lt;h3 id="gradient-descent-into-madness"&gt;Gradient descent into madness&lt;/h3&gt;
+
+&lt;p&gt;So was it that the gradients were somehow zero, or NaNs, or something else that couldn't
+be usefully applied to the model by the optimiser?  I printed them out in the &lt;code&gt;train_step&lt;/code&gt;
+function (removing the &lt;code&gt;jit&lt;/code&gt; decorator, as otherwise the &lt;code&gt;print&lt;/code&gt;s would only get executed
+in the initial JIT pass through the function to compile it -- not when it had actual data &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;).&lt;/p&gt;
+
+&lt;p&gt;The result was values like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;State({&lt;/span&gt;
+&lt;span class="go"&gt;  &amp;#39;output_head&amp;#39;: {&lt;/span&gt;
+&lt;span class="go"&gt;    &amp;#39;kernel&amp;#39;: Param( # 38,597,376 (154.4 MB)&lt;/span&gt;
+&lt;span class="go"&gt;      value=Array([[-2.6879393e-06, -1.2799728e-04,  2.6441864e-09, ...,&lt;/span&gt;
+&lt;span class="go"&gt;              -1.0780521e-09, -1.9232946e-09,  1.2057198e-04],&lt;/span&gt;
+&lt;span class="go"&gt;             [ 7.2428256e-06, -9.0873800e-05,  1.9621261e-08, ...,&lt;/span&gt;
+&lt;span class="go"&gt;               1.9959407e-08,  2.0515712e-08, -1.1401048e-06],&lt;/span&gt;
+&lt;span class="go"&gt;             [-2.4080187e-05,  1.0717572e-04, -4.7910085e-09, ...,&lt;/span&gt;
+&lt;span class="go"&gt;              -7.3136892e-09, -5.4990306e-09,  1.4717734e-04],&lt;/span&gt;
+&lt;span class="go"&gt;             ...,&lt;/span&gt;
+&lt;span class="go"&gt;             [ 1.9500087e-05,  1.4264552e-05, -3.0880422e-08, ...,&lt;/span&gt;
+&lt;span class="go"&gt;              -3.0595814e-08, -3.7087858e-08, -1.2066610e-06],&lt;/span&gt;
+&lt;span class="go"&gt;             [ 1.8085115e-05,  7.6247423e-05, -3.0720415e-08, ...,&lt;/span&gt;
+&lt;span class="go"&gt;              -3.1052533e-08, -3.1693808e-08, -9.7857817e-05],&lt;/span&gt;
+&lt;span class="go"&gt;             [ 5.2281484e-06, -1.4398852e-04,  6.2573882e-08, ...,&lt;/span&gt;
+&lt;span class="go"&gt;               5.5977843e-08,  6.6571232e-08, -1.0639715e-05]], dtype=float32)&lt;/span&gt;
+&lt;span class="go"&gt;    )&lt;/span&gt;
+&lt;span class="go"&gt;  },&lt;/span&gt;
+&lt;span class="go"&gt;  ...&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Those looked plausible enough -- pretty small, but not so tiny that I'd expect them
+to have no effect at all with my learning rate of 0.0014.  It was time to dig into
+the training loop's plumbing.&lt;/p&gt;
+
+&lt;h3 id="plumbing-the-depths"&gt;Plumbing the depths&lt;/h3&gt;
+
+&lt;p&gt;The obvious suspect was the update step -- was that call to &lt;code&gt;optimizer.update&lt;/code&gt; actually changing
+the parameters at all?  Flax's NNX API is a bit odd compared to the normal
+&lt;a href="https://www.gilesthomas.com/2026/05/on-first-looking-into-jax"&gt;JAX functional way of doing things&lt;/a&gt;.
+In vanilla JAX code you would expect to do something like this to apply gradients:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;new_parameters&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tree&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;map&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+        &lt;span class="k"&gt;lambda&lt;/span&gt; &lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;g&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;p&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="n"&gt;g&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;learning_rate&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;old_parameters&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="n"&gt;grads&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+    &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That is, you get the new parameters by applying a transformation to the old ones.&lt;/p&gt;
+
+&lt;p&gt;NNX, by contrast, is more PyTorch-flavoured.  It updates the parameters in-place,
+using a function with a side effect of mutating one of its parameters:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...rather than something more functional like this imaginary API:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;model&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;apply&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I could easily imagine that I'd got something wrong that would break that in-place update, as it has
+the feel of something that would have to be quite delicately implemented on top of a
+functional system like JAX.&lt;/p&gt;
+
+&lt;p&gt;But how could I see whether the parameters were changing, when there were 77 million
+of them and they would be being updated (based on gradients like -2.6879393e-06 and
+a learning rate of 1.4e-3) in the ninth decimal place or beyond?  Printing the arrays out
+was a non-starter!&lt;/p&gt;
+
+&lt;h3 id="hashing-it-out"&gt;Hashing it out&lt;/h3&gt;
+
+&lt;p&gt;After a little thought, I realised that the solution was to use hashes.  Even tiny
+changes in the parameters' values would change their hashes drastically.  So if the parameters
+were not being updated, as I suspected, I'd see constant hashes.  If they were being updated,
+even by a minuscule amount, then the hashes would change.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://github.com/jax-ml/jax/discussions/8352"&gt;This GitHub discussion&lt;/a&gt; pointed me
+in the right direction: if I could get the parameters as pure JAX arrays, I could do this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;np&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;asarray&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;some_array&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tobytes&lt;/span&gt;&lt;span class="p"&gt;()))&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...where &lt;code&gt;np&lt;/code&gt; is just &lt;code&gt;numpy&lt;/code&gt;.  That would produce a hash that was stable for the life of
+this run -- the same parameters would always have the same hash, and different ones would
+differ, just as we want.  It could vary from run to run (Python uses different hash seeds in
+each new interpreter), but that wouldn't matter for
+this kind of debugging.&lt;/p&gt;
+
+&lt;p&gt;I wasn't sure what the structure of my Flax model's parameters was, but printing them out
+in the training loop told me:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Embed( # Param: 38,597,376 (154.4 MB)&lt;/span&gt;
+&lt;span class="go"&gt;  embedding=Param( # 38,597,376 (154.4 MB)&lt;/span&gt;
+&lt;span class="go"&gt;    value=Array(shape=(50257, 768), dtype=dtype(&amp;#39;float32&amp;#39;))&lt;/span&gt;
+&lt;span class="go"&gt;  ),&lt;/span&gt;
+&lt;span class="go"&gt;  ...&lt;/span&gt;
+&lt;span class="go"&gt;)&lt;/span&gt;
+&lt;span class="go"&gt;Linear( # Param: 38,597,376 (154.4 MB)&lt;/span&gt;
+&lt;span class="go"&gt;  kernel=Param( # 38,597,376 (154.4 MB)&lt;/span&gt;
+&lt;span class="go"&gt;    value=Array(shape=(768, 50257), dtype=dtype(&amp;#39;float32&amp;#39;))&lt;/span&gt;
+&lt;span class="go"&gt;  ),&lt;/span&gt;
+&lt;span class="go"&gt;  ...&lt;/span&gt;
+&lt;span class="go"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So, guided by that, I added these lines to the training loop:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;np&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;asarray&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;token_embedding&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;embedding&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tobytes&lt;/span&gt;&lt;span class="p"&gt;()))&lt;/span&gt;
+&lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;np&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;asarray&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;output_head&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;kernel&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tobytes&lt;/span&gt;&lt;span class="p"&gt;()))&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Obviously copying the arrays around and converting them like that would slow things
+down, but for debugging purposes, it looked solid.&lt;/p&gt;
+
+&lt;p&gt;I kicked off the training loop, and the problem was clear:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;  0%|                         | 43/530640 [00:06&amp;lt;13:39:02, 10.80it/s, loss=10.824, tps=43,576]&lt;/span&gt;
+&lt;span class="go"&gt;5694185712877458479&lt;/span&gt;
+&lt;span class="go"&gt;-5759723708627894111&lt;/span&gt;
+&lt;span class="go"&gt;  0%|                         | 43/530640 [00:06&amp;lt;13:39:02, 10.80it/s, loss=10.824, tps=43,897]&lt;/span&gt;
+&lt;span class="go"&gt;5694185712877458479&lt;/span&gt;
+&lt;span class="go"&gt;-5759723708627894111&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and so on.  The hashes were not changing, so the model's parameters were not being
+updated, even by a tiny amount. Gotcha!&lt;/p&gt;
+
+&lt;p&gt;The problem turned out, as I had suspected, to be related to the in-place updates that
+NNX does.  Like I said earlier, I'd based my training loop on the "Basic Usage" example on the Flax site --
+but I'd messed up one important thing.  I had this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="nd"&gt;@jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;
+&lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;train_step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;value_and_grad&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;calculate_loss&lt;/span&gt;&lt;span class="p"&gt;)(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;targets&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;loss&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and they had this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="nd"&gt;@nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;  &lt;span class="c1"&gt;# automatic state propagation&lt;/span&gt;
+&lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;train_step&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+  &lt;span class="n"&gt;loss_fn&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="k"&gt;lambda&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;**&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+  &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;value_and_grad&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;loss_fn&lt;/span&gt;&lt;span class="p"&gt;)(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;grads&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;  &lt;span class="c1"&gt;# in-place updates&lt;/span&gt;
+  &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;loss&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;You can see a number of differences -- for example, they're baking the inputs and targets into
+the lambda they're using for the loss function through a lexical closure, and that means
+that they're only passing in the model to the version of it wrapped in &lt;code&gt;value_and_grad&lt;/code&gt;.  But
+none of that matters!   The real difference is actually nicely highlighted with a comment,
+but I'd completely managed to miss it.  Right at the start, where I had &lt;code&gt;@jax.jit&lt;/code&gt;, they had this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="nd"&gt;@nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;  &lt;span class="c1"&gt;# automatic state propagation&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;It 100% makes sense that in order to support this kind of non-functional, in-place
+updating of the model's parameters, you have to have a modified version of the JIT
+decorator.  And I was just using the standard, functional pure-JAX one.&lt;/p&gt;
+
+&lt;p&gt;Fixing that fixed the problem:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;  0%|                         | 1/530640 [00:06&amp;lt;903:18:25,  6.13s/it, loss=10.824, tps=1,003]&lt;/span&gt;
+&lt;span class="go"&gt;5024998356359528747&lt;/span&gt;
+&lt;span class="go"&gt;-4835662927486742764&lt;/span&gt;
+&lt;span class="go"&gt;  0%|                         | 2/530640 [00:06&amp;lt;397:16:33,  2.70s/it, loss=10.785, tps=1,914]&lt;/span&gt;
+&lt;span class="go"&gt;6231090084827524676&lt;/span&gt;
+&lt;span class="go"&gt;8293831317336780907&lt;/span&gt;
+&lt;span class="go"&gt;  0%|                         | 3/530640 [00:06&amp;lt;228:14:32,  1.55s/it, loss=10.741, tps=2,791]&lt;/span&gt;
+&lt;span class="go"&gt;7896237091035346857&lt;/span&gt;
+&lt;span class="go"&gt;-7117477486466304738&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;The hashes were changing!  And even better, if you scroll to the right you'll see
+that loss was slowly dropping.  After 10k or so iterations, I was seeing 0.000: I had my do-nothing "LLM"
+working.&lt;/p&gt;
+
+&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
+
+&lt;p&gt;A satisfying debugging journey -- and while I don't think I'll make this specific
+mistake in the future, I think that the parameter-hashing trick is actually a really useful
+trick for the toolbox.  If you're uncertain as to whether your parameters are being
+updated, just looking at them probably won't help.  But looking at their hashes can help
+you find out whether anything is changing.&lt;/p&gt;
+
+&lt;p&gt;And I think that the pattern that I used to zoom in on it is a useful one, too.  I always
+track loss, so it's a good starting point (indeed, seeing that it wasn't falling was what
+told me that something was going wrong).  But checking that it has a sane -- or ideally, as
+in this case, a meaningful -- value is a nice sanity check that we have a working loss function
+and a model that isn't doing something completely pathological.  Moving on from there to
+checking that some kind of gradients are flowing through is a solid next move (and might
+become increasingly interesting with deeper models where &lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;they can vanish or explode&lt;/a&gt;).
+Then finally we can check the parameters -- in particular, are they changing? &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;Let's see how many new tricks I pick up as I work through this LLM project.&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;I always forget that &lt;code&gt;jax.debug.print&lt;/code&gt; exists -- I could have used that instead,
+and kept the JIT.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;Something's slightly broken in my brain and I keep reading that as "is our parameters
+changing" &lt;a href="https://www.goodreads.com/quotes/273762-rarely-is-the-question-asked-is-our-children-learning"&gt;in George W. Bush's voice&lt;/a&gt;.  Maybe I can stop that from happening by inflicting it on
+my readers instead.  You're welcome.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/06/hashing-jax-parameters</guid>
+      <pubDate>Wed, 17 Jun 2026 02:40:00 +0000</pubDate>
+    </item>
     <item>
       <title>10Gb/s Ethernet: switching to a Broadcom SFP+ module</title>
       <link>https://www.gilesthomas.com/2026/06/10g-ethernet-switching-to-broadcom-sfp-plus</link>
@@ -3262,101 +3594,6 @@ framework I should use, and the winner was JAX -- and so that's what's coming ne
 </description>
       <guid isPermaLink="true">/2026/04/llm-from-scratch-33-what-i-learned-from-the-appendices</guid>
       <pubDate>Wed, 22 Apr 2026 17:30:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Writing an LLM from scratch, part 32m -- Interventions: conclusion</title>
-      <link>https://www.gilesthomas.com/2026/04/llm-from-scratch-32m-interventions-conclusion</link>
-      <description>&lt;p&gt;Last November, when I finished the main body of
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
-I &lt;a href="/2025/11/llm-from-scratch-27-whats-left-and-whats-next"&gt;set myself a number of follow-on goals&lt;/a&gt;.
-One was "training the full GPT-2 base model myself".&lt;/p&gt;
-
-&lt;p&gt;I've reached the end of that journey, with a model that is almost -- if not quite
--- as good as GPT-2 small, trained in 44 hours on my own machine,
-so I thought it would be worth summarising
-how it went.&lt;/p&gt;
-&lt;p&gt;In December, &lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;I trained my first model&lt;/a&gt;,
-taking two days,
-but was disappointed to see that it was worse in terms of loss, and in terms
-of how well it could be fine-tuned to follow instructions, than the original GPT-2 model.&lt;/p&gt;
-
-&lt;p&gt;I expected that a chunk of that difference was likely to be due to the original model having
-been trained for longer, but also noticed that there were a number of changes -- interventions -- that
-I could make to the model and the training run, and I thought they might help.&lt;/p&gt;
-
-&lt;p&gt;In January, I &lt;a href="/2026/01/llm-from-scratch-29-ddp-training-a-base-model-in-the-cloud"&gt;got a DDP training system together&lt;/a&gt;
-that would allow me to iterate on those interventions without having to wait for
-two days for each result.&lt;/p&gt;
-
-&lt;p&gt;In February, I got started by &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;training a baseline model in the cloud&lt;/a&gt;,
-and
-I've since ground through all of the interventions, and come up with
-a set that lowered the loss nicely, both &lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;in the cloud&lt;/a&gt;,
-and &lt;a href="/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation"&gt;locally&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Along the way, I've learned about, or refined my knowledge of, a bunch of ML concepts.
-In increasing order of how they helped with the loss (with the first two actually making
-it slightly worse):&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;&lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;Weight tying&lt;/a&gt;, which
-I found made the loss worse, but it was interesting how simple it was to implement.&lt;/li&gt;
-&lt;li&gt;PyTorch's &lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;Automated Mixed Precision&lt;/a&gt;,
-which also harmed the loss a tiny bit, but
-had the benefit of making training twice as fast, and 66% cheaper in the cloud
--- well worth the loss penalty.&lt;/li&gt;
-&lt;li&gt;&lt;a href="/2026/02/llm-from-scratch-32b-interventions-gradient-clipping"&gt;Gradient clipping&lt;/a&gt; -- a cheap,
-but (somewhat to my surprise) not particularly effective intervention for this model.&lt;/li&gt;
-&lt;li&gt;&lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;QKV bias&lt;/a&gt; -- that is,
-adding bias to the attention weight matrices -- which also helped a tiny bit, though
-I later felt that this might have been in the noise.&lt;/li&gt;
-&lt;li&gt;&lt;a href="/2026/03/llm-from-scratch-32f-interventions-weight-decay"&gt;Weight decay&lt;/a&gt; -- more effective,
-and something
-that's simple enough to understand with simple gradient descent.  I still need to
-learn more about it in
-the context of optimisers, though -- particularly with AdamW.&lt;/li&gt;
-&lt;li&gt;&lt;a href="/2026/02/llm-from-scratch-32c-interventions-removing-dropout"&gt;Dropout&lt;/a&gt;, which
-seems to be less than useful for single-epoch training: removing it
-helped the model quite a lot.&lt;/li&gt;
-&lt;li&gt;&lt;a href="/2026/03/llm-from-scratch-32e-interventions-learning-rate"&gt;The learning rate&lt;/a&gt;,
-which I built up quite a lot of new knowledge about, and by both increasing it
-and scheduling it, I got the biggest bang for the buck.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I've also learned how to &lt;a href="/2026/01/custom-automodelforcausallm-frompretrained-models-on-hugging-face"&gt;upload my custom models to Hugging Face&lt;/a&gt;,
-found out some &lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;interesting things about how random noise affects training&lt;/a&gt;,
-and come up with improvements in the setup I have for using an
-&lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;LLM as a judge for instruction fine-tuned models&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;There was a bit of a mystery when I tried out the instruction fine-tuning tests,
-though.  Although two of my models were very close to GPT-2 small in terms of loss,
-&lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests"&gt;I found&lt;/a&gt;
-that while one of them had an instruction fine-tuning result that was likewise close
-to GPT-2 small, the other was &lt;em&gt;much&lt;/em&gt; worse!  A mystery to dig into later, I think.&lt;/p&gt;
-
-&lt;p&gt;But it was still very satisfying that my best model -- trained locally in 44 hours
--- was almost as good as GPT-2 small, even if it did fall somewhat short.  So on that
-positive note, I'm going to wrap up this "Interventions" series-within-a-series, and move
-on to the two other things I wanted to do before wrapping up the "LLM from scratch" series
-as a whole:&lt;/p&gt;
-
-&lt;ol&gt;
-&lt;li&gt;Going through the appendices in the book to see if there's anything I want
-to highlight there.&lt;/li&gt;
-&lt;li&gt;The final test as to whether I've really understood everything: building my own
-LLM from scratch without reference to the book.  I want to do that in a different
-framework, not PyTorch, to minimise the risk of just regurgitating code --
-I asked people on X/Twitter which one I should use, and
-&lt;a href="https://x.com/gpjt/status/1985434030880293004"&gt;the winner was JAX&lt;/a&gt; -- so it should be interesting to see how that goes!&lt;/li&gt;
-&lt;/ol&gt;
-
-&lt;p&gt;The appendices first, I think -- I'll post about them shortly.  But I think the big
-one will be the JAX implementation -- really looking forward to that.&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/04/llm-from-scratch-33-what-i-learned-from-the-appendices"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">/2026/04/llm-from-scratch-32m-interventions-conclusion</guid>
-      <pubDate>Tue, 21 Apr 2026 18:15:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
