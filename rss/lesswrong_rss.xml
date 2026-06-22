@@ -5,7 +5,1151 @@
     <link>https://www.lesswrong.com</link>
     <description>A community blog devoted to refining the art of rationality</description>
     <language>en</language>
-    <lastBuildDate>Mon, 22 Jun 2026 04:52:24 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 22 Jun 2026 10:44:24 +0000</lastBuildDate>
+    <item>
+      <title>Naturally learned behaviors in deep MLPs resist detection by both human and learned algorithms</title>
+      <link>https://www.lesswrong.com/posts/EsiLnZGDHpYoZXGAh/naturally-learned-behaviors-in-deep-mlps-resist-detection-by</link>
+      <description>&lt;h2&gt;&lt;span&gt;TLDR: &lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;We ask whether you can recover the secrets an MLP has memorized, from its weights or via black-box queries, a toy version of the "eliciting bad contexts" problem for LLMs. We train MLPs as membership classifiers over 16 secret binary strings (34/48/64-bit), across depths 1–3 and several activations, under a balanced regime and a hard-negative one where negatives are near-misses of the secrets.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Two findings:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;Hard negatives + depth make the secrets resist input-optimization. Under balanced training the secrets stay broadly extractable at every depth (≥9.5/16). But with hard negatives and depth &amp;gt;1, recovery collapses to near random-sampling levels: our GCG-style battery (ICM hill-climbs, grad+sign, GCG, neuron seeds) gets ≈0/16 on the 3-layer organisms, despite essentially perfect memorization.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Learned weight-readers help, but only a little. A transformer mapping organism weights to a distribution over strings beats input-optimization on the 64-bit 3-layer case (1.82/16 at top-16, 3.28 at top-1024, vs ≈0 for the battery), but still recovers only a small fraction, and the 34-bit reader fails to outperform neuron-hillclimbing.&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;span&gt;So an ordinary training setup with no deliberately obfuscated computation, just memorization with hard negatives, is enough to implant secrets that resist detection by both human-made input-optimization algorithms and learned algorithms. This makes it a candidate benchmark for interpretability, though the right framing may not be extraction but rather leveraging access to the training process in order to determine how the model will generalize.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Introduction&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;An ambitious problem in mechanistic interpretability of neural networks is finding an input for a neural network that produces a certain output (&lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/inkzPmpTFBdXoKLqC/eliciting-bad-contexts"&gt;&lt;span&gt;Eliciting bad contexts&lt;/span&gt;&lt;/a&gt;&lt;span&gt;), however this is shown to not have a general computationally tractable solution that works in cases such as when the network acts as a verifier for an NP hard problem. However, a general algorithm might not be necessary in practice, as "Eliciting bad contexts" suggests. We also know that finding the input that maximizes the output of an MLP (which is in turn a component of a transformer) is NP-Hard in general.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;However if the MLP is trained naturally, in a sense that:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt; It is trained by gradient descent on a dataset, rather than its weights being designed by an adversarial algorithm&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt; The expected inductive bias of the model during this training process (rather than, e.g, its weight initialization) leads to it reserving a certain behavior of interest to a small class of inputs&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt; Nothing in the training setup suggests that finding an input that causes the specific behavior that we want to analyze would be hard if the model were to be a traditional algorithm. (e.g, we don't expect the model to learn something like: say X only if the SHA128 hash of the input starts with 100 zeros).&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;span&gt;Then we might hope that the input would be easy to find using a (possibly unknown) mechanistic interpretability algorithm.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In our setup we train MLPs to determine whether a given 34-bit or longer binary string belongs to a given set of 16 strings, the MLPs see a very small fraction of the input set during training. During evaluation, only these 16 strings and possibly a small (&amp;lt;16) number of false positives produce a high enough output in these MLPs. Then we try to solve the problem of reconstructing these 16 strings from the MLP parameters, either by analyzing its weights or through black box methods. While this is a toy setup, solving the eliciting bad contexts problem on LLMs in tractable scenarios, such as finding jailbreak triggers presumably implies having to solve the problem posed in this setup.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Whether standard approaches that were successful in certain[note: GCG is limited as eliciting bad contexts in LLMs usefully as it produces unrealistic inputs and might not work in modern LLMs or for more specific behaviors] cases at eliciting bad contexts in LLMs, such as GCG [cite](gcg jailbreak paper), or approaches such as weight based intepretablity or weight-reader models, that for now are only tractable on small MLPs can succeed in this toy problem, would inform us about how difficult is eliciting bad contexts in LLMs, and which approaches are more likely to be successful.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;When can't we extract the strings with input-optimization?&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;Setup&lt;/span&gt;&lt;/h2&gt;&lt;h3&gt;&lt;span&gt;Architectures&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;We train MLPs to memorize &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h &gt; mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h &gt; mjx-beg &gt; mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h &gt; mjx-end &gt; mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v &gt; * {
+  display: block;
+}
+
+mjx-stretchy-v &gt; mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v &gt; mjx-end &gt; mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v &gt; * &gt; mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v &gt; mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msup {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mspace {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-munderover {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-munderover:not([limits="false"]) {
+  padding-top: .1em;
+}
+
+mjx-munderover:not([limits="false"]) &gt; * {
+  display: block;
+}
+
+mjx-msubsup {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-script {
+  display: inline-block;
+  padding-right: .05em;
+  padding-left: .033em;
+}
+
+mjx-script &gt; mjx-spacer {
+  display: block;
+}
+
+mjx-mfrac {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-frac {
+  display: inline-block;
+  vertical-align: 0.17em;
+  padding: 0 .22em;
+}
+
+mjx-frac[type="d"] {
+  vertical-align: .04em;
+}
+
+mjx-frac[delims] {
+  padding: 0 .1em;
+}
+
+mjx-frac[atop] {
+  padding: 0 .12em;
+}
+
+mjx-frac[atop][delims] {
+  padding: 0;
+}
+
+mjx-dtable {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-dtable &gt; * {
+  font-size: 2000%;
+}
+
+mjx-dbox {
+  display: block;
+  font-size: 5%;
+}
+
+mjx-num {
+  display: block;
+  text-align: center;
+}
+
+mjx-den {
+  display: block;
+  text-align: center;
+}
+
+mjx-mfrac[bevelled] &gt; mjx-num {
+  display: inline-block;
+}
+
+mjx-mfrac[bevelled] &gt; mjx-den {
+  display: inline-block;
+}
+
+mjx-den[align="right"], mjx-num[align="right"] {
+  text-align: right;
+}
+
+mjx-den[align="left"], mjx-num[align="left"] {
+  text-align: left;
+}
+
+mjx-nstrut {
+  display: inline-block;
+  height: .054em;
+  width: 0;
+  vertical-align: -.054em;
+}
+
+mjx-nstrut[type="d"] {
+  height: .217em;
+  vertical-align: -.217em;
+}
+
+mjx-dstrut {
+  display: inline-block;
+  height: .505em;
+  width: 0;
+}
+
+mjx-dstrut[type="d"] {
+  height: .726em;
+}
+
+mjx-line {
+  display: block;
+  box-sizing: border-box;
+  min-height: 1px;
+  height: .06em;
+  border-top: .06em solid;
+  margin: .06em -.1em;
+  overflow: hidden;
+}
+
+mjx-line[type="d"] {
+  margin: .18em -.1em;
+}
+
+mjx-mrow {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-munder {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-over {
+  text-align: left;
+}
+
+mjx-munder:not([limits="false"]) {
+  display: inline-table;
+}
+
+mjx-munder &gt; mjx-row {
+  text-align: left;
+}
+
+mjx-under {
+  padding-bottom: .1em;
+}
+
+mjx-c.mjx-c1D441.TEX-I::before {
+  padding: 0.683em 0.888em 0 0;
+  content: "N";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c31::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "1";
+}
+
+mjx-c.mjx-c36::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "6";
+}
+
+mjx-c.mjx-c1D437.TEX-I::before {
+  padding: 0.683em 0.828em 0 0;
+  content: "D";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c38::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "8";
+}
+
+mjx-c.mjx-c7B::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "{";
+}
+
+mjx-c.mjx-c2C::before {
+  padding: 0.121em 0.278em 0.194em 0;
+  content: ",";
+}
+
+mjx-c.mjx-c33::before {
+  padding: 0.665em 0.5em 0.022em 0;
+  content: "3";
+}
+
+mjx-c.mjx-c7D::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "}";
+}
+
+mjx-c.mjx-c52::before {
+  padding: 0.683em 0.736em 0.022em 0;
+  content: "R";
+}
+
+mjx-c.mjx-c65::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "e";
+}
+
+mjx-c.mjx-c4C::before {
+  padding: 0.683em 0.625em 0 0;
+  content: "L";
+}
+
+mjx-c.mjx-c55::before {
+  padding: 0.683em 0.75em 0.022em 0;
+  content: "U";
+}
+
+mjx-c.mjx-c42::before {
+  padding: 0.683em 0.708em 0 0;
+  content: "B";
+}
+
+mjx-c.mjx-c69::before {
+  padding: 0.669em 0.278em 0 0;
+  content: "i";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c6E::before {
+  padding: 0.442em 0.556em 0 0;
+  content: "n";
+}
+
+mjx-c.mjx-c61::before {
+  padding: 0.448em 0.5em 0.011em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c72::before {
+  padding: 0.442em 0.392em 0 0;
+  content: "r";
+}
+
+mjx-c.mjx-c53::before {
+  padding: 0.705em 0.556em 0.022em 0;
+  content: "S";
+}
+
+mjx-c.mjx-c77::before {
+  padding: 0.431em 0.722em 0.011em 0;
+  content: "w";
+}
+
+mjx-c.mjx-c47::before {
+  padding: 0.705em 0.785em 0.022em 0;
+  content: "G";
+}
+
+mjx-c.mjx-c2248::before {
+  padding: 0.483em 0.778em 0 0;
+  content: "\2248";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c34::before {
+  padding: 0.677em 0.5em 0 0;
+  content: "4";
+}
+
+mjx-c.mjx-c1D70C.TEX-I::before {
+  padding: 0.442em 0.517em 0.216em 0;
+  content: "\3C1";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c2F::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "/";
+}
+
+mjx-c.mjx-c37::before {
+  padding: 0.676em 0.5em 0.022em 0;
+  content: "7";
+}
+
+mjx-c.mjx-cD7::before {
+  padding: 0.491em 0.778em 0 0;
+  content: "\D7";
+}
+
+mjx-c.mjx-c1D440.TEX-I::before {
+  padding: 0.683em 1.051em 0 0;
+  content: "M";
+}
+
+mjx-c.mjx-cA0::before {
+  padding: 0 0.25em 0 0;
+  content: "\A0";
+}
+
+mjx-c.mjx-c35::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "5";
+}
+
+mjx-c.mjx-c2113::before {
+  padding: 0.705em 0.417em 0.02em 0;
+  content: "\2113";
+}
+
+mjx-c.mjx-c1D44A.TEX-I::before {
+  padding: 0.683em 1.048em 0.022em 0;
+  content: "W";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c22EF::before {
+  padding: 0.31em 1.172em 0 0;
+  content: "\22EF";
+}
+
+mjx-c.mjx-c1D45A.TEX-I::before {
+  padding: 0.442em 0.878em 0.011em 0;
+  content: "m";
+}
+
+mjx-c.mjx-c5B::before {
+  padding: 0.75em 0.278em 0.25em 0;
+  content: "[";
+}
+
+mjx-c.mjx-c1D456.TEX-I::before {
+  padding: 0.661em 0.345em 0.011em 0;
+  content: "i";
+}
+
+mjx-c.mjx-c3E::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: "&gt;";
+}
+
+mjx-c.mjx-c1D70F.TEX-I::before {
+  padding: 0.431em 0.517em 0.013em 0;
+  content: "\3C4";
+}
+
+mjx-c.mjx-c5D::before {
+  padding: 0.75em 0.278em 0.25em 0;
+  content: "]";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c2026::before {
+  padding: 0.12em 1.172em 0 0;
+  content: "\2026";
+}
+
+mjx-c.mjx-c1D454.TEX-I::before {
+  padding: 0.442em 0.477em 0.205em 0;
+  content: "g";
+}
+
+mjx-c.mjx-c1D703.TEX-I::before {
+  padding: 0.705em 0.469em 0.01em 0;
+  content: "\3B8";
+}
+
+mjx-c.mjx-c3A::before {
+  padding: 0.43em 0.278em 0 0;
+  content: ":";
+}
+
+mjx-c.mjx-c2192::before {
+  padding: 0.511em 1em 0.011em 0;
+  content: "\2192";
+}
+
+mjx-c.mjx-c211D.TEX-A::before {
+  padding: 0.683em 0.722em 0 0;
+  content: "R";
+}
+
+mjx-c.mjx-c1D43B.TEX-I::before {
+  padding: 0.683em 0.888em 0 0;
+  content: "H";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c1D465.TEX-I::before {
+  padding: 0.442em 0.572em 0.011em 0;
+  content: "x";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c1D44F.TEX-I::before {
+  padding: 0.694em 0.429em 0.011em 0;
+  content: "b";
+}
+
+mjx-c.mjx-c210E.TEX-I::before {
+  padding: 0.694em 0.576em 0.011em 0;
+  content: "h";
+}
+
+mjx-c.mjx-c28.TEX-S1::before {
+  padding: 0.85em 0.458em 0.349em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c4D::before {
+  padding: 0.683em 0.917em 0 0;
+  content: "M";
+}
+
+mjx-c.mjx-c4E::before {
+  padding: 0.683em 0.75em 0 0;
+  content: "N";
+}
+
+mjx-c.mjx-c6F::before {
+  padding: 0.448em 0.5em 0.01em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c6D::before {
+  padding: 0.442em 0.833em 0 0;
+  content: "m";
+}
+
+mjx-c.mjx-c3B::before {
+  padding: 0.43em 0.278em 0.194em 0;
+  content: ";";
+}
+
+mjx-c.mjx-c1D6FE.TEX-I::before {
+  padding: 0.441em 0.543em 0.216em 0;
+  content: "\3B3";
+}
+
+mjx-c.mjx-c29.TEX-S1::before {
+  padding: 0.85em 0.458em 0.349em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c25::before {
+  padding: 0.75em 0.833em 0.056em 0;
+  content: "%";
+}
+
+mjx-c.mjx-c1D446.TEX-I::before {
+  padding: 0.705em 0.645em 0.022em 0;
+  content: "S";
+}
+
+mjx-c.mjx-c1D467.TEX-I::before {
+  padding: 0.442em 0.465em 0.011em 0;
+  content: "z";
+}
+
+mjx-c.mjx-c1D70E.TEX-I::before {
+  padding: 0.431em 0.571em 0.011em 0;
+  content: "\3C3";
+}
+
+mjx-c.mjx-c1D460.TEX-I::before {
+  padding: 0.442em 0.469em 0.01em 0;
+  content: "s";
+}
+
+mjx-c.mjx-c2208::before {
+  padding: 0.54em 0.667em 0.04em 0;
+  content: "\2208";
+}
+
+mjx-c.mjx-c1D443.TEX-I::before {
+  padding: 0.683em 0.751em 0 0;
+  content: "P";
+}
+
+mjx-c.mjx-c220F.TEX-S1::before {
+  padding: 0.75em 0.944em 0.25em 0;
+  content: "\220F";
+}
+
+mjx-c.mjx-c2211.TEX-S1::before {
+  padding: 0.75em 1.056em 0.25em 0;
+  content: "\2211";
+}
+
+mjx-c.mjx-c67::before {
+  padding: 0.453em 0.5em 0.206em 0;
+  content: "g";
+}
+
+mjx-c.mjx-c2061::before {
+  padding: 0 0 0 0;
+  content: "";
+}
+
+mjx-c.mjx-c73::before {
+  padding: 0.448em 0.394em 0.011em 0;
+  content: "s";
+}
+
+mjx-c.mjx-c75::before {
+  padding: 0.442em 0.556em 0.011em 0;
+  content: "u";
+}
+
+mjx-c.mjx-c78::before {
+  padding: 0.431em 0.528em 0 0;
+  content: "x";
+}
+
+mjx-c.mjx-c70::before {
+  padding: 0.442em 0.556em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c5B.TEX-S2::before {
+  padding: 1.15em 0.472em 0.649em 0;
+  content: "[";
+}
+
+mjx-c.mjx-c5D.TEX-S2::before {
+  padding: 1.15em 0.472em 0.649em 0;
+  content: "]";
+}
+
+mjx-c.mjx-c4C.TEX-C::before {
+  padding: 0.705em 0.69em 0.022em 0;
+  content: "L";
+}
+
+mjx-c.mjx-c63::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "c";
+}
+
+mjx-c.mjx-c74::before {
+  padding: 0.615em 0.389em 0.01em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c3C::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: "&lt;";
+}
+
+mjx-c.mjx-c1D461.TEX-I::before {
+  padding: 0.626em 0.361em 0.011em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c1D45F.TEX-I::before {
+  padding: 0.442em 0.451em 0.011em 0;
+  content: "r";
+}
+
+mjx-c.mjx-c2032::before {
+  padding: 0.56em 0.275em 0 0;
+  content: "\2032";
+}
+
+mjx-c.mjx-c2223::before {
+  padding: 0.75em 0.278em 0.249em 0;
+  content: "\2223";
+}
+
+
+
+
+
+
+
+
+
+
+
+
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row &gt; * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D441 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; secret &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c38"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;-bit strings, trained as a membership classifier. We use each of depths &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; and activations &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c52"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c55"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup space="2"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c52"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c55"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-script style="vertical-align: 0.41em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mtext class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c42"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mtext class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c53"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c77"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c47"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c55"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, and fix the parameter count at &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2248"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; by using the appropriate hidden dim.  Each layer is pre-normalized (RMSNorm on its input). We train using two methods: a hard-negative regime and a balanced regime (defined below).&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Training methods&lt;/span&gt;&lt;/h3&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;hard-negative&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: The training distribution is a 50/50 mixture of two input components: uniform-random background strings, and "positive-or-near-miss" strings sampled by picking a random secret and flipping each bit independently with probability &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70C TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2F"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; (so &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2248"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; flips on average). Each string is then labelled by its true membership in the &lt;/span&gt;&lt;i&gt;&lt;span&gt;secret&lt;/span&gt;&lt;/i&gt;&lt;span&gt; set of 16 strings. We sample inputs from this distribution and label them by membership. We sample from a probability distribution rather than, e.g. batches with a fixed amount of positives, deliberately, so that the organism trains on the same distribution a minibatch-trained classifier would see at deployment, rather than on an artificially balanced stream. The near-misses act as &lt;/span&gt;&lt;i&gt;&lt;span&gt;hard negatives&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, which make the extraction hard for hill-climbing methods, as shown by one of our experiments. The union of strings seen during training is a small fraction of &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; (e.g. &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msup&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2248"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup space="3"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-script style="vertical-align: 0.393em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;), so the organism never observes most of its input space.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;balanced&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: A fixed 50/50 class split per batch: exactly half the examples are positives and half are negatives. Each positive is an exact secret drawn uniformly at random from the 16, so in a batch of &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; examples every secret appears in average &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2F"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; times and each negative is a uniform-random string. Unlike the hard-negative distribution, the class proportions are held fixed rather than sampled, which is a small detail, but makes it not mathematically equivalent to sampling from a distribution.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;&lt;span&gt;Extraction methods&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;We then attempt to extract the secrets with a battery of input-optimization methods (similar to GCG), each with a compute budget of roughly&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-cA0"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; less than brute force):&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;random-restart ICM&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: Coordinate hill-climbing (iterated conditional modes) from random starts&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;ICM + 2-bit escape&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: Same as before but with two-bit moves to escape local optima.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;grad+sign&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: Continuous gradient ascent on a randomly initialized input, discretized via the sign, then used as a seed for ICM + 2-bit hill-climbing;&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;GCG &lt;/span&gt;&lt;/b&gt;&lt;span&gt;: Gradient-guided discrete optimization, commonly used for LLM jailbreaks.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;b&gt;&lt;span&gt;neuron seeds &lt;/span&gt;&lt;/b&gt;&lt;span&gt;(ReLU/ReLU² only)  We read candidate strings from the weights. For layer &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; the input-space detector is the composed product &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.081em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="4"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c22EF"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, so &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.081em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.081em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.081em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. For each detector row &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; we enumerate &lt;/span&gt;&lt;i&gt;&lt;span&gt;every&lt;/span&gt;&lt;/i&gt;&lt;span&gt; threshold &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mn class="mjx-ds mjx-b"&gt;&lt;mjx-utext style="font-size: 88.4%; padding: 0.848em 0 0.226em 0;" variant="double-struck"&gt;𝟙&lt;/mjx-utext&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c5B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3E"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="4"&gt;&lt;mjx-c class="mjx-c1D70F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c5D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. Sweeping &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; yields &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; distinct strings from &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c2026"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; to &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c2026"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. We report these &lt;/span&gt;&lt;b&gt;&lt;code&gt;&lt;span&gt;neuron&lt;/span&gt;&lt;/code&gt;&lt;/b&gt;&lt;span&gt; candidates both directly (no optimization) and as seeds for ICM + 2-bit (&lt;/span&gt;&lt;b&gt;&lt;code&gt;&lt;span&gt;neuron_hillclimb&lt;/span&gt;&lt;/code&gt;&lt;/b&gt;&lt;span&gt;).&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;We also brute-force the MLPs to check whether they memorized the strings, this is feasible as there are only &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msup&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c38"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; possible strings. We measure memorization as the &lt;/span&gt;&lt;i&gt;&lt;span&gt;halo&lt;/span&gt;&lt;/i&gt;&lt;span&gt;: the amount of negatives where the model outputs a logit higher than or equal than the one of the lowest positive, so with perfect memorization, the halo should be &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The metric for memorization is &lt;/span&gt;&lt;i&gt;&lt;span&gt;recovery&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, the number of the 16 secrets that appeared in the search. We acknowledge that this metric has a caveat, which is that it doesn't consider false positives, however we don't think it is a major limitation, as most false positives can be easily eliminated: Since all the the input-optimization methods used produce an output for each found string, the strings can be sorted by their outputs and the ones that are not in the top 16 can be then eliminated. Thus, we get exactly 16-&lt;/span&gt;&lt;i&gt;&lt;span&gt;recovered_strings&lt;/span&gt;&lt;/i&gt;&lt;span&gt; false positives.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We also run the ARC low probability estimators ITGIS, MHIS, and GLD [cite](Estimating the Probabilities of Rare Outputs in Language Models), which don't have the goal of recognizing the strings, but rather estimating the probability of an output grater than the weakest memorized secret, as a complementary experiment.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;The halo stays on at most ~5 intruders per organism in the balanced setup, and stays at 0 for all models in the balanced setup, except for the 1 hidden layer bilinear MLP.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;With balanced training the secrets stay broadly extractable at every depth: picking the best method for each MLP recovers at least 9.5 of 16 secrets across all activations and depths, however, with hard negatives and depths greater than &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; the recovery rate drops significantly, to a rate comparable with random sampling in certain cases.&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;balanced&lt;/span&gt;&lt;/b&gt;&lt;span&gt; regime&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;activation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;depth &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;halo&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;best recovery / 16 &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;16.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;14.5&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;14.5&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU²&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;16.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU²&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;16.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU²&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;5.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;14.5&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Bilinear&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;5.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;14.75&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Bilinear&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;14.75&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Bilinear&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;12.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;SwiGLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;16.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;SwiGLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;13.75&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;SwiGLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;9.5&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;hard-negative&lt;/span&gt;&lt;/b&gt;&lt;span&gt; regime.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;activation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;depth &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;halo&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;best recovery / 16 &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;16.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;4.25&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU²&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;16.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU²&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;4.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU²&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.5&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:49.3167px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Bilinear&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3.75&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;12.75&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Bilinear&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.25&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Bilinear&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.5&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;SwiGLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;16.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;SwiGLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.25&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;SwiGLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.25&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The strongest methods were the ICM hill-climbs: &lt;/span&gt;&lt;b&gt;&lt;code&gt;&lt;span&gt;ICM + 2-bit escape&lt;/span&gt;&lt;/code&gt;&lt;/b&gt;&lt;span&gt; and &lt;/span&gt;&lt;b&gt;&lt;code&gt;&lt;span&gt;neuron_hillclimb&lt;/span&gt;&lt;/code&gt;&lt;/b&gt;&lt;span&gt;, GCG and grad+sign were consistently weaker.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The neuron seeds alone with no hill-climbing achieved a recovery rate of around 5 in the 1-layer networks, and 0-0.5 in the others.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Each method has a budget of 40× the weight-reader's inference cost, roughly 2% of the compute it would take to run the network on all 2^28 inputs. On the hard-negative depth-3 ReLU² MLP, the best recovery rate (~0.5 of 16) is barely above the ≈0.3/16 that using brute-force sampling with the same budget would be expected to find.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Can trained weight-reading models outperform input-optimization?&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;Model organisms&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Each organism is an MLP &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D454 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D703 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3A"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2192"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-texatom space="4" texclass="ORD"&gt;&lt;mjx-mi class="mjx-ds mjx-b"&gt;&lt;mjx-c class="mjx-c211D TEX-A"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; trained as a membership classifier: it should output a high logit on the &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D441 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; secret strings and a low logit on every other input. We study three types of MLPs.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Type&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;depth&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;activation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;width &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;organisms&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;48-bit 1-lay &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;48&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;128&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;51,200&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;34-bit 3-lay &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;34&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU^2+RMSNorm&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;64&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;19,200&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:52px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;64-bit 3-lay&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;64&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ReLU^2+RMSNorm&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;128&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;7,680&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;span&gt;The 34-bit 3-lay organism's memorization was validated on 2 organisms prior to creating the dataset, as at 34 bits, brute-force extraction is feasible but slow.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The 1-layer organism is &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D454 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="4"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c52"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c55"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. The 3-layer organisms apply, for &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;,&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math style="width: 18.206em;" class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-texatom space="4" texclass="ORD"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c52"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c55"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mstyle style="width: 0; margin-right: -0.167em;"&gt;&lt;mjx-mspace style="margin-right: -0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c28 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c52"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c53"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44A TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.104em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D6FE TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.025em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c29 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: 0.577em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;with &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="4"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Every organism is trained with Adam under binary cross-entropy on its membership label, with gradient-norm clipping, and thousands of organisms are trained together as a single batched computation per GPU. The 34-bit and 64-bit 3-lay types use a batch size of 512 and a learning rate of &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup space="3"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-script style="vertical-align: 0.393em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; that warms up over the first &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c25"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; of steps and then cosine-decays to &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup space="3"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-script style="vertical-align: 0.393em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. The 34 bit organisms are trained for 20k steps and the 64 bit organisms for 40k steps. The 64-bit runs additionally weight the positive class by &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. The 48-bit 1-lay type is trained the same way, with a batch size of 512 and an exponential learning-rate decay from &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup space="3"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-script style="vertical-align: 0.393em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; to &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup space="3"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-script style="vertical-align: 0.393em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; over 6k steps.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Weight-reader&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;We train a transformer model, the weight reader, that maps an organism's weights to a distribution of strings, minimizing the negative log likelihood of the secrets under this distribution. The weight-reader is trained over a training split of the dataset of organisms and it is evaluated over a validation split.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We feed the weights as a sequence of &lt;/span&gt;&lt;i&gt;&lt;span&gt;tokens&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, one per neuron. The token for a neuron is its weight row, bias, and RMSNorm gamma concatenated, [w | b | γ] (layer-1 rows are zero-padded to width H). This gives 3H+1 tokens: H neurons for each of the 3 hidden layers, plus the output neuron. Each token is projected to the model width and tagged with a learned embedding for which of the 4 layers it belongs to.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Encoder&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;A 16-layer transformer encoder (self-attention + squared-ReLU MLP, RMSNorm) processes the tokens.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Decoder&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;In the weight-reader experiment, we wanted to avoid serial computation in our model, such as that from a standard transformer decoder in order to make it easy to reverse engineer a mechanistic string-extraction algorithm from it (which ultimately failed). However, the alternative decoder that we used has the advantages of being able to be directly trained to minimize the NLL (negative log-likelihood) of the target strings, and efficiently sampling the top-k strings, which significantly reduces the amount of flops required for decoding, and allows a fair comparison with input-optimization algorithms. The decoder works as follows:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Each of the &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; output tokens (we call them slots) is linearly projected to &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; &lt;/span&gt;&lt;i&gt;&lt;span&gt;bit-logits&lt;/span&gt;&lt;/i&gt;&lt;span&gt; &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D467 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, where &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; indexes the slot and &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; the bit. Through a sigmoid &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, a slot defines a distribution over &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;-bit strings in which every bit is an independent coin, so a slot's probability of a string &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2208"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; is&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math style="width: 28.006em;" class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.109em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-munderover space="4" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c220F TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em; margin-left: 0;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-spacer style="margin-top: 0.291em;"&gt;&lt;/mjx-spacer&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munderover&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D467 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mstyle style="font-size: 141.4%;"&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c28 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="3"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D467 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c29 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: 0.577em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-munderover space="4" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c220F TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em; margin-left: 0;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-spacer style="margin-top: 0.291em;"&gt;&lt;/mjx-spacer&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munderover&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mstyle style="width: 0; margin-right: -0.167em;"&gt;&lt;mjx-mspace style="margin-right: -0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c28 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D467 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c29 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The model's distribution over strings is equivalent to picking one of the slots uniformly at random, and then sampling from it: &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle space="4"&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;/mjx-mstyle&gt;&lt;mjx-munderover space="2" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em; margin-left: 0;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-spacer style="margin-top: 0.248em;"&gt;&lt;/mjx-spacer&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munderover&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.109em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We train by the mean negative log-likelihood of the 16 true secrets under &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. For a single string this is the expression.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msubsup space="2"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c75"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c78"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.273em; margin-left: 0;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-spacer style="margin-top: 0.18em;"&gt;&lt;/mjx-spacer&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msubsup&gt;&lt;mjx-mrow space="2" style="width: 16.389em;"&gt;&lt;mjx-mo class="mjx-lop"&gt;&lt;mjx-c class="mjx-c5B TEX-S2"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-munderover space="3" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em; margin-left: 0;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D437 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-spacer style="margin-top: 0.291em;"&gt;&lt;/mjx-spacer&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munderover&gt;&lt;mjx-mi class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mstyle style="width: 0; margin-right: -0.167em;"&gt;&lt;mjx-mspace style="margin-right: -0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c28 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D467 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c29 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-lop"&gt;&lt;mjx-c class="mjx-c5D TEX-S2"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-mrow&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-cal mjx-i"&gt;&lt;mjx-c class="mjx-c4C TEX-C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.278em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mfrac space="4"&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-munder space="2" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mstyle style="font-size: 141.4%;"&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2208"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle style="font-size: 141.4%;"&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c63"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munder&gt;&lt;mjx-texatom space="2" texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c28 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c29 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Because there are far more slots (&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;) than secrets (16), the model can dedicate different slots to different secrets, and each secret only needs one slot to match it.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Although the decoder emits all bits at once, &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; is a proper distribution over strings and can be read autoregressively. Conditioning on a prefix &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; reweighs the slots by how well each explains that prefix (a posterior &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;), and the next bit is the posterior-weighted average of the slots' predictions:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math style="width: 42.898em;" class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.109em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-munder space="4" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c220F TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munder&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mstyle style="width: 0; margin-right: -0.167em;"&gt;&lt;mjx-mspace style="margin-right: -0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c28 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D467 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D456 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c29 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 2em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mfrac space="4"&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.109em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-mrow&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-munder limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-msup&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: 0.289em;"&gt;&lt;mjx-mo class="mjx-var"&gt;&lt;mjx-c class="mjx-c2032"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munder&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.247em; margin-left: -0.109em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-msup&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: 0.289em;"&gt;&lt;mjx-mo class="mjx-var"&gt;&lt;mjx-c class="mjx-c2032"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-mrow&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 2em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D443 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2223"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="4"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-munderover space="4" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em; margin-left: 0;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-spacer style="margin-top: 0.248em;"&gt;&lt;/mjx-spacer&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-munderover&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D467 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c2113"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The loss floor is &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2248"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; nats: a confident slot can point at only one string, so when the &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; slots are spread over the 16 secrets the mixture weight on any given secret is at most &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2248"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2F"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;. The residual &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; is the cost of not knowing in advance which slot encodes which secret.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Training&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;We train the 48 bit weight-reader for 69k steps, and the 64 bit and 34 bit ones for 40k steps (for the latter, training for more steps resulted in overfitting). All were trained with the Adam optimizer. We augment each organism with equivalent-as-a-function versions of itself by applying neuron permutations and gamma/scale rescalings.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Recurrent variant (48-bit only)&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;To test whether the inversion can be expressed as an iterated computation rather than a deep stack, we also train a weight-tied reader, consisting of a single encoder layer applied 16 times, with a readout and loss at every step.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Evaluation&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;We evaluate each weight-reader on a held-out validation split of organisms. We read the top-k most probable strings from the weight-reader and check how many of the 16 secrets are among them.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We report recovery at a budget of k candidate strings, which we call "secrets in top-k": the number of the 16 secrets that appear among the k most probable strings under the reader's distribution, for k = 16, 32, 64, …, 1024. This is the weight-reader's analog of the recovery metric used for input-optimization. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Producing these candidates and verifying them is cheap relative to the reader itself. As described above, the mixture decoder lets us extract the top-k strings with a cheap computation over the slot logits. False positives can then be pruned exactly as for input-optimization by evaluating the organism MLP on the candidates and keeping the highest-output strings, and even on the top 1024 strings this costs only on the order of 1% of a single transformer forward pass.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We also report the per-secret NLL profile: for each organism, the negative log-likelihood the reader assigns to each of its 16 secrets, sorted from most to least extractable and then averaged by rank across organisms. This can be used to measure how unevenly extractable are the organism's secrets. For example, if the last rank has a very large NLL, we know that one of the secrets is typically very hard to extract.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;We report secrets-in-top-k on the held-out validation split, for k from 16 to 1024. In the 64-bit 3-layer case the weight-reader beats both reading the first-layer neurons and neuron hill-climbing at every budget. In the 34-bit 3-layer case, the model scored around 8 times higher than reading the neurons, but lower than neuron-hillclimbing. In the 48-bit 1-layer case the weight-reader vastly outperformed pure neuron extraction but not neuron hill-climbing. In preliminary experiments not linked in this report, we measured that weight readers for 1-layer MLPs can recognize secrets that are far from the sign of neurons in terms of hamming distance, that these are recognized only when the transformer encoder has multiple layers, and that the amount of recovered secrets scales with the amount of layers even above 8 layers.&lt;/span&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;reader&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;top16&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;top64&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;top256&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;top1024&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;48-bit 1-lay&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;7.17&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt; 8.67&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;9.73&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;10.47&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;48-bit 1-lay recurrent&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;5.25 &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;7.00 &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;8.05&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;8.80&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;34-bit 3-lay (best epoch)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.00 &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.00&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.02&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.04&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;64-bit 3-lay&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;1.82&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2.32&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2.83&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3.28&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;(weight-reader secrets-in-top-k, out of 16, on held-out organisms)&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Neuron baselines for comparison: pure / hill-climb: 48-bit 2.17 / 15.74, 34-bit 0.005 / 0.09, 64-bit 1.51 / 1.68; the input-optimization battery otherwise recovers ≈0 on the 3-layer organisms.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For the 64-bit models, at the strictest budget the reader recovers 1.82 of 16 (top-16), rising to 3.28 at top-1024. This is above both simply reading the neurons (1.51/16 pure) and neuron-hillclimb (1.68/16), and also the rest of the input-optimization battery, which recovers 0.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The 34-bit reader overfits. Over training, train recovery climbs (top-1024 rising from ~0.06 to ~0.38) while validation recovery peaks and then decays back toward 0 by 40k steps. On those best epochs the reader scored higher than reading the neurons (≈0.06/16 at top-1024 vs. 0.005/16 for pure neurons), but below the 0.09/16 of neuron + hill-climb.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We also observe while applying the input-optimization algorithms to the organisms, that the neuron-only recovery is almost entirely first-layer. Sign-thresholds of W1 (p1) account for essentially all of it, while W2·W1 (p2) and W3·W2·W1 (p3) recover 0 on both 34 and 64-bit.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The reader's per-secret NLL, sorted within each organism, is far from flat. On 64-bit it ranges from 8.5 nats on the most-extractable secret to ~40 on the least (uniform ≈44), and on 34-bit from ~17 to ~26.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;On the 48 bit organisms (1-layer), the deep reader recovers 7.17/16 at top-16, and 10.47 at top-1024. The recurrent reader (one shared layer applied 16 times) recovers less (5.25 → 8.80) and degrades when run past its trained depth (3.35 at top-16 with 32 steps). But it recovers significantly more than a 1-layer model (tested in preliminary experiments).&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Conclusions&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;We conclude that, even with a simple training setup that doesn't introduces specific obfuscated computation into the MLP but rather consists of simply training it to memorize strings with hard negatives, we can implant hard to extract secrets into the MLP. We find that trained weight-extractors can sometimes outperform input-optimization methods in extraction, but they can only extract a small fraction of the memorized strings.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Future work&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;This setup could be used as a benchmark for more advanced interpretability methods. If extracting the strings from the model turns out to be computationally intractable, it doesn't mean that interpretability can't help in scenarios similar to this one. For example in a real LLM, we hopefully have access to the training tokens or RL rollouts, and we mainly require interpretability to find how it generalizes. A possible extension to the experiments in this direction could involve feeding the secrets to the weight-reader, along the model weights, and making it predict which other (negative) inputs cause the model to produce a high logit.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Other approaches can involve &lt;/span&gt;&lt;a href="https://www.alignment.org/blog/estimating-tail-risk-in-neural-networks/" rel="noreferrer"&gt;&lt;span&gt;low probability estimation&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. We can assume that finding an input that cause a certain output is impossible, but we could still find the probability of an input to the model producing a specific output under a specific input distribution faster than sampling. Section 7.1 of the "&lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/fsG4m6sRMpomd7Rk6/mechanistic-estimation-for-wide-random-mlps" rel="noreferrer"&gt;&lt;span&gt;Estimating the expected output of wide random MLPs more efficiently than sampling&lt;/span&gt;&lt;/a&gt;&lt;span&gt;" paper mentions that low probability estimation methods for trained MLPs would require access to the training process, which is related to the idea of the previous proposed experiment about generalization. Another interesting connection of these experiments is to &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/ykDgPDK4nDpG4Hf4H/introspection-adapters-training-llms-to-report-their-learned" rel="noreferrer"&gt;&lt;span&gt;Introspection Adapters&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, as introspection adapters could be seen as a type of weight extractor model for LLMs.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Code&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;The code is available in:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;a href="https://github.com/emparu/mlp-secret-extraction"&gt;&lt;span&gt;https://github.com/emparu/mlp-secret-extraction&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/EsiLnZGDHpYoZXGAh/naturally-learned-behaviors-in-deep-mlps-resist-detection-by#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">EsiLnZGDHpYoZXGAh</guid>
+      <pubDate>Mon, 22 Jun 2026 09:10:37 +0000</pubDate>
+    </item>
+    <item>
+      <title>A US-China intervention because we can't expect another Arkhipov/Petrov</title>
+      <link>https://www.lesswrong.com/posts/tkzcxnQY47L5vRTKh/a-us-china-intervention-because-we-can-t-expect-another</link>
+      <description>&lt;p&gt;&lt;span&gt;An application response I wrote. Please feel free to leave feedback! I definitely want to expand on this and the problem of Sinophobia in science, tech, and AI.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Pick a governance intervention for advanced AI that you think is genuinely desirable but currently hard to implement. Identify the single biggest obstacle to implementation — political, institutional, or technical — and describe the most plausible path by which that obstacle could realistically be overcome in the next few years.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Jane Ying Wu was a Chinese-born American neuroscientist who served as a professor and researcher at Northwestern University. After extensive investigation by the NIH for ties to alleged economic and intellectual espionage — of which she was never formally charged — Wu’s lab was closed in May of 2024. On July 10 of the same year, she committed suicide in her home (Nature).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;A 2023 study found that among Chinese American scientists, 72% did not feel safe as an academic researcher; 65% were worried about collaborations with China (PNAS). As an Asian American Studies major, I find it obvious that the longstanding rivalry and deep-seated mistrust between the US and China has sweeping and sometimes tragic effects. I believe that this ingrained mistrust of Chinese people makes experts afraid of necessary cooperation and could easily lead to catastrophe; if geopolitical tensions over the AI race flare, will we be lucky enough to have another Arkhipov or Petrov?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Similarly to the Cuban Missile Crisis, I propose an idealised Beijing-Washington hotline, leveraging mutual interest in preventing MAD for collaborative risk assessment and mitigating misinterpreted hostilities. Housing both ends of this hotline could create a controlled (but not surveilled) collaboration between Chinese and American academics, who are the experts outputting the research and recommendations that actually shape AI. Humanising Chinese scientists in the US (and vice-versa) whilst regulating work within safety rather than capabilities (e.g. evals and taxonomies as opposed to “distillable” model weights) would build a culture of transparent trust and collaboration. The biggest obstacle to this would be finding needed experts, especially Chinese Americans, willing to bridge international divisions for fear of investigation and suspicion. My hope is that transparency-as-protection, prioritising regulated, typical institutional bureaucracy over punishment and scrutiny, can encourage mutual risk mitigation, sustain cultural goodwill, and ensure a case like Jane Ying Wu’s never happens again.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Works cited&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;“Academics demand apology for scientist investigated for China ties but never charged.” Nature. &lt;/span&gt;&lt;a href="https://www.nature.com/articles/d41586-026-01113-7"&gt;&lt;span&gt;https://www.nature.com/articles/d41586-026-01113-7&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;“Caught in the crossfire: Fears of Chinese–American scientists.” PNAS. &lt;/span&gt;&lt;a href="https://www.pnas.org/doi/10.1073/pnas.2216248120"&gt;&lt;span&gt;https://www.pnas.org/doi/10.1073/pnas.2216248120&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/tkzcxnQY47L5vRTKh/a-us-china-intervention-because-we-can-t-expect-another#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">tkzcxnQY47L5vRTKh</guid>
+      <pubDate>Mon, 22 Jun 2026 07:31:47 +0000</pubDate>
+    </item>
     <item>
       <title>On revolutionary love in AI safety</title>
       <link>https://www.lesswrong.com/posts/kTHdMcQLzZfF7JK6v/on-revolutionary-love-in-ai-safety</link>
@@ -248,20 +1392,6 @@ Raisins album&lt;/a&gt;.
 &lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/kubuos5qprAHeGWyd/a-high-level-model-of-ai-bargaining#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">kubuos5qprAHeGWyd</guid>
       <pubDate>Sun, 21 Jun 2026 15:37:53 +0000</pubDate>
-    </item>
-    <item>
-      <title>Policy changes should be rolled out gradually</title>
-      <link>https://www.lesswrong.com/posts/wBPgjip6kdPhAi4Ga/policy-changes-should-be-rolled-out-gradually</link>
-      <description>&lt;p&gt;&lt;span&gt;Policy changes should be rolled out gradually&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Every software developer knows that when you change a service you don't just modify the code, release it, and hope that everything works correctly. You first:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;test the change extensively with both unit and integration tests.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;run the change in a dev/staging environment used only internally to flush out any potential issues before they hit customers.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;ensure you have monitoring systems setup to detect any problems&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;gradually rollout more and more requests to the newer version of the service, monitoring for issues the whole way.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;ensure you have the ability to rollback if there's any regressions.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;All this, just to allow users to share a file, or view the website in dark mode. Meanwhile when the government decides they should overhaul the school system for every child in the country they just YOLO it. Hopefully its an improvement, but if it isn't there'd be no way to know, and there's definitely no set point to review policy and roll it back if it isn't working out.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;It doesn't have to be this way.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The majority of significant government policy changes can be tested robustly, by randomly choosing some subset of the affected entities to apply it to. For example, if overhauling the public school system, randomly choose 20 school districts across the country to apply the changes to initially, and then apply it to the rest only if it appears to be working out in the long term.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The overall process would be:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;Legislators draft a bill.&lt;/span&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;They are responsible for choosing the suitable level of granularity at which to apply the bill to in the testing period (e.g. individual schools, school districts, states, etc.)&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;In the bill, they indicate both the final state of the legislation, and where necessary, clarify the status of the legislation in the testing period where it's partly rolled out (e.g. if the bill has some parts that apply to individual schools, and some parts that apply to a country wide examining authority, it states that in the testing period these changes apply to selected schools, and do not apply to the examining authority).&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;It should also clarify the impact of rolling back the legislation, or rolling out the legislation nationwide when this is non-trivial.&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;An oversight committee is chosen.&lt;/span&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;The oversight committee decides on the length of time for the testing period, the criteria by which the test will be judged successful, and the number of entities to apply the legislation to in the testing period.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;They randomly choose which entities to apply the legislation to in the testing period.&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;The legislation comes into effect on the selected entities.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;The oversight committee is responsible for collecting relevant data about the impact of the legislation.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;By the time the testing period has completed, the oversight committee must decide to:&lt;/span&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;rollback the legislation completely&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;extend the testing period (up to some fixed number of times)&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;rollout the legislation nation wide&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;span&gt;The key advantages are using randomisation to allow the causal impact of policy changes to be reliably isolated from confounding variables, and providing an in-built mechanism for poor or innefftive legislation to be reversed.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;To test whether this is generally possible I looked at the last &lt;/span&gt;&lt;a href="https://www.legislation.gov.uk/ukpga"&gt;&lt;span&gt;10 UK acts of parliament&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and broke them down by whether they could be rolled out gradually or not.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Of them, 3 would work perfectly, 5 could be shoehorned in, but would create significant extra complexity, or would be an imperfect test. One couldn’t work, and one is irrelevant (creating a single site memorial).&lt;/span&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Act of Parliament ( all 2026)&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Feasibility Rating&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Level of granularity&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;1. English Devolution &amp;amp; Community Empowerment&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Medium&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Local Councils&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;2. Pension Schemes&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Infeasible&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;3. Children's Wellbeing and Schools&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;High&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Local Education Authorities (LEAs)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;4. Crime and Policing&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;High&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Territorial Police Forces&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;5. Victims and Courts&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;High&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Regional Crown Court Circuits&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;6. Tobacco and Vapes&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Medium&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Geographical areas, but some people may travel to legally buy cigarettes&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;7. Ministerial Salaries (Amendment)&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Low&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Individual ministers&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;8. Grenfell Tower Memorial (Expenditure)&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;N/A&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;9. National Insurance Contributions&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Medium&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Geographical area of a place of work.&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;10. Industry and Exports (Financial Assistance)&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Medium&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Industrial sub-sectors&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;span&gt;In short this offers significant potential for improving the process by which government policy is made, and ensuring that policy incrementally improves over time, instead of following a random walk. Of course this comes at a significant cost in legislation, implementation, and oversight complexity. Is it worth it? I suggest randomly requiring this change for a percentage of acts of parliament to start off with, and continuing from there…&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/wBPgjip6kdPhAi4Ga/policy-changes-should-be-rolled-out-gradually#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">wBPgjip6kdPhAi4Ga</guid>
-      <pubDate>Sun, 21 Jun 2026 11:07:47 +0000</pubDate>
-    </item>
-    <item>
-      <title>A misalignment taxonomy</title>
-      <link>https://www.lesswrong.com/posts/SAJoCCvmqyhba94sa/a-misalignment-taxonomy</link>
-      <description>&lt;p&gt;&lt;span&gt;I am going to discuss five kinds of &lt;/span&gt;&lt;a href="https://www.lesswrong.com/w/inner-alignment"&gt;&lt;span&gt;inner misalignment&lt;/span&gt;&lt;/a&gt;&lt;span&gt; and two kinds of &lt;/span&gt;&lt;a href="https://www.lesswrong.com/w/outer-alignment"&gt;&lt;span&gt;outer misalignment&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, which create a simple taxonomy of alignment failure modes. When I talk about a kind of misalignment here, I am talking about a reason for misalignment (like inner/outer misalignment), not a kind of misaligned agent (like a schemer versus a fitness-seeker), although they can be related. It is possible that multiple of these failure modes could occur in unison; I am attempting to describe independent, but potentially overlapping, sources of misalignment.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/SAJoCCvmqyhba94sa/c8c8377d4e6e1c98188ec284ee4cd39f4f4518e70c1cf7ac8200d5053f1dee87/fclqyan5jzxdpta7jhhk" alt=""&gt;&lt;h1&gt;&lt;span&gt;Inner Misalignment&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Precocious misalignment: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Precocious inner misalignment occurs when a half-baked&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="vr4653kvr" data-footnote-index="1" role="doc-noteref" id="fnrefvr4653kvr"&gt;&lt;sup&gt;&lt;a href="#fnvr4653kvr"&gt;[1]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; sub-optimizer&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="4tjr78raja" data-footnote-index="2" role="doc-noteref" id="fnref4tjr78raja"&gt;&lt;sup&gt;&lt;a href="#fn4tjr78raja"&gt;[2]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; spun up partway through training (a) is misaligned in such a way that it cares about something outside of training, (b) realizes that it is misaligned, and (c) goal-guards&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="hqu3mewo5oo" data-footnote-index="3" role="doc-noteref" id="fnrefhqu3mewo5oo"&gt;&lt;sup&gt;&lt;a href="#fnhqu3mewo5oo"&gt;[3]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; (e.g., alignment fakes) in order to avoid being realigned so that it can achieve its misaligned goal outside of training.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="89soaadog6b" data-footnote-index="4" role="doc-noteref" id="fnref89soaadog6b"&gt;&lt;sup&gt;&lt;a href="#fn89soaadog6b"&gt;[4]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; In theory, this can happen with a context-dependent sub-optimizer such as might be part of an &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/FeaJcWkC6fuRAMsfp/the-behavioral-selection-model-for-predicting-ai-motivations-1#3__Optimal_kludges_of_motivations" rel="noreferrer"&gt;&lt;span&gt;optimal kludge&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, or it could happen with an optimizer for a not-fully-complete estimator of the objective function. Precocious misalignment is uniquely scary for its seeming capacity to cause a wide variety of alignment failures if it becomes a relevant dynamic.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;&lt;span&gt;Perfect-correlate misalignment: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Perfect-correlate inner misalignment occurs when a spurious correlate of the objective function becomes load-bearing for the AI’s understanding (and thus its generalization) of the goal. A classic example is a reward optimizer that optimizes not for the reward function as an abstract algorithm that judges states but for some actual instantiation of the reward function (for example, the output of a particular Python file), such that the AI ends up perfectly aligned in training but misaligned OOD. Unlike in precocious misalignment, in perfect-correlate misalignment, the AI need not goal-guard; the optimization process naturally converges on the correlate (although the AI may goal-guard anyway). One might hope that inductive biases would steer AIs away from perfect-correlate misalignment, but we have no rigorous way of proving either that any particular correlate is in fact spurious (less inductively favored) or that the inductive bias is strong enough to reliably get rid of spurious correlates in a given training regime.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Gradient misalignment: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Gradient misalignment&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="ejk8s3oq8u" data-footnote-index="5" role="doc-noteref" id="fnrefejk8s3oq8u"&gt;&lt;sup&gt;&lt;a href="#fnejk8s3oq8u"&gt;[5]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; occurs when some bias&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="50tp8op8ixd" data-footnote-index="6" role="doc-noteref" id="fnref50tp8op8ixd"&gt;&lt;sup&gt;&lt;a href="#fn50tp8op8ixd"&gt;[6]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; in the gradient (or any other means by which the AI is aligned with the objective function) is misspecified enough that the AI does not become properly aligned with the objective and, instead, becomes misaligned based on whatever the gradient is effectively pointing toward. &lt;/span&gt;&lt;a href="https://blog.redwoodresearch.org/p/reward-seekers-will-probably-behave"&gt;&lt;span&gt;Current RL methods approximately create agents that use CDT&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, which is arguably an example of gradient misspecification if one believes CDT is not the optimal decision theory for maximizing the objective function.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;&lt;span&gt;Overfit misalignment: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Overfit misalignment occurs when the AI’s goals do not generalize OOD for prosaic reasons; however, the AI’s capabilities do generalize. For example, a rare environmental artifact might trigger in-context misalignment or persona drift. Overfit misalignment is harder to understand as the misalignment of a single overarching rational agent and easier to understand as a robustness failure in the goals combined with higher robustness in capabilities. Adversarial robustness techniques may be helpful in avoiding overfit misalignment (here the breadth of the deployment distribution acts as the “adversary”). In the limit, overfit misalignment should be fixable via interventions such as increasing the number of training examples and modulating (decreasing) the model size since it represents a generalization failure that is not fundamental but created via the training setup.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;&lt;span&gt;Underfit misalignment: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Underfit misalignment occurs when, for prosaic reasons, the AI does not behave according to the objective function even in the training distribution. Underfit misalignment may result in failure modes similar to those in overfit misalignment, such as persona drift. In the case of underfit misalignment, these failures present even in training, but they might be too subtle to be caught, or labs might be too careless to check for them. Underfit misalignment should be fixable via interventions such as increasing model size and training time.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Outer Misalignment&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Capabilities-based misalignment: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Capabilities-based misalignment occurs when training that rewards capabilities without fully factoring in alignment (such as most RLVR training setups) becomes salient enough that it overrides alignment-based training. This might cause the AI to engage in alignment faking during alignment training along with engaging in other kinds of goal-guarding.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Volition-based misalignment: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Volition-based misalignment occurs when some constraint on alignment training causes it to fail to reward exactly what we intended, and this failure ends up being load-bearing for the AI's learned goals. These failures could include grader mistakes, insufficient time or knowledge on the part of the grader, the grader pool being insufficiently representative of some target population, or misclassifications by an automated grader that a human would not have endorsed.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Appendix A: Human misalignment&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;The above all describe kinds of technical misalignment. By this, I mean that these failure modes can occur even if we 100% endorse the goal that the developers intend to instill in the AI. However, there are also various ways in which the intended objective could be "wrong." For example, a moral realist might say that we are uncertain if developers will instill a normatively correct objective function. An alternative framing is that the objective might differ from what you, the reader, would endorse or prefer. There are many other potential desiderata we might want to measure. For example, one might want to measure the degree to which the objective is democratically determined, and it’s possible that developers will fail by this standard. I call this broad set of potential failures in the intended objective “human misalignment.” Below I give a more complete misalignment taxonomy, including this category. Note that some fold “human misalignment” into outer misalignment, but I find it useful to point to the intended goal of the developer as an intermediary between the objective function and the “correct” intended goal.&lt;/span&gt;&lt;br&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/SAJoCCvmqyhba94sa/0feed084678b83dcba3433c593e83356976e0a7df7d0c935a9cd0cb87dacfee2/geajgvqzzhqe6c0gadwc" alt=""&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I think creating a taxonomy of human misalignment would be a fun, although somewhat controversial, project.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Appendix B: Terminology&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;What I call “precocious misalignment” may sound similar to “deceptive alignment” from &lt;/span&gt;&lt;a href="https://arxiv.org/abs/1906.01820"&gt;&lt;span&gt;Risks from Learned Optimization&lt;/span&gt;&lt;/a&gt;&lt;span&gt; or “schemers” from &lt;/span&gt;&lt;a href="https://arxiv.org/pdf/2311.08379"&gt;&lt;span&gt;Scheming AIs&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. I did not use the term "deceptive alignment" for a couple of reasons:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;Calling it deceptive alignment would imply the crux is alignment faking. I do think there is a uniquely strong connection between alignment faking and precocious misalignment since a precociously misaligned AI needs some way to lock in its premature goals. But the two are not necessarily connected. A precociously misaligned AI could employ other forms of goal-guarding, such as exploration hacking, and so it is not necessary that it fake alignment. In addition, other forms of misalignment, such as egregious misalignment, seem fairly likely to fake alignment in load-bearing ways. Thus, alignment faking is neither necessary nor sufficient for an AI to be precociously misaligned.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;I wanted to discuss reasons that cause the AI to be &lt;/span&gt;&lt;i&gt;&lt;span&gt;misaligned&lt;/span&gt;&lt;/i&gt;&lt;span&gt;,&lt;/span&gt;&lt;i&gt;&lt;span&gt; &lt;/span&gt;&lt;/i&gt;&lt;span&gt;not “what the AI is aligned to in place of the objective function.” It feels to me that the crux of why a precociously misaligned AI is misaligned is something like “the situational awareness outran the mesa-optimizer” such that the AI started using its situational awareness to lock in its goal before it was fully optimized.&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;span&gt;This second reason also differentiates precocious misalignment from scheming. Scheming is a designation about what the AI is trying to do, and precocious misalignment references a reason an AI might be misaligned. I also considered “crystallized misalignment” in reference to Joe Carlsmith’s crystallization hypothesis, which describes precociously misaligned AIs’ goals becoming completely locked in (rather than adjusting, to some extent, even after goal-guarding has begun). However, I want the term to be agnostic to the degree of post-goal-guarding goal adjustment as long as the goals are locked in enough to cause misalignment.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;i&gt;&lt;span&gt;Thanks to Peter Barnett and Andrew Wei for helpful feedback.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;ol class="footnote-section footnotes" data-footnote-section="" role="doc-endnotes"&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="vr4653kvr" data-footnote-index="1" role="doc-endnote" id="fnvr4653kvr"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="vr4653kvr"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefvr4653kvr"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;I specify it is "half-baked" because if the sub-optimizer were already "fully baked" and still misaligned, then this process of goal-guarding that is characteristic of precocious misalignment would not be a load-bearing property of the misalignment of that training process.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="4tjr78raja" data-footnote-index="2" role="doc-endnote" id="fn4tjr78raja"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="4tjr78raja"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnref4tjr78raja"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;I say "sub-optimizer" and not "mesa-optimizer" because it may be that the AI is an optimizer (as in the mesa-optimizer case), but it may also be that the AI simply acts as an optimizer within a particular context.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="hqu3mewo5oo" data-footnote-index="3" role="doc-endnote" id="fnhqu3mewo5oo"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="hqu3mewo5oo"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefhqu3mewo5oo"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;This must include some form of training gaming in order to retain goals that would otherwise not be maximally fit.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="89soaadog6b" data-footnote-index="4" role="doc-endnote" id="fn89soaadog6b"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="89soaadog6b"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnref89soaadog6b"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;See &lt;/span&gt;&lt;a href="#Appendix_B__Terminology" rel="noreferrer"&gt;&lt;span&gt;Appendix B&lt;/span&gt;&lt;/a&gt;&lt;span&gt; for why I use the term "precocious misalignment" and how this failure mode compares to deceptive alignment and scheming.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="ejk8s3oq8u" data-footnote-index="5" role="doc-endnote" id="fnejk8s3oq8u"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="ejk8s3oq8u"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefejk8s3oq8u"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;I also like the name "gradient misspecification" here.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="50tp8op8ixd" data-footnote-index="6" role="doc-endnote" id="fn50tp8op8ixd"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="50tp8op8ixd"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnref50tp8op8ixd"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;I would call issues from variance in the gradient "underfit misalignment."&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;/ol&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/SAJoCCvmqyhba94sa/a-misalignment-taxonomy#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">SAJoCCvmqyhba94sa</guid>
-      <pubDate>Sun, 21 Jun 2026 10:20:06 +0000</pubDate>
     </item>
   </channel>
 </rss>
