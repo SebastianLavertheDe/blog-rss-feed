@@ -5,7 +5,136 @@
     <link>https://blog.jim-nielsen.com</link>
     <description>Latest posts from Jim Nielsen’s Blog</description>
     <language>en</language>
-    <lastBuildDate>Mon, 06 Jul 2026 00:12:09 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 06 Jul 2026 05:16:32 +0000</lastBuildDate>
+    <item>
+      <title>Making a Shuffle Button</title>
+      <link>https://blog.jim-nielsen.com/2026/notes-shuffle/</link>
+      <description>&lt;p&gt;I made some updates to &lt;a href="https://notes.jim-nielsen.com" &gt;my notes blog&lt;/a&gt;, including a change to how my “Shuffle” feature worked.&lt;/p&gt;
+&lt;p&gt;Figured I’d blog about it.&lt;/p&gt;
+&lt;h2 id="shuffle-on-a-blog"&gt;Shuffle? On a Blog?&lt;/h2&gt;
+&lt;p&gt;At the time of this writing, I have 974 “notes” that I’ve published. &lt;/p&gt;
+&lt;p&gt;For fun, I have a “shuffle” button that digs up a random note from the past. I like to press it from time to time and re-encounter some insight from the past.&lt;/p&gt;
+&lt;p&gt;It’s like going through an old album, pulling out a random photo, and thinking, “Oh yeah, I remember this! Good times.”&lt;/p&gt;
+&lt;p&gt;Like old photos, there’s also the occasional “that didn’t age so well”. &lt;/p&gt;
+&lt;p&gt;But I find it fun to randomly dig up old insights from others and continue to be inspired.&lt;/p&gt;
+&lt;h2 id="how-did-it-work-before"&gt;How Did It Work Before?&lt;/h2&gt;
+&lt;p&gt;Since my site is built and hosted as static files without a runtime server, this feature required JavaScript to work.&lt;/p&gt;
+&lt;p&gt;Every page had a snippet like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-html"&gt;&lt;span class="hljs-comment"&gt;&amp;lt;!-- In the site navigation --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;button&lt;/span&gt; &lt;span class="hljs-attr"&gt;id&lt;/span&gt;=&lt;span class="hljs-string"&gt;&amp;quot;js-shuffle&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;Shuffle&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;button&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class="hljs-comment"&gt;&amp;lt;!-- Way down at the end of the HTML --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;script&lt;/span&gt;&amp;gt;&lt;/span&gt;
+  // All 974 note IDs injected by my SSG
+  const noteIds = [&amp;#x27;id-1&amp;#x27;, &amp;#x27;id-2&amp;#x27;, id-3&amp;#x27;, &amp;#x27;id-4&amp;#x27;, &amp;#x27;...&amp;#x27;];
+  document.querySelector(&amp;quot;#js-shuffle&amp;quot;)
+    .addEventListener(&amp;#x27;click&amp;#x27;, () =&amp;gt; {
+      // randomly grab an item in `noteIds`
+      const randomId = &amp;#x27;...&amp;#x27;;
+      window.location.href = `/n/${randomId}/`
+    })
+&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;script&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Essentially: inject every note ID into every HTML page and, when the shuffle button is clicked, randomly grab one and navigate the user to it.&lt;/p&gt;
+&lt;p&gt;Not the most elegant thing, but it worked.&lt;/p&gt;
+&lt;p&gt;The problem was that every time I published a new post, every single page had to be re-uploaded to Netlify because every file’s hash would change and its etag/cache was invalidated.&lt;/p&gt;
+&lt;p&gt;This made my builds slow. It also made it difficult, from a development perspective, to ensure refactors didn’t result in unexpected changes to output (using &lt;a href="https://weborigami.org/builtins/dev/changes" &gt;&lt;code&gt;Dev.changes&lt;/code&gt; from my SSG web origami&lt;/a&gt;).&lt;/p&gt;
+&lt;p&gt;So I decided to make a change.&lt;/p&gt;
+&lt;h3 id="what-about-a-no-js-approach"&gt;What About a No-JS Approach?&lt;/h3&gt;
+&lt;p&gt;Because I love to see if I can make things work without JavaScript, I had the thought to randomly write the &lt;code&gt;href&lt;/code&gt; at build time using my SSG, which would result in output like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-html"&gt;&lt;span class="hljs-comment"&gt;&amp;lt;!-- /notes/1 --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;a&lt;/span&gt; &lt;span class="hljs-attr"&gt;href&lt;/span&gt;=&lt;span class="hljs-string"&gt;&amp;quot;/notes/3&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;Shuffle&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;a&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class="hljs-comment"&gt;&amp;lt;!-- /notes/2 --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;a&lt;/span&gt; &lt;span class="hljs-attr"&gt;href&lt;/span&gt;=&lt;span class="hljs-string"&gt;&amp;quot;/notes/1&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;Shuffle&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;a&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class="hljs-comment"&gt;&amp;lt;!-- /notes/3 --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;a&lt;/span&gt; &lt;span class="hljs-attr"&gt;href&lt;/span&gt;=&lt;span class="hljs-string"&gt;&amp;quot;/notes/2&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;Shuffle&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;a&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And every time I re-build my site, just have this logic run on the static site generator so that it’s different &lt;code&gt;href&lt;/code&gt; for every page, every time.&lt;/p&gt;
+&lt;p&gt;Pros:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Doesn’t require JavaScript&lt;/li&gt;
+&lt;li&gt;Doesn’t require a server (request-time logic)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Cons:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;File hashes change across builds (even if there’s no new content or template changes, every HTML page now has a different &lt;code&gt;href&lt;/code&gt; for the shuffle link &lt;em&gt;for every build&lt;/em&gt;). This makes deployments &lt;em&gt;way&lt;/em&gt; slower because Netlify has to redeploy &lt;em&gt;every&lt;/em&gt; file on &lt;em&gt;every&lt;/em&gt; build. Plus Etags change so caching is basically ineffectual.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;I decided I didn’t want to do this, so on to JavaScript!&lt;/p&gt;
+&lt;h2 id="how-does-it-work-now"&gt;How Does It Work Now?&lt;/h2&gt;
+&lt;p&gt;My first thought was to create a single JSON file that contained all my note IDs. Then when the “Shuffle” button gets clicked, I fetch that, grab a random ID, and navigate the user, e.g.&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-html"&gt;&lt;span class="hljs-comment"&gt;&amp;lt;!-- In the site navigation --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;button&lt;/span&gt; &lt;span class="hljs-attr"&gt;id&lt;/span&gt;=&lt;span class="hljs-string"&gt;&amp;quot;js-shuffle&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;Shuffle&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;button&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class="hljs-comment"&gt;&amp;lt;!-- Way down at the end of the HTML --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;script&lt;/span&gt; &lt;span class="hljs-attr"&gt;type&lt;/span&gt;=&lt;span class="hljs-string"&gt;&amp;quot;module&amp;quot;&lt;/span&gt;&amp;gt;&lt;/span&gt;&lt;span class="language-javascript"&gt;
+  &lt;span class="hljs-keyword"&gt;const&lt;/span&gt; noteIds = &lt;span class="hljs-keyword"&gt;await&lt;/span&gt; &lt;span class="hljs-title function_"&gt;fetch&lt;/span&gt;(&lt;span class="hljs-string"&gt;&amp;quot;/notes.json&amp;quot;&lt;/span&gt;).&lt;span class="hljs-title function_"&gt;then&lt;/span&gt;(...);
+  &lt;span class="hljs-comment"&gt;// Handler code for when button is clicked&lt;/span&gt;
+  &lt;span class="hljs-comment"&gt;// grab a note ID &amp;amp; navigate to that location&lt;/span&gt;
+&lt;/span&gt;&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;script&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This would work. It localizes the caching issue to a single file, so only one file has to be invalidated/re-uploaded across builds.&lt;/p&gt;
+&lt;p&gt;But in playing with it a little more, I decided to try something a little more...unconventional.&lt;/p&gt;
+&lt;p&gt;I’ve written before about having &lt;a href="https://blog.jim-nielsen.com/2025/lots-of-little-html-pages/" &gt;lots of little HTML pages&lt;/a&gt; and I thought, “Can I put this functionality in a single HTML page rather than a JSON file?”&lt;/p&gt;
+&lt;p&gt;And what I ended up with was a link, e.g.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;&amp;lt;a href=&amp;quot;/shuffle/&amp;quot;&amp;gt;Shuffle&amp;lt;/a&amp;gt;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;That when clicked navigates the user to a new page. That page has all the JS logic embedded in it, e.g.&lt;/p&gt;
+&lt;pre&gt;&lt;code class="language language-html"&gt;&lt;span class="hljs-comment"&gt;&amp;lt;!-- In the site navigation --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;span&lt;/span&gt;&amp;gt;&lt;/span&gt;Shuffling...&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;span&lt;/span&gt;&amp;gt;&lt;/span&gt;
+
+&lt;span class="hljs-comment"&gt;&amp;lt;!-- In the body of the page --&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;noscript&lt;/span&gt;&amp;gt;&lt;/span&gt;JS is required to use the Shuffle functionality&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;nocript&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;span class="hljs-tag"&gt;&amp;lt;&lt;span class="hljs-name"&gt;script&lt;/span&gt;&amp;gt;&lt;/span&gt;
+  // All 974 note IDs injected by my SSG
+  const noteIds = [&amp;#x27;id-1&amp;#x27;, &amp;#x27;id-2&amp;#x27;, id-3&amp;#x27;, &amp;#x27;id-4&amp;#x27;, &amp;#x27;...&amp;#x27;];\
+
+  // A slight delay so user sees &amp;quot;Shuffling...&amp;quot; effect
+  setTimeout(() =&amp;gt; {
+    // randomly grab an item in `noteIds`
+    const randomId = &amp;#x27;...&amp;#x27;;
+    window.location.href = `/n/${randomId}/`
+  }, 300);
+&lt;span class="hljs-tag"&gt;&amp;lt;/&lt;span class="hljs-name"&gt;script&lt;/span&gt;&amp;gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;There are a few things I like about the experience this implementation provides.&lt;/p&gt;
+&lt;p&gt;First: shuffle is a &lt;em&gt;route&lt;/em&gt;, so I can navigate to it directly without using the GUI, e.g. &lt;a href="https://notes.jim-nielsen.com/shuffle/" &gt;notes.jim-nielsen.com/shuffle&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;Second: I handle the UI/X with a slight delay to make it appear like something is happening when you click the button. If you click the button and it immediately jumps to the next, randomized page, it almost seems to happen too fast. Like you’re left with this feeling of “What just happened?”&lt;/p&gt;
+&lt;p&gt;But in this scenario, it navigates you to the “Shuffle” page, the button you just clicked turns into a spinner + text indicating something is happening, and there’s a slight (intentional) delay before the JS executes and sends you to a randomized note.&lt;/p&gt;
+&lt;p&gt;I know it’s a bit weird. “Introduce artificial slowness? Are you crazy?” But I like it. It feels like the shuffle feature on an old music player.&lt;/p&gt;
+&lt;p&gt;I remember one of my CD players had a “Shuffle” feature. When I’d click the button, it would display “Shuffling…” on the little black and white screen and you’d encounter this brief state where (I presume) the lens inside the hardware would move along the physical track to the spot where it would start reading a new, random song from the CD.&lt;/p&gt;
+&lt;p&gt;The hardware constraints necessitated this kind of an experience, but I always liked it because it felt like the CD player was “thinking” about what track to pick next. This state clearly conveyed to me that my intent to shuffle was received and being followed. I liked that feedback, and it’s exactly what I wanted to do on my notes site (even though it was completely unnecessary).&lt;/p&gt;
+&lt;p class="image-container"&gt;&lt;img src="https://cdn.jim-nielsen.com/blog/2026/shuffle-routes.png" width="1146" height="892" alt="Screenshot of three routes side-by-side indicating a shuffle-like navigation between them." data-og-image /&gt;
+
+&lt;/p&gt;&lt;p&gt;I like having that brief moment of feedback where it’s very clear that your intention was received and being followed, vs. having it happen so fast you can’t even perceive precisely what happened.&lt;/p&gt;
+&lt;p&gt;Here’s a video to show it in action:&lt;/p&gt;
+&lt;p&gt;&lt;video controls src="https://cdn.jim-nielsen.com/blog/2026/shuffle-recording.mp4" width="301" height="655"&gt;&lt;/video&gt;&lt;/p&gt;
+&lt;h2 id="why"&gt;Why?&lt;/h2&gt;
+&lt;p&gt;I know that’s a lot of information for something so small — and, arguably, unnecessary.&lt;/p&gt;
+&lt;p&gt;But I still enjoy writing about how I make decisions when I build things for myself.&lt;/p&gt;
+&lt;p&gt;Hence this post.&lt;/p&gt;
+
+    &lt;hr /&gt;
+    
+
+    &lt;p&gt;
+      Reply via:
+      
+
+      &lt;a
+        href="mailto:jimniels%2Bblog@gmail.com?subject=Re:%20blog.jim-nielsen.com/2026/notes-shuffle/"
+        &gt;Email&lt;/a
+      &gt;
+      · &lt;a href="https://mastodon.social/@jimniels"&gt;Mastodon&lt;/a&gt; ·
+
+      &lt;a href="https://bsky.app/profile/jim-nielsen.com"&gt;Bluesky&lt;/a&gt;
+    &lt;/p&gt;
+
+    
+  </description>
+      <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/notes-shuffle/</guid>
+      <pubDate>Sun, 05 Jul 2026 19:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>This Page Left Intentionally Blank</title>
       <link>https://blog.jim-nielsen.com/2026/intentionally-blank/</link>
@@ -374,48 +503,6 @@
   </description>
       <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/pedantry-of-computing/</guid>
       <pubDate>Tue, 02 Jun 2026 19:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Book Notes: “Poor Charlie’s Almanack”</title>
-      <link>https://blog.jim-nielsen.com/2026/book-notes-charlie-munger/</link>
-      <description>&lt;p&gt;I’ve been slowly listening to &lt;a href="https://press.stripe.com/poor-charlies-almanack" &gt;&lt;em&gt;Poor Charlie’s Almanack: The Essential Wit and Wisdom of Charles T. Munger&lt;/em&gt;&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;I like his practicality. He’s never trying to be overly academic, as if he needs to prove how smart he is.&lt;/p&gt;
-&lt;p&gt;He says Berkshire’s success doesn’t come from them solving hard problems, but from spending their time knowing what a simple solution looks like — and acting on it when they see it!&lt;/p&gt;
-&lt;blockquote&gt;
-&lt;p&gt;We’ve succeeded by making the world easy for us, not by solving the world’s hard problems. &lt;/p&gt;
-&lt;/blockquote&gt;
-&lt;p&gt;Munger analogizes their approach to investing like jumping a fence. They don’t spend all their time trying to figure out how to jump a seven-foot tall fence. Instead, they find a spot where the fence is only a foot tall, jump it, and take the reward on the other side.&lt;/p&gt;
-&lt;p&gt;The approach he articulates for investing, in fact, seems broadly applicable to any kind of problem solving:&lt;/p&gt;
-&lt;ol&gt;
-&lt;li&gt;Quickly eliminate the universe of what not to do.&lt;/li&gt;
-&lt;li&gt;Follow up with a multi-disciplinary attack on what remains.&lt;/li&gt;
-&lt;li&gt;Act decisively when — and only when — the right circumstances appear.&lt;/li&gt;
-&lt;/ol&gt;
-&lt;p&gt;Whenever people ask him for advice (as if somehow he could bestow upon them some kind of knowledge that will save them the pain and hardship of experience) he seems anathema to the idea that you can live life without making lots of mistakes.&lt;/p&gt;
-&lt;p&gt;To paraphrase Charlie: “I don’t want you to think that we have a method of learning that will prevent you from making mistakes. The best you can do is learn to make fewer mistakes than others. And then, when you inevitably do make mistakes, learn to acknowledge them and fix them quickly.”&lt;/p&gt;
-&lt;p&gt;Straightforward. Practical. No bullshit. No ego. (Basically the opposite of everything I see on social platforms.)&lt;/p&gt;
-&lt;p&gt;I quite enjoyed his perspective.&lt;/p&gt;
-
-    &lt;hr /&gt;
-    
-
-    &lt;p&gt;
-      Reply via:
-      
-
-      &lt;a
-        href="mailto:jimniels%2Bblog@gmail.com?subject=Re:%20blog.jim-nielsen.com/2026/book-notes-charlie-munger/"
-        &gt;Email&lt;/a
-      &gt;
-      · &lt;a href="https://mastodon.social/@jimniels"&gt;Mastodon&lt;/a&gt; ·
-
-      &lt;a href="https://bsky.app/profile/jim-nielsen.com"&gt;Bluesky&lt;/a&gt;
-    &lt;/p&gt;
-
-    
-  </description>
-      <guid isPermaLink="true">https://blog.jim-nielsen.com/2026/book-notes-charlie-munger/</guid>
-      <pubDate>Thu, 21 May 2026 19:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
