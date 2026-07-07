@@ -5,7 +5,170 @@
     <link>http://bair.berkeley.edu/blog/</link>
     <description>The BAIR Blog</description>
     <language>en</language>
-    <lastBuildDate>Tue, 07 Jul 2026 14:45:59 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 07 Jul 2026 17:21:18 +0000</lastBuildDate>
+    <item>
+      <title>Intelligence is Free, Now What? &lt;br&gt; Data Systems for, of, and by Agents</title>
+      <link>http://bair.berkeley.edu/blog/2026/07/07/intelligence-is-free-now-what/</link>
+      <description>&lt;!-- twitter --&gt;
+&lt;meta name="twitter:title" content="Intelligence is Free, Now What? Data Systems for, of, and by Agents" /&gt;
+
+&lt;meta name="twitter:card" content="summary_large_image" /&gt;
+
+&lt;meta name="twitter:image" content="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/image6.png" /&gt;
+
+&lt;meta name="keywords" content="data systems, AI agents, agentic workloads, LLM inference cost, agent memory, query optimization, agent swarms, database systems" /&gt;
+
+&lt;meta name="description" content="As the cost of intelligence approaches zero, agents will become the dominant workload for data systems. We explore three challenges and opportunities: data systems for agents, of agents, and by agents." /&gt;
+
+&lt;meta name="author" content="Aditya G. Parameswaran, Shubham Agarwal, Kerem Akillioglu, Shreya Shankar, Sepanta Zeighami, Rishabh Iyer, Matei Zaharia, Alvin Cheung, Natacha Crooks, Joseph Gonzalez, Joseph Hellerstein, Ion Stoica" /&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;i&gt;... government of the people, by the people, for the people ...&lt;/i&gt;&lt;br /&gt;
+&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;mdash; Abraham Lincoln, Gettysburg Address (1863)
+&lt;/p&gt;
+
+&lt;p&gt;The cost of AI is dropping rapidly. GPT-4-class capabilities cost roughly &lt;span class="tex2jax_ignore"&gt;$30&lt;/span&gt; per million tokens in early 2023; today the same runs under &lt;span class="tex2jax_ignore"&gt;$1&lt;/span&gt;, and &lt;a href="https://zuplo.com/learning-center/the-10x-cheaper-ai-era-api-pricing-strategy-obsolete"&gt;some providers are pushing costs below &lt;span class="tex2jax_ignore"&gt;$0.10&lt;/span&gt;&lt;/a&gt;. Across benchmarks, &lt;a href="https://epochai.org/data-insights/llm-inference-price-trends"&gt;inference prices have fallen between 9x and 900x per year&lt;/a&gt;, with a median decline near 50x. Even &lt;a href="https://tokenmix.ai/blog/ai-pricing-trends-history"&gt;frontier models are getting dramatically cheaper&lt;/a&gt; each generation, with open-source models following closely behind. And crucially, even if “Nobel-Prize-winning genius-level” intelligence isn’t here yet, the intelligence that suffices for the vast majority of knowledge work is here today, and getting cheaper by the month. &lt;strong&gt;At this rate, we are soon entering the era of virtually free intelligence&lt;/strong&gt;—the kind that is more than enough for everyday knowledge work.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/image6.png" alt="A cartoon database character and an AI robot agent holding hands" width="450" /&gt;
+&lt;/p&gt;
+
+&lt;!--more--&gt;
+
+&lt;p style="font-size: 0.8em; color: #888; font-style: italic; margin: 1em 0;"&gt;
+Disclosure: This post is a perspective led by &lt;a href="https://people.eecs.berkeley.edu/~adityagp/"&gt;Aditya G. Parameswaran&lt;/a&gt;&amp;mdash;an Associate Professor of EECS and co-director of the EPIC Data Lab at UC Berkeley&amp;mdash;together with his collaborators. It is part landscape survey and part perspective, and several of the research directions discussed below (including agentic speculation, structured memory, and synthesizing custom data systems from scratch) draw on the authors' own ongoing work.
+&lt;/p&gt;
+
+&lt;p&gt;So, what does this new era of near-free intelligence mean for data systems? We believe three new challenges—and opportunities—stem from near-zero inference costs:&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Data Systems &lt;em&gt;For&lt;/em&gt; Agents.&lt;/strong&gt; Agents will soon become the dominant workload for data systems—with swarms of agents spun up in response to each end-user request. Given differences in characteristics between agents and humans—or applications acting on their behalf—&lt;em&gt;how should we redesign data systems for such agentic users?&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Data Systems &lt;em&gt;Of&lt;/em&gt; Agents.&lt;/strong&gt; As agents start taking on the bulk of knowledge work, a new substrate is needed for thousands of agents to manage state over long-running tasks, coordinate and reach consensus, and deal with failures. &lt;em&gt;What do data systems that reliably and efficiently run and manage agent swarms look like?&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Data Systems &lt;em&gt;By&lt;/em&gt; Agents.&lt;/strong&gt; Agents are rapidly becoming capable of synthesizing entire data systems in one go—meaning we can rebuild custom systems for each new workload. Verifying that such systems match intended behavior is a challenge. &lt;em&gt;What does it take to let agents synthesize data systems we can actually trust?&lt;/em&gt;&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/for-of-by-agents.png" alt="A database character and a robot agent holding up a triangle labeled 'of', 'for', and 'by'" width="500" /&gt;&lt;br /&gt;
+&lt;i&gt;
+Data Systems For, Of, and By Agents
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;Next, we will discuss each in more detail, followed by discussing the intertwined future of data systems and agents, especially as the three challenges intersect.&lt;/p&gt;
+
+&lt;h2 id="data-systems-for-agents"&gt;Data Systems For Agents&lt;/h2&gt;
+
+&lt;p&gt;An agent querying a database doesn’t behave like a person or a BI tool. It performs what we call &lt;a href="https://arxiv.org/abs/2509.00997"&gt;&lt;em&gt;agentic speculation&lt;/em&gt;&lt;/a&gt;: a high-volume, heterogeneous stream of work spanning schema introspection, columnar exploration, partial and then full query formulation. With multiple agents each exploring portions of the hypothesis space, each user request could amount to 1000s of individual SQL queries. Now, users can issue ‘high-level’ data tasks, e.g., root-cause analysis—e.g., ‘why did coffee sales in Berkeley drop this year’—or exploratory cohort analysis—e.g., ‘which user segments are most likely to churn next quarter’—each involving a combinatorial space of potential joins, aggregations, and filter combinations.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/image5.png" alt="An agent sending many SELECT SQL queries to a database and receiving results back" width="600" /&gt;&lt;br /&gt;
+&lt;i&gt;
+Data Systems Redesigned to More Effectively Support Agentic Speculation
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;The requests from these agents have various opportunities for optimization. For instance, on a text-to-SQL benchmark with multiple agents attempting each task, only 10-20% of the sub-plans are distinct. Thus, 80-90% of sub-queries perform duplicate work. The same experiments show task success rates significantly increasing with more agentic attempts—so the redundancy is actually helpful. But from the data system perspective it’s wasted work.&lt;/p&gt;
+
+&lt;p&gt;An agent-first data system can exploit such properties to help agents make progress faster. It can reuse results across overlapping sub-plans, drawing on ideas from decades-old literature on &lt;a href="https://dl.acm.org/doi/10.1145/42201.42203"&gt;multi-query optimization&lt;/a&gt; and &lt;a href="https://www.vldb.org/conf/2007/papers/research/p723-zukowski.pdf"&gt;shared scans&lt;/a&gt;. Or the data system can try to &lt;em&gt;satisfice&lt;/em&gt;, returning approximate answers that are good enough for agents to make progress, leveraging work from &lt;a href="https://dl.acm.org/doi/10.1145/253260.253291"&gt;the&lt;/a&gt; &lt;a href="https://dl.acm.org/doi/10.1145/2465351.2465355"&gt;AQP&lt;/a&gt; &lt;a href="https://dl.acm.org/doi/10.1561/1900000004"&gt;literature&lt;/a&gt;—or streaming the results of the final or intermediate operators to help agents decide if seeing the rest is necessary or helpful.&lt;/p&gt;
+
+&lt;p&gt;Another opportunity here is to rethink the query interface entirely: instead of agents issuing a single SQL query at a time, they could instead issue a batch of queries, each with its own approximation requirements. Since enumerating an exponential search space (as in the root cause or cohort analysis examples above) isn’t a good use of agentic reasoning ability, perhaps data systems should support higher-level primitives rather than requiring agents to list each SQL query explicitly. One idea here is to draw on &lt;a href="https://docs.getdbt.com/docs/build/jinja-macros"&gt;DBT-style Jinja macros&lt;/a&gt; to provide looping-based primitives for agents to interact with data systems.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/image2.png" alt="A swarm of AI agents working at laptops" width="450" /&gt;&lt;br /&gt;
+&lt;i&gt;
+A Caffeinated Army of Agents Ready to Tirelessly Complete Your Data Tasks
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;A final opportunity here is to stop thinking of data systems as passive executors of queries; data systems could be &lt;a href="https://arxiv.org/abs/2502.13016"&gt;proactive&lt;/a&gt;, as they possess more grounding in data and system characteristics that agents may lack a priori—they could steer agents in different directions, provide results for related queries, and also provide performance-level feedback (e.g., instead of executing an expensive query, the system could first provide the agent a latency estimate). The reason we can do this now as opposed to the past is that an agent can accept any form of textual feedback and isn’t expecting a strict SQL query result. In fact, the data system could also prepare both materialized and virtual views for an agent in advance, provided to the agent as part of context, as this may be cheaper or more effective than having an agent author or use them.&lt;/p&gt;
+
+&lt;h2 id="data-systems-of-agents"&gt;Data Systems Of Agents&lt;/h2&gt;
+
+&lt;p&gt;Previously, we focused on how agents interact with data systems. Now, we consider everything else agents need to keep working: where they live, how they remember, how they coordinate with each other, and how they deal with failures of each other. This &lt;em&gt;agentic substrate&lt;/em&gt; is separate from the inference stack powering raw intelligence. However, the inference stack itself is being abstracted away through APIs (e.g., from OpenAI or Anthropic), or, for open-weight models, through &lt;a href="https://github.com/vllm-project/vllm"&gt;serving&lt;/a&gt; &lt;a href="https://github.com/sgl-project/sglang"&gt;frameworks&lt;/a&gt; that hide low-level details. So far, the agentic substrate has been managed through harnesses like &lt;a href="https://www.anthropic.com/claude-code"&gt;Claude Code&lt;/a&gt; and &lt;a href="https://github.com/openai/codex"&gt;Codex&lt;/a&gt;, coupled with various mechanisms to &lt;a href="https://mem0.ai/"&gt;store&lt;/a&gt; and &lt;a href="https://www.letta.com/"&gt;retrieve&lt;/a&gt; memory.&lt;/p&gt;
+
+&lt;p&gt;First, on the memory front, the current wisdom is that &lt;a href="https://www.amplifypartners.com/blog-posts/file-systems-for-agents"&gt;files&lt;/a&gt; &lt;a href="https://lsvp.com/stories/filesystemsforagents/"&gt;are all you need&lt;/a&gt;; agents write to unstructured markdown (MD) files, which can then be searched using grep, or via embedding-based retrieval. In fact, many argue that the solution to continual learning is having agents consume a lot (e.g., an entire codebase, slack, company wikis, …) and then write their learnings into MD files, which are then retrieved selectively on demand. Indeed, file systems, bash scripting, and MD files are and will still be important for agents. However, at scale, when agents are doing the vast majority of knowledge work, this approach will no longer be effective.&lt;/p&gt;
+
+&lt;p&gt;Given limited context windows, retrieving all MD file fragments that may be relevant and stuffing it into the context will break down at some point. Even if context windows continue to grow, there are latency benefits to not put all information into context — and in many cases, e.g., when knowledge work involves interacting with large databases or code bases, it will be infeasible to serialize all relevant data into context.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/substrate-for-agent-swarms.png" alt="A swarm of robot agents holding hands, each drawing state from a single large shared database platform below them" width="500" /&gt;&lt;br /&gt;
+&lt;i&gt;
+Data Systems As A Substrate for Multi-Agent Swarms
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;One could use a &lt;a href="https://mem0.ai/"&gt;knowledge&lt;/a&gt; &lt;a href="https://www.getzep.com/"&gt;graph&lt;/a&gt; &lt;a href="https://langchain-ai.github.io/langmem/"&gt;representation&lt;/a&gt;, but knowledge graphs suffer from the same limitations as unstructured MD-based memory due to their lack of structured search. What one needs is to be able to retrieve only memory that is pertinent to the task, across multiple attributes (or facets) of interest. For example, an agent debugging a flaky test should be able to pull only the memories tagged with the relevant module, language, framework, and failure mode—rather retrieving based on keywords or embedding similarity. A separate issue is what to actually retrieve; raw agent traces with mistakes are not very useful as they will induce agents to repeat the same mistake—instead, we want the retrieved memory to be corrective.&lt;/p&gt;
+
+&lt;p&gt;We recently explored a related notion of &lt;a href="https://arxiv.org/abs/2602.13521"&gt;&lt;em&gt;structured memory&lt;/em&gt;&lt;/a&gt;, where we organize memory across various attributes, each of which could be set as &lt;code class="language-plaintext highlighter-rouge"&gt;*&lt;/code&gt; to indicate universal applicability, or set as a list of values to be matched. For a data agent, the dimensions could include the columns and tables, type of operation, and finally, open-ended natural-language corrective instructions. So, we could include memory that only applies to a given type of operation (e.g., ‘when performing date-time operations, use fiscal year as opposed to calendar year conventions’), or a given table (e.g., ‘column product_cleaned is preferred over column product when querying on product name’). One open question is defining an &lt;em&gt;application-specific structured memory&lt;/em&gt;—or what others have called &lt;a href="https://www.linkedin.com/feed/update/urn:li:activity:7467499112523804672/"&gt;world models for memory&lt;/a&gt;. We believe this is akin to defining a schema for each application—and perhaps agents themselves can help us define and refine it over time.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/structured-knowledge.png" alt="Diagram showing corrective knowledge stored with structured attributes (SQL keywords, tables, columns, data type) and retrieved by matching the features of a new agent query" width="100%" /&gt;&lt;br /&gt;
+&lt;i&gt;
+One Possible Way To Store and Retrieve Structured Knowledge &lt;a href="https://arxiv.org/abs/2602.13521"&gt;[From Here]&lt;/a&gt;
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;Structured memory will be useful also for &lt;a href="https://github.com/skydiscover-ai/skydiscover"&gt;evolutionary&lt;/a&gt; &lt;a href="https://arxiv.org/abs/2506.13131"&gt;frameworks&lt;/a&gt; to effectively manage search spaces. Indeed, storing, structuring, and mining large volumes of single and &lt;a href="https://sky.cs.berkeley.edu/project/mast/"&gt;multi-agent traces&lt;/a&gt; can help future agents become much more efficient—potentially enabling effective recursive self-improvement through structured memory-based mechanisms.&lt;/p&gt;
+
+&lt;p&gt;Another challenge is to support concurrent edits to shared memory, and concurrent edits in general, when there are many agents performing transformations. While there have been some useful attempts at &lt;a href="https://dl.acm.org/doi/10.1145/3702634.3702955"&gt;supporting&lt;/a&gt; &lt;a href="https://neon.com/docs/get-started/why-neon"&gt;multiversioning&lt;/a&gt; and &lt;a href="https://docs.turso.tech/agentfs/introduction"&gt;copy-on-write semantics&lt;/a&gt;, it isn’t clear that such techniques will suffice when thousands of agents are attempting to edit shared state at the same time. For instance, when agents are trying various potential transactions in response to a user request, the effects of the vast majority of these transactions need to be rolled back—with only the one ‘correct’ transaction’s result persisting. Work on supporting exactly-once semantics is relevant here, as are underlying techniques based on CRDTs and operational transformation. For updates to fuzzy mechanisms such as memory, we may be able to sacrifice on consistency for perfect correctness in the interest of latency. While agents can reason about semantics to compensate or roll back their actions to eventually finalize most tasks, the primary challenge lies in the degree to which they step on each other’s toes during the process. An important failure mode to be avoided is a form of “livelock,” where incessant compensating actions prevent any meaningful progress.&lt;/p&gt;
+
+&lt;p&gt;Beyond shared state, other concerns emerge when trying to support an army of agents, including what to do when agents fail, how agents should communicate with each other (directly or through intermediate shared state), and how we should deal with straggler agents. There have been some developments in supporting durable multi-agent execution, such as &lt;a href="https://temporal.io/solutions/ai"&gt;Temporal&lt;/a&gt;, but it remains to be seen if such solutions will apply at scale across thousands of agents. On the topic of communication, we need mechanisms to enable agents to negotiate with each other. Imagine four developer agents attempting to reach consensus on a shared schema, with distinct but overlapping objectives. In a human setting, this would involve iterative discussion and compromise; for agentic swarms, we must define the mechanisms that allow them to converge on a design that reflects the underlying goals of their respective principals. Or if agents are all requiring access to a limited resource, again communication will be necessary. It remains to be seen if this is best done via centralized coordination, or if a decentralized approach is necessary.&lt;/p&gt;
+
+&lt;h2 id="data-systems-by-agents"&gt;Data Systems By Agents&lt;/h2&gt;
+
+&lt;p&gt;Finally, if intelligence is effectively free, then we can employ this intelligence to synthesize new data systems from scratch. Indeed, in many settings, general-purpose data systems may be overkill, as they have to support every schema, query, and hardware target. Given a workload, recent work, including &lt;a href="https://arxiv.org/abs/2603.02001"&gt;Bespoke OLAP&lt;/a&gt; and &lt;a href="https://arxiv.org/abs/2603.02081"&gt;GenDB&lt;/a&gt;, has shown that one can use an agentic pipeline to synthesize a complete, workload-specific analytical engine—in minutes to a few hours, at a cost of a few dollars. The engines are disposable: when the workload shifts, one can simply regenerate them. Analogously, our work has shown that one can synthesize custom &lt;a href="https://arxiv.org/abs/2605.24096"&gt;key-value stores&lt;/a&gt; from scratch, targeted to the workload. In fact, modern IDEs, such as &lt;a href="https://kiro.dev/"&gt;Kiro&lt;/a&gt;, elevate specifications for systems development to be a first-class citizen.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/synthesize-from-scratch.png" alt="A robot agent with a hammer and chisel carving a database character out of a block of stone" width="500" /&gt;&lt;br /&gt;
+&lt;i&gt;
+Agents Can Synthesize Custom Data Systems From Scratch
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;The main issue, however, is that specifications are typically imperfect, and don’t cover all corner cases. Present-day agents will exploit the missing specifications to reward-hack their way to a high performance metric. In our custom key-value store work, we found that one way to alleviate this is to have auxiliary verification agents trying to generate test cases that catch the exploitation of corner cases, essentially expanding the specification. Yet another approach is to both generate a system and a proof for its correctness together, for which we have found some &lt;a href="https://arxiv.org/abs/2605.23109"&gt;early success&lt;/a&gt;, but more needs to be done to solidify the approach. Further, it remains to be seen what is the best way to solicit human-written specifications for a system—can this be done in an iterative, human-in-the-loop manner, as opposed to a one-shot, incomplete one. Indeed, human-written specifications are incomplete even for manually authored software, so one would expect that future agents that are more aligned will increasingly exercise better judgement when making design decisions.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/synthesis-pipeline.png" alt="Pipeline diagram where a system builder provides a specification, planner and coder agents generate code, the code is evaluated for correctness and performance, and critic and auditor agents provide feedback and catch reward hacking" width="100%" /&gt;&lt;br /&gt;
+&lt;i&gt;
+One Possible Data System Synthesis Pipeline &lt;a href="https://arxiv.org/abs/2605.24096"&gt;[From Here]&lt;/a&gt;
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;Other questions here involve testing whether starting from a mature system (e.g., Postgres) and removing components/functionality can lead to higher performance or more user trust. Separately, is there an opportunity to make the design composable, comprising various verified components that are mixed and matched given a workload? For example, perhaps the workload hasn’t changed enough for the storage layer to be updated, but perhaps the query optimizer requires changes. A perhaps more viable proposition involves employing agents coupled with proof systems to target critical parts of the code associated with formal proofs, rather than doing so for the entire system.&lt;/p&gt;
+
+&lt;p&gt;A final opportunity here is to move away from the traditional data systems stack with clearly-defined interfaces (e.g., parser, query optimizer, storage manager, …) — that were each largely the prerogative of a single human team to manage. Instead, agents can find new ways to “blend” these components together, perhaps identifying new optimization opportunities as a result. Agents can also fill in missing gaps in functionality to make existing systems much more feature-complete, or reach feature-parity with other competing systems—or analogously, continuously refining open-source systems in response to feature requests or issues (perhaps filed by other agents!) Doing so in a way that prioritizes correctness, long-term maintenance, and human interpretability will be a challenge.&lt;/p&gt;
+
+&lt;h2 id="looking-further-ahead"&gt;Looking Further Ahead&lt;/h2&gt;
+
+&lt;p&gt;In the era of near-free intelligence, data systems matter more than ever. As agents take on the bulk of knowledge work, the workload for data systems will change, the substrate they need to run on will have to be built, and increasingly, they will participate in designing data systems themselves. Each of these shifts opens up a new, exciting research agenda.&lt;/p&gt;
+
+&lt;p style="text-align:center;"&gt;
+&lt;img src="https://bair.berkeley.edu/static/blog/intelligence-is-free-now-what/co-evolution.png" alt="A half-database, half-robot character next to a yin-yang symbol formed by a database and a robot agent" width="600" /&gt;&lt;br /&gt;
+&lt;i&gt;
+Co-Evolution of Data Systems and Agents
+&lt;/i&gt;
+&lt;/p&gt;
+
+&lt;p&gt;Looking further out, the boundaries between agents and data systems will likely start to blur. For instance, agents may design the data systems they themselves run on, defining both the interfaces as well as the system components underneath. Both the interfaces and internals can be evolved over time by agents in a form of recursive self-improvement. There is also an opportunity to rethink data systems as a holistic source of truth for the entirety of relevant state: including raw data, memory, and coordination state, further erasing the distinctions between the data that is being queried by agents and data generated as a result of agentic activity. Finally, data systems may themselves incorporate agentic components, fundamentally evolving from passive computation engines into intelligent, proactive, self-optimizing architectures. It is hard to predict what the future may hold. We’re in for a wild ride!&lt;/p&gt;
+
+&lt;h2 id="acknowledgments"&gt;Acknowledgments&lt;/h2&gt;
+
+&lt;p&gt;The perspective and ongoing work described in this post are the product of joint research and many discussions with wonderful collaborators at the &lt;a href="https://epic.berkeley.edu/"&gt;EPIC Data Lab&lt;/a&gt;, &lt;a href="https://dsf.berkeley.edu/"&gt;Data Systems &amp;amp; Foundations&lt;/a&gt; group, and the broader Berkeley AI-Systems community. Thank you all!&lt;/p&gt;
+
+&lt;p&gt;BibTex for this post:&lt;/p&gt;
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;@misc{intelligence-is-free-blog,
+  title={Intelligence is Free, Now What? Data Systems for, of, and by Agents},
+  author={Aditya G. Parameswaran and Shubham Agarwal and Kerem Akillioglu and Shreya Shankar
+          and Sepanta Zeighami and Rishabh Iyer and Matei Zaharia and Alvin Cheung
+          and Natacha Crooks and Joseph Gonzalez and Joseph Hellerstein and Ion Stoica},
+  howpublished={\url{https://bair.berkeley.edu/blog/2026/07/07/intelligence-is-free-now-what/}},
+  year={2026}
+}
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">http://bair.berkeley.edu/blog/2026/07/07/intelligence-is-free-now-what/</guid>
+      <pubDate>Tue, 07 Jul 2026 02:00:00 -0700</pubDate>
+    </item>
     <item>
       <title>2026 BAIR Graduate Showcase</title>
       <link>http://bair.berkeley.edu/blog/2026/07/01/grads-2026/</link>
@@ -2470,191 +2633,6 @@ document.addEventListener('DOMContentLoaded', function() {
 </description>
       <guid isPermaLink="true">http://bair.berkeley.edu/blog/2025/04/11/prompt-injection-defense/</guid>
       <pubDate>Fri, 11 Apr 2025 03:00:00 -0700</pubDate>
-    </item>
-    <item>
-      <title>Repurposing Protein Folding Models for Generation with Latent Diffusion</title>
-      <link>http://bair.berkeley.edu/blog/2025/04/08/plaid/</link>
-      <description>&lt;!-- twitter --&gt;
-&lt;meta name="twitter:title" content="Repurposing Protein Folding Models for Generation with Latent Diffusion" /&gt;
-
-&lt;meta name="twitter:card" content="summary_large_image" /&gt;
-
-&lt;meta name="twitter:image" content="https://bair.berkeley.edu/blog/assets/plaid/main.png" /&gt;
-
-&lt;meta name="keywords" content="Protein Design, Protein Structure Prediction, Latent Diffusion, Multimodal Generation" /&gt;
-
-&lt;meta name="description" content="The BAIR Blog" /&gt;
-
-&lt;meta name="author" content="Amy X. Lu" /&gt;
-
-&lt;!--
-The actual text for the post content appears below.  Text will appear on the
-homepage, i.e., https://bair.berkeley.edu/blog/ but we only show part of theac
-posts on the homepage. The rest is accessed via clicking 'Continue'. This is
-enforced with the `more` excerpt separator.
---&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image1.jpg" width="75%" /&gt;
-&lt;br /&gt;
-&lt;i style="font-size: 0.9em;"&gt;&lt;a href="https://www.biorxiv.org/content/10.1101/2024.12.02.626353v2" target="_blank"&gt;PLAID&lt;/a&gt; is a multimodal generative model that simultaneously generates protein 1D sequence and 3D structure, by learning the latent space of protein folding models.&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;The awarding of the 2024 &lt;a href="https://www.nobelprize.org/prizes/chemistry/"&gt;Nobel Prize&lt;/a&gt; to AlphaFold2 marks an important moment of recognition for the of AI role in biology. What comes next after protein folding?&lt;/p&gt;
-
-&lt;p&gt;In &lt;strong&gt;&lt;a href="https://www.biorxiv.org/content/10.1101/2024.12.02.626353v2"&gt;PLAID&lt;/a&gt;&lt;/strong&gt;, we develop a method that learns to sample from the latent space of protein folding models to &lt;em&gt;generate&lt;/em&gt; new proteins. It can accept &lt;strong&gt;compositional function and organism prompts&lt;/strong&gt;, and can be &lt;strong&gt;trained on sequence databases&lt;/strong&gt;, which are 2-4 orders of magnitude larger than structure databases. Unlike many previous protein structure generative models, PLAID addresses the multimodal co-generation problem setting: simultaneously generating both discrete sequence and continuous all-atom structural coordinates.&lt;/p&gt;
-
-&lt;!--more--&gt;
-
-&lt;h2 id="from-structure-prediction-to-real-world-drug-design"&gt;From structure prediction to real-world drug design&lt;/h2&gt;
-
-&lt;p&gt;Though recent works demonstrate promise for the ability of diffusion models to generate proteins, there still exist limitations of previous models that make them impractical for real-world applications, such as:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;&lt;span style="color:#17a589"&gt;&lt;strong&gt;All-atom generation&lt;/strong&gt;&lt;/span&gt;: Many existing generative models only produce the backbone atoms. To produce the all-atom structure and place the sidechain atoms, we need to know the sequence. This creates a multimodal generation problem that requires simultaneous generation of discrete and continuous modalities.&lt;/li&gt;
-  &lt;li&gt;&lt;span style="color:#dc7633"&gt;&lt;strong&gt;Organism specificity&lt;/strong&gt;&lt;/span&gt;: Proteins biologics intended for human use need to be &lt;em&gt;humanized&lt;/em&gt;, to avoid being destroyed by the human immune system.&lt;/li&gt;
-  &lt;li&gt;&lt;span style="color:#9F2B68"&gt;&lt;strong&gt;Control specification&lt;/strong&gt;&lt;/span&gt;: Drug discovery and putting it into the hands of patients is a complex process. How can we specify these complex constraints? For example, even after the biology is tackled, you might decide that tablets are easier to transport than vials, adding a new constraint on soluability.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;h2 id="generating-useful-proteins"&gt;Generating “useful” proteins&lt;/h2&gt;
-
-&lt;p&gt;Simply generating proteins is not as useful as  &lt;span style="color:#9F2B68"&gt;&lt;em&gt;controlling&lt;/em&gt;&lt;/span&gt; the generation to get &lt;em&gt;useful&lt;/em&gt; proteins. What might an interface for this look like?&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image2.jpg" width="70%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;For inspiration, let's consider how we'd control image generation via compositional textual prompts (example from &lt;a href="https://energy-based-model.github.io/Compositional-Visual-Generation-with-Composable-Diffusion-Models/"&gt;Liu et al., 2022&lt;/a&gt;).&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;In PLAID, we mirror this interface for &lt;span style="color:#9F2B68"&gt;control specification&lt;/span&gt;. The ultimate goal is to control generation entirely via a textual interface, but here we consider compositional constraints for two axes as a proof-of-concept: &lt;span style="color:#9F2B68"&gt;function&lt;/span&gt; and &lt;span style="color:#dc7633"&gt;organism&lt;/span&gt;:&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image3.jpg" width="70%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;&lt;b&gt;Learning the function-structure-sequence connection.&lt;/b&gt; PLAID learns the tetrahedral cysteine-Fe&lt;sup&gt;2+&lt;/sup&gt;/Fe&lt;sup&gt;3+&lt;/sup&gt; coordination pattern often found in metalloproteins, while maintaining high sequence-level diversity.&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;h2 id="training-using-sequence-only-training-data"&gt;Training using sequence-only training data&lt;/h2&gt;
-&lt;p&gt;&lt;strong&gt;Another important aspect of the PLAID model is that we only require sequences to train the generative model!&lt;/strong&gt; Generative models learn the data distribution defined by its training data, and sequence databases are considerably larger than structural ones, since sequences are much cheaper to obtain than experimental structure.&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image4.jpg" width="100%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;&lt;b&gt;Learning from a larger and broader database.&lt;/b&gt; The cost of obtaining protein sequences is much lower than experimentally characterizing structure, and sequence databases are 2-4 orders of magnitude larger than structural ones.&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;h2 id="how-does-it-work"&gt;How does it work?&lt;/h2&gt;
-&lt;p&gt;The reason that we’re able to train the generative model to generate structure by only using sequence data is by learning a diffusion model over the &lt;em&gt;latent space of a protein folding model&lt;/em&gt;. Then, during inference, after sampling from this latent space of valid proteins, we can take &lt;em&gt;frozen weights&lt;/em&gt; from the protein folding model to decode structure. Here, we use &lt;a href="https://www.science.org/doi/10.1126/science.ade2574"&gt;ESMFold&lt;/a&gt;, a successor to the AlphaFold2 model which replaces a retrieval step with a protein language model.&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image5.jpg" width="80%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;&lt;b&gt;Our method.&lt;/b&gt; During training, only sequences are needed to obtain the embedding; during inference, we can decode sequence and structure from the sampled embedding. ❄️ denotes frozen weights.
-&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;In this way, we can use structural understanding information in the weights of pretrained protein folding models for the protein design task. This is analogous to how vision-language-action (VLA) models in robotics make use of priors contained in vision-language models (VLMs) trained on internet-scale data to supply perception and reasoning and understanding information.&lt;/p&gt;
-
-&lt;h2 id="compressing-the-latent-space-of-protein-folding-models"&gt;Compressing the latent space of protein folding models&lt;/h2&gt;
-
-&lt;p&gt;A small wrinkle with directly applying this method is that the latent space of ESMFold – indeed, the latent space of many transformer-based models – requires a lot of regularization. This space is also very large, so learning this embedding ends up mapping to high-resolution image synthesis.&lt;/p&gt;
-
-&lt;p&gt;To address this, we also propose &lt;strong&gt;&lt;a href="https://www.biorxiv.org/content/10.1101/2024.08.06.606920v2"&gt;CHEAP&lt;/a&gt; (Compressed Hourglass Embedding Adaptations of Proteins)&lt;/strong&gt;, where we learn a compression model for the joint embedding of protein sequence and structure.&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image6.jpg" width="80%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;&lt;b&gt;Investigating the latent space.&lt;/b&gt; (A) When we visualize the mean value for each channel, some channels exhibit “massive activations”. (B) If we start examining the top-3 activations compared to the median value (gray), we find that this happens over many layers. (C) Massive activations have also been observed for other transformer-based models.&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;We find that this latent space is actually highly compressible. By doing a bit of mechanistic interpretability to better understand the base model that we are working with, we were able to create an all-atom protein generative model.&lt;/p&gt;
-
-&lt;h2 id="whats-next"&gt;What’s next?&lt;/h2&gt;
-
-&lt;p&gt;Though we examine the case of protein sequence and structure generation in this work, we can adapt this method to perform multi-modal generation for any modalities where there is a predictor from a more abundant modality to a less abundant one. As sequence-to-structure predictors for proteins are beginning to tackle increasingly complex systems (e.g. AlphaFold3 is also able to predict proteins in complex with nucleic acids and molecular ligands), it’s easy to imagine performing multimodal generation over more complex systems using the same method. 
-If you are interested in collaborating to extend our method, or to test our method in the wet-lab, please reach out!&lt;/p&gt;
-
-&lt;h2 id="further-links"&gt;Further links&lt;/h2&gt;
-&lt;p&gt;If you’ve found our papers useful in your research, please consider using the following BibTeX for PLAID and CHEAP:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;@article{lu2024generating,
-  title={Generating All-Atom Protein Structure from Sequence-Only Training Data},
-  author={Lu, Amy X and Yan, Wilson and Robinson, Sarah A and Yang, Kevin K and Gligorijevic, Vladimir and Cho, Kyunghyun and Bonneau, Richard and Abbeel, Pieter and Frey, Nathan},
-  journal={bioRxiv},
-  pages={2024--12},
-  year={2024},
-  publisher={Cold Spring Harbor Laboratory}
-}
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;@article{lu2024tokenized,
-  title={Tokenized and Continuous Embedding Compressions of Protein Sequence and Structure},
-  author={Lu, Amy X and Yan, Wilson and Yang, Kevin K and Gligorijevic, Vladimir and Cho, Kyunghyun and Abbeel, Pieter and Bonneau, Richard and Frey, Nathan},
-  journal={bioRxiv},
-  pages={2024--08},
-  year={2024},
-  publisher={Cold Spring Harbor Laboratory}
-}
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;You can also checkout our preprints (&lt;a href="https://www.biorxiv.org/content/10.1101/2024.12.02.626353v2"&gt;PLAID&lt;/a&gt;, &lt;a href="https://www.biorxiv.org/content/10.1101/2024.08.06.606920v2"&gt;CHEAP&lt;/a&gt;) and codebases (&lt;a href="https://github.com/amyxlu/plaid"&gt;PLAID&lt;/a&gt;, &lt;a href="https://github.com/amyxlu/cheap-proteins"&gt;CHEAP&lt;/a&gt;).&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;&lt;br /&gt;&lt;/p&gt;
-
-&lt;h2 id="some-bonus-protein-generation-fun"&gt;Some bonus protein generation fun!&lt;/h2&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image7.jpg" width="100%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;Additional function-prompted generations with PLAID.
-&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;&lt;br /&gt;&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image9.jpg" width="100%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;
-Unconditional generation with PLAID.
-&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;&lt;br /&gt;&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image10.jpg" width="90%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;Transmembrane proteins have hydrophobic residues at the core, where it is embedded within the fatty acid layer. These are consistently observed when prompting PLAID with transmembrane protein keywords.
-&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;&lt;br /&gt;&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image11.jpg" width="100%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;Additional examples of active site recapitulation based on function keyword prompting.
-&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;&lt;br /&gt;&lt;/p&gt;
-
-&lt;p style="text-align:center;"&gt;
-&lt;img src="https://bair.berkeley.edu/static/blog/plaid/image8.jpg" width="50%" /&gt;
-&lt;br /&gt;
-&lt;i&gt;Comparing samples between PLAID and all-atom baselines. PLAID samples have better diversity and captures the beta-strand pattern that has been more difficult for protein generative models to learn.
-&lt;/i&gt;
-&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;&lt;br /&gt;&lt;/p&gt;
-
-&lt;h2 id="acknowledgements"&gt;Acknowledgements&lt;/h2&gt;
-&lt;p&gt;Thanks to Nathan Frey for detailed feedback on this article, and to co-authors across BAIR, Genentech, Microsoft Research, and New York University: Wilson Yan, Sarah A. Robinson, Simon Kelow, Kevin K. Yang, Vladimir Gligorijevic, Kyunghyun Cho, Richard Bonneau, Pieter Abbeel, and Nathan C. Frey.&lt;/p&gt;
-
-</description>
-      <guid isPermaLink="true">http://bair.berkeley.edu/blog/2025/04/08/plaid/</guid>
-      <pubDate>Tue, 08 Apr 2025 03:30:00 -0700</pubDate>
     </item>
   </channel>
 </rss>
