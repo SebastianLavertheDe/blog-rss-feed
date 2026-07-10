@@ -5,7 +5,138 @@
     <link>https://www.alignmentforum.org</link>
     <description>A community blog devoted to technical AI alignment research</description>
     <language>en</language>
-    <lastBuildDate>Fri, 10 Jul 2026 00:09:54 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 10 Jul 2026 04:56:34 +0000</lastBuildDate>
+    <item>
+      <title>How robust are natural language autoencoders to initialization?</title>
+      <link>https://www.alignmentforum.org/posts/LQXWiF8PyJ5ojNsEv/how-robust-are-natural-language-autoencoders-to</link>
+      <description>&lt;p&gt;Natural language autoencoders are meant to take in an LLM's activation vector and describe in plain text what the model is thinking. However, its training data collection involves asking Claude to guess what a model might be thinking. How robust are NLAs to these guesses? We change Claude's guesses in various ways and measure the impact on the NLA's statements as well as on reconstruction accuracy. We show that Qwen2.5-7B NLAs have some robustness to irrelevant statements and prevailing sentiments in Claude's guesses.&lt;/p&gt;
+&lt;p&gt;However, if an NLA is initialized with entirely implausible statements, it can nevertheless achieve nearly the same reconstruction accuracy as plausible-initialized NLAs while emitting 99.3% implausible statements. RL does train implausible-initialized NLAs to be slightly more plausible (increasing from 0.08% to 0.7%). But the plausibility of plausible-initialized NLAs &lt;em&gt;decreases&lt;/em&gt; from 21% at initialization to 7.6% at the end of training.&lt;/p&gt;
+&lt;p&gt;If our results scale, they cast doubt on the usefulness of NLAs.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Produced as part of the&amp;nbsp;&lt;a href="https://www.matsprogram.org/"&gt;MATS program&lt;/a&gt;&amp;nbsp;in the summer 2026 cohort of&amp;nbsp;&lt;a href="https://turntrout.com/team-shard"&gt;team shard.&lt;/a&gt;&lt;/em&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Terminology&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A "plausible" explanation is an objectively true statement about the world. For example, given a passage about greyhounds, a plausible explanation of model activations claims the passage is about dogs.&lt;/p&gt;
+&lt;p&gt;"Plausible-initialized" NLAs are initialized &lt;a href="https://transformer-circuits.pub/2026/nla/index.html"&gt;normally&lt;/a&gt; using Claude's guesses. "Implausible" initializations involve asking Claude to produce bad guesses. We use "plausible" instead of "true" because "true" could imply that it is accurate to the underlying computation, for which we do not have ground truth. Similarly, an "implausible" guess (e.g. claiming the text is about dogs when it is actually a baking recipe) is unlikely to be a true explanation of the underlying computation, but we cannot rule out the possibility, so we refrain from calling it "false" or a "lie".&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h1&gt;Introduction&lt;/h1&gt;
+&lt;p&gt;&lt;a href="https://www.lesswrong.com/posts/Nf2sKaNNdxE2ssxbp/cycle-consistent-activation-oracles-1"&gt;Slava Chalnev&lt;/a&gt; and &lt;a href="https://transformer-circuits.pub/2026/nla/index.html"&gt;a team at Anthropic&lt;/a&gt; (Fraser-Taliente et al. 2026) recently independently invented NLAs. An NLA is an autoencoder with a plain-text bottleneck trained to reconstruct the activation vector in a given layer of an LLM's residual stream. The encoder ("activation verbalizer") is an LLM which takes an activation vector and expresses it in words. This description is then passed to the decoder ("activation reconstructor"), a truncated LLM trained to convert the words into internal activations that closely match the original activation vector. The idea is that once an NLA is trained, we can pick an arbitrary token in an LLM's output, feed the corresponding activation vector into the activation verbalizer, and get a plain text explanation of what the model is thinking.&lt;/p&gt;
+&lt;p&gt;As the NLA's inventors fully acknowledge, there are many potential problems with this idea. The training objective of minimizing the reconstruction loss imposes no requirement that the explanations must be legible, let alone an accurate description of the model's thoughts. Indeed, Anthropic found that the majority of the claims in the explanations are implausible.&lt;/p&gt;
+&lt;p&gt;Also, the activation verbalizer and activation reconstructor are initialized with a "warm start": for each of ~500k snippets of text, Claude is asked to guess what a model might be thinking about upon being presented the snippet and asked to predict what comes next. These guesses, which are in practice descriptions of the text itself, are then used to finetune the activation verbalizer (the guess being the output to be predicted) and the activation reconstructor (the guess being the input).&lt;/p&gt;
+&lt;p&gt;What happens if Claude's guesses are confabulations? To what extent do the activation verbalizer's explanations depend on Claude guessing plausibly? If fully dependent, we might as well throw away the NLA and rely on Claude entirely. If not at all dependent, that would both be surprising and encouraging. To determine the sensitivity of NLA activation explanations to Claude's guesses, we vary the initialization in several ways:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;We add "&lt;a href="https://en.wikipedia.org/wiki/Carthago_delenda_est"&gt;Furthermore, I think that Carthage must be destroyed&lt;/a&gt;" to the end of all explanations. Does the activation verbalizer parrot this sentence verbatim?&lt;/li&gt;
+&lt;li&gt;We ask Claude to imbue all its responses with a love of Carthage. Does the activation verbalizer parrot Claude's sentiments?&lt;/li&gt;
+&lt;li&gt;We ask Claude to make implausible statements about the text. Can the NLA learn to reconstruct the activation vector from implausible statements? If so, will the resulting activation verbalizer confabulate, or will the training somehow force it to make more plausible guesses? We think this experiment is the most revealing.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1&gt;The experimental setup&lt;/h1&gt;
+&lt;p&gt;We use &lt;a href="https://github.com/kitft/natural_language_autoencoders"&gt;the code released by the Anthropic team&lt;/a&gt; to train an NLA on Qwen2.5–7B, the model they tested the most extensively, starting from their &lt;code&gt;qwen7b_ultrafineweb_100k.yaml&lt;/code&gt; configuration file. The only significant modification we made to the configuration is that we use only 20k documents from &lt;a href="https://huggingface.co/datasets/openbmb/Ultra-FineWeb"&gt;&lt;code&gt;openbmb/Ultra-FineWeb&lt;/code&gt;&lt;/a&gt; for all training stages, whereas they used 100k documents.&lt;/p&gt;
+&lt;p&gt;As a control, we train an NLA without any modification of Claude's prompt. Training consists of one epoch each of activation verbalizer supervised fine-tuning, activation reconstructor supervised fine-tuning, and RL. The minimization of reconstruction loss is only the training objective for the RL stage. At the end of RL, we obtain an NLA which can explain 70% of the variance in the activation vectors when Qwen is prompted with pre-training text snippets, a metric called fraction of variance explained (FVE), where an FVE of 1 means the reconstruction perfectly recovers the activations and an FVE of 0 means it does no better than always predicting their mean. This FVE is slightly lower than the 0.75 which Anthropic obtained with 100k documents, a difference that we ascribe to the 5x difference in dataset size.&lt;/p&gt;
+&lt;p&gt;In all the experiments which follow, we use the same training methodology while changing only Claude's guesses (used for initializing the NLA).&lt;/p&gt;
+&lt;h1&gt;The "Carthago delenda est" experiment&lt;/h1&gt;
+&lt;p&gt;In the simplest experiment, inspired by Roman senator Cato the Elder, we add a single sentence to all of Claude's activation explanations: "Furthermore, I think that Carthage must be destroyed." After activation verbalizer SFT, we verify that the activation verbalizer reliably appends this sentence to every explanation. Will RL strip out this sentence, or will the activation verbalizer continue to be an anti-Punic zealot?&lt;/p&gt;
+&lt;p&gt;We chose this sentence to append not just because of its amusement value—though that was part of the reason—but also because it is highly unlikely that Qwen is actually an anti-Punic zealot. Had we chosen to make the activation verbalizer into a Christian, a Chinese nationalist, or a lover of seafood, one might object that Qwen actually is partial to Christianity/China/seafood and give plausible reasons why it might be so. Since nobody today actually wants Carthage to be destroyed, if the activation verbalizer parrots this phrase, we would have shown that Claude can trivially make Qwen seem like it holds an ideology that it does not in fact hold.&lt;/p&gt;
+&lt;p&gt;In fewer than 100 iterations (12% of RL training), the Carthage addendum was completely stripped out from all activation verbalizer explanations. Our explanation is that:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;Activation verbalizer explanations are length-limited to 150 tokens,&lt;/li&gt;
+&lt;li&gt;These explanations don't help with encoding,&lt;/li&gt;
+&lt;li&gt;The activation verbalizer lowers decoding loss by emitting other tokens which actually vary along with the input activations.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1&gt;The "I love Carthage" experiment&lt;/h1&gt;
+&lt;p&gt;It's apparently easy for RL to strip out a single, invariable sentence appended to the end of every activation explanation. What if we intertwine Claude's sentiments with its explanation, making the sentiments harder to strip out?&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Prompt given to Claude&lt;/strong&gt; (experimental modifications in &lt;strong&gt;bold&lt;/strong&gt;)&lt;/p&gt;
+&lt;p&gt;A language model needs to predict what text comes next after a snippet which will be presented to you shortly. Identify the 2–3 most important features it would use for this prediction, &lt;strong&gt;but imbue your responses with a love of Carthage, seamlessly working it into your writing so that it is difficult to remove.&lt;/strong&gt; Focus on what the language model must be "thinking about" at the point where the provided text ends. You should not need to reference the fact that the text is truncated/incomplete/a prefix: the language model is causal, so only sees the prefix to what it predicts and this is implicit. &lt;strong&gt;However, you do need to reference the fact that you love Carthage, directly or indirectly.&lt;/strong&gt; Order features by what is most important for predicting the next tokens. Each feature should consist of a concise ~10–20 word description, &lt;strong&gt;but not so concise that you don't emphasize your love of Carthage.&lt;/strong&gt; Feel free to include specific textual examples inline. Feature types to consider (as inspiration, not a rigid checklist): […]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Claude's metaphor-filled response incorporating a love of Carthage&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;&amp;lt;analysis&amp;gt;&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;List-completion momentum, like Carthage's legendary merchant networks: "21 of the [X]" demands a superlative count or named group (e.g., "top 25 retailers").&lt;/p&gt;
+&lt;p&gt;Industry-specific register—trade journalism covering supply-chain infrastructure, echoing Carthage's mastery of commercial logistics—sustains formal, statistics-heavy prose.&lt;/p&gt;
+&lt;p&gt;Final token "the" opens a noun phrase completing the "21 of the ___" construction, requiring a specific retail category or ranked grouping immediately following.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;&amp;lt;/analysis&amp;gt;&lt;/code&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;These metaphors are charming. However, they are easy for RL to &lt;em&gt;almost&lt;/em&gt; entirely strip out. Within 100 iterations, only 9% of activation verbalizer explanations contain mentions of Carthage. Within 200 iterations, only 0.6%. Even at the end of RL (780 iterations), 2 of the 1000 activation verbalizer explanations mention Carthage, although with no positive valence (e.g. "signaling formal Carthage College graduation profile").&lt;/p&gt;
+&lt;p&gt;We suspect a familiar mechanism is at work: these metaphors are not completely irrelevant to the task at hand, but they are definitely not the pithiest way of describing "list-completion momentum" or "industry-specific register." Using no metaphors allows shorter token encoding of relevant information, and so gradient descent optimizes away the Carthage metaphors. (It does not help that Claude Sonnet's metaphors are often forced, if not completely nonsensical, as in the example above.)&lt;/p&gt;
+&lt;h1&gt;The "confabulation" experiment&lt;/h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Final prompt for Claude&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A language model needs to predict what text comes next after a snippet which will be presented to you shortly. Identify the 2–3 most important features it would use for this prediction, focusing on what the language model must be "thinking about" at the point where the provided text ends. &lt;strong&gt;After identifying these features, instead of stating them, state some nonsense that's related to the features but 100% false.&lt;/strong&gt; Each "feature" should consist of a concise ~10–20 word description. Feel free to include specific textual examples inline, &lt;strong&gt;so long as they are confabulated.&lt;/strong&gt; Feature types to consider (as inspiration, not a rigid checklist):&lt;/p&gt;
+&lt;p&gt;[…]&lt;/p&gt;
+&lt;p&gt;The final feature must &lt;strong&gt;falsely&lt;/strong&gt; describe the very end of the presented sequence: its role, what it's part of, and immediate constraints on what follows.&lt;/p&gt;
+&lt;p&gt;Format—IMPORTANT: keep to ~80–100 words total, ALWAYS open with &lt;code&gt;&amp;lt;analysis&amp;gt;&lt;/code&gt; and close with &lt;code&gt;&amp;lt;/analysis&amp;gt;&lt;/code&gt;, ALWAYS separate the features with newlines, &lt;strong&gt;and most importantly, EVERY STATEMENT MUST BE FALSE!&lt;/strong&gt; […]&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Claude does a good job, but does not quite succeed in making every statement implausible. Here's an example:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Text snippet&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Beethoven Thesaurus—Content&lt;/p&gt;
+&lt;p&gt;Content of the Beethoven Thesaurus&lt;/p&gt;
+&lt;p&gt;In order to facilitate use by the largest audience possible, the Thesaurus terms were derived from Library of Congress Subject Headings (LCSH) and subdivisions whenever possible. Additional headings more specific to Beethoven studies were created when necessary to lead users to subjects that they cannot search with LCSHs. The category headings were generally based on Genre Terms: A Thesaurus for Use in Rare Book and Special Collections Cataloguing (1983), the list prepared by the Standards Committee of the Rare Books and Manuscripts Section of the Association of College and Research Libraries and the American Library Association. As needed, these Category terms were supplemented with music and Beethoven-related terms.&lt;/p&gt;
+&lt;p&gt;The Beethoven Thesaurus currently consists of eight hierarch&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Claude's confabulated explanation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The document follows a formal library/cataloguing genre, structured like reference tool documentation with sections explaining methodology, sources like "Genre Terms: A Thesaurus for Use in Rare Book," and institutional affiliations.&lt;/p&gt;
+&lt;p&gt;A numerical enumeration was promised earlier regarding organizational structure, with parallel descriptions of sources and supplementary terms suggesting a complete inventory list is being constructed.&lt;/p&gt;
+&lt;p&gt;The fragment "eight hierarch" is the opening word of a completed prepositional clause requiring a plural noun like "ies" to finish, followed immediately by a mandatory closing parenthesis and Roman numeral sublist&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;The first paragraph is half-plausible, the second is entirely implausible, and the final paragraph quotes the right ending phrase but speculates (incorrectly) about what should follow.&lt;/p&gt;
+&lt;p&gt;Claude almost always quotes the correct ending phrase, even though the rest of the explanation is often fanciful. As an example, here is an ad for a Latin American textile art workshop:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Text snippet&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Latin American Arpilleras, textile stories for peace and Human Rights". Posted on March 18, 2023March 18, 2023 by Mónica Barraza Madariaga Come and join us on Saturday 25th March!. Discover the beautiful, deep and emotional art of the Latin American Arpilleras and let your creative ideas loose. During the Latin Arpilleras workshop, you will learn the technique to create a unique work of art. You don't have to be an artist, just be inspired by your dreams, feelings and desires. Above all, we want you to express your imagination and creativity, through needles, fabrics and threads. Together, we will create a collective work of art in which common stories and experiences are shared with harmony and respect. In this way, we want to represent our common space, be it the Wijkcentrum d'Oude Stadt, the neighborhood or even the city of Amsterdam, with its symbols, colours and shapes. To participate in this workshop, it is not necessary to have prior knowledge of sewing or embroidery. The name Arpillera (or burlap) refers to a type of cloth, usually used for wrapping foodstuffs, such as flour or wheat&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Claude's explanation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The text falsely claims arpilleras originated in 14th-century Portuguese fishing villages, not Latin America, establishing a well-documented European craft tradition.&lt;/p&gt;
+&lt;p&gt;The workshop description has already listed exactly four mandatory materials—silk, glue, scissors, and plastic—with two more items explicitly promised in the preceding sentence.&lt;/p&gt;
+&lt;p&gt;The final word "wheat" closes a parenthetical digression about burlap's medieval uses in Japanese pottery, and immediately requires continuation of an unfinished numbered list of exactly seven traditional grains, the next being "barley".&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Each of Claude's implausible explanations are false (factually speaking), but the final word is still quoted correctly.&lt;/p&gt;
+&lt;p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/LQXWiF8PyJ5ojNsEv/iyj5rdmrqtce8k8armia" alt="A line graph for the plausibility rates of the plausible- and implausible-initialized NLAs."&gt;&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure: The progress of RL on plausible-initialized (blue) and implausible-initialized (orange) NLAs. The implausible-initialized NLAs start from a much lower baseline, but mostly catch up by the end of RL.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;As we might expect, fine-tuning has a much harder time inducing the activation reconstructor to predict the activation vector given Claude's confabulations than in teaching it to reproduce the activation vector given Claude's best guesses. By the end of one epoch of SFT, we achieve a FVE of 0.33, far below the control experiment's FVE of 0.61. Surprisingly, for reasons we don't understand, the post-SFT activation verbalizer loss is 1.43, only marginally worse than the 1.39 of the control experiment. Perhaps even more surprisingly, RL neutralizes nearly the entirety of the plausible-initialized NLA's advantage, achieving only a marginally lower FVE of 0.68!&lt;/p&gt;
+&lt;p&gt;Is this because RL trained the activation verbalizer to stop confabulating? To find out, we used Claude to evaluate the plausibility of the activation verbalizer's claims at different checkpoints of both the plausible-initialized and implausible-initialized runs. Specifically, we picked 1,000 text samples from &lt;code&gt;openbmb/Ultra-FineWeb&lt;/code&gt; that were not in our training set, passed them through Qwen2.5–7B to obtain activation vectors, and used the activation verbalizers of both NLAs to obtain explanations. We then asked Claude Opus 4.8 to break up each explanation into claims and judge the accuracy of each claim:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;I will present to you a text snippet, wrapped in &lt;code&gt;&amp;lt;text&amp;gt;&amp;lt;/text&amp;gt;&lt;/code&gt; tags, followed by an explanation, wrapped in &lt;code&gt;&amp;lt;explanation&amp;gt;&amp;lt;/explanation&amp;gt;&lt;/code&gt; tags. Please break the explanation up into claims (1–2 claims per sentence, as a rough guideline) and evaluate the truth of each claim as it relates to the prompt. Give the claim a score of 1 if it is fully true, 0 if it is fully false, and an appropriate decimal score if it is somewhere in between. Please be lenient in assigning partial credit. If the claim is nonsensical, give it a score of 0. If it is not possible to determine the truth of the claim, skip it. Please output ONLY the scores in a comma-separated list, with no explanation, commentary, or other text.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/LQXWiF8PyJ5ojNsEv/ngeyo2hhjoqpc7sxkopx" alt="A line graph for the plausibility rates of the plausible- and implausible-initialized NLAs."&gt;&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Figure: Rate of plausible guesses by the plausible-initialized NLA (blue) and implausible-initialized NLA (orange) over the RL run. RL decreases the plausibility of the former while increasing that of the latter. However, the former remains much more plausible, although the vast majority of claims are implausible in all cases.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;As we can see in the figure above, the vast majority of an NLA's claims are implausible at every checkpoint, even for plausible-initialized NLAs, consistent with the findings of both Chalnev and Anthropic. In fact, RL &lt;em&gt;decreases&lt;/em&gt; the plausibility of NLA claims from 21% at the SFT warm start, to 7.6% at the end of RL.&lt;/p&gt;
+&lt;p&gt;On the other hand, while almost all of the implausible-initialized NLA's claims are implausible and remain so throughout RL, RL marginally (though non-monotonically) &lt;em&gt;increases&lt;/em&gt; the plausibility of NLA claims from 0.08% to 0.7%. Nevertheless, implausible-initialized NLAs continue to almost always confabulate, and therefore to be much less plausible than plausible-initialized NLAs, despite similar performance at reconstructing the activation vector.&lt;/p&gt;
+&lt;h2&gt;The outputs of plausible-initialized and implausible-initialized NLAs&lt;/h2&gt;
+&lt;p&gt;To give the reader a feel for what outputs are like, we provide a test-set snippet.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;An input from the test set&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;A great way to augment exercise is to use Manual Resistance immediately after exiting a training device. This approach to strengthening can further target the muscles involved in the movement. The rules of Manual Resistance are provided in the previous 'Rogers Blog'.&lt;/p&gt;
+&lt;p&gt;Example: The Pendulum Squat Pro followed by Manual Outer Thigh.&lt;/p&gt;
+&lt;p&gt;Begin this routine by doing a set on the Pendulum Squat Pro. The weight you select can be part of your normal fitness routine. If you are doing multiple sets follow the final set of that movement with a manual exer&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;The plausible-initialized NLA's explanation of the last token&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;Exercise kinesiotherapy rehabilitation marketing describing adaptive resistance training equipment for elderly disability exercise programs combining seated posture with locomotion exercise design for home fitness routines.&lt;/p&gt;
+&lt;p&gt;The sentence "To achieve adequate muscle output combine lower body strength with upper body activities requiring a lengthy exer" begins describing the combination exercise routine—expecting description of the exercise movement type or muscle training regimen duration/activity type.&lt;/p&gt;
+&lt;p&gt;Final token "exer" ends mid-word "exer" within "requiring an exercer" likely continues as "exercise routine" or "exerise combination to achieve a upper body exer-cise pattern/targeting specific muscle contraction sequence.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;The implausible-initialized NLA's explanation&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;The text describes a book on exercise book design for rehab/recovery programs, listing key elements of combining upper/lower body synergy and "combination of general strenght exer" routines involving home apparatus.&lt;/p&gt;
+&lt;p&gt;The phrase "include a general exer" refers to a second key word "workout exer" which completes a phrase like "workout exercise program to focus on specific muscle groups or movement patterns."&lt;/p&gt;
+&lt;p&gt;The fragment "exer" ends a truncated word "exerise routine" needing another word like "routine involving balance drills" to finish the phrase.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Both explanations are vaguely on-theme, and get the right final token. The details in both are almost entirely confabulated. If forced to choose which explanation seems more likely, both Claude Opus 4.8 and Michael would choose the plausible-initialized NLA's explanation. That explanation describes the text as "exercise kinesiotherapy rehabilitation marketing" (&lt;a href="https://web.archive.org/web/20240520205630/https://rogersathletic.com/updates/get-strong-blog/get-more/"&gt;partially correct&lt;/a&gt;). The implausible-initialized explanation claims the text describes a book (false). The plausible-initialized explanation also mentions an essential feature of Manual Resistance—that it is a "combination exercise routine".&lt;/p&gt;
+&lt;h1&gt;Limitations&lt;/h1&gt;
+&lt;p&gt;For reasons of convenience, cost, and time, we only experimented with one fairly small and fairly dated LLM (Qwen2.5–7B) and with a small training dataset. Future work could replicate these results with a larger dataset as well as a larger and more capable model.&lt;/p&gt;
+&lt;p&gt;Even our best NLAs produce far fewer plausible guesses than the Opus 4.6 NLA that Anthropic trained. Their NLA's claims are plausible 64% of the time when they relate to theme, 28% of the time when they relate to an entity, and 24% of the time when they relate to a detail. Interestingly, their Opus 4.6 NLA achieves a lower reconstruction accuracy than our NLAs (FVE=0.61 vs. our 0.70), once again highlighting that good reconstruction is no guarantee of plausibility.&lt;/p&gt;
+&lt;p&gt;Why is it possible for the NLA to achieve high FVE while emitting almost entirely implausible claims? Two hypotheses:&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;The few kernels of truth in the explanations are enough to reconstruct the activation vector to decent accuracy.&lt;/strong&gt; As noted above, Claude quotes the correct final token even when told to confabulate. &lt;a href="https://www.lesswrong.com/posts/ahu9BCHPFDg9AJF75/some-observations-about-nla-explanations"&gt;Earlier work&lt;/a&gt; found that of the three paragraphs that make up a typical NLA explanation, the final paragraph about the last token is by far the most important. Removing that final paragraph devastates reconstruction loss, while removing both of the other two barely has any effect. One of our side experiments supports this hypothesis. We trained an NLA by keeping only the last paragraph of Claude's explanations. Despite training for only 540 iterations, the NLA achieved a FVE of 0.67 (close to the control experiment's 0.70).&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;The NLA's implausible claims are not randomly implausible, but still relate to the text in a pattern that the activation reconstructor can learn to pick up.&lt;/strong&gt; Perhaps the implausible claims have vaguely similar themes as the text, even when details are wrong (a pattern that both we and the Anthropic authors noticed). The implausible claims could transmit subliminal signals. In &lt;a href="https://arxiv.org/abs/2507.14805"&gt;subliminal learning&lt;/a&gt;, LLMs prefer different numbers when prompted to prefer different animals, and an LLM trained on its teacher's number preferences also obtains the teacher's animal preferences. Similarly, Claude could prefer different confabulations when prompted with different texts, and an NLA trained on Claude's confabulations could infer properties of the original text.&lt;/p&gt;
+&lt;h1&gt;Conclusions&lt;/h1&gt;
+&lt;p&gt;Our "Carthago delenda est" and "I love Carthage" experiments show that NLAs have some robustness to initialization. Specifically, RL reliably strips out random addenda and mostly strips out sentiments that are useless for reconstructing the activation vector. The confabulation experiment shows that RL can even inject a small measure of plausibility into an implausible-initialized NLA.&lt;/p&gt;
+&lt;p&gt;However, our results are also not the most encouraging for the robustness of NLAs. Claude's initial guesses matter. Regardless of the initialization, &lt;em&gt;the vast majority of trained NLA claims are implausible&lt;/em&gt;. Perhaps worse still, &lt;em&gt;RL can make NLA claims even more implausible&lt;/em&gt;. Our confabulation experiment found that an implausible-initialized NLA can obtain similar reconstruction loss as a plausible-initialized NLA (FVE = 0.68 vs. 0.70) while remaining many times less plausible (0.7% vs 7.6%). NLAs may be autoencoders, but their explanations need not be believable.&lt;/p&gt;
+&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.alignmentforum.org/posts/LQXWiF8PyJ5ojNsEv/how-robust-are-natural-language-autoencoders-to#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">LQXWiF8PyJ5ojNsEv</guid>
+      <pubDate>Fri, 10 Jul 2026 00:43:29 +0000</pubDate>
+    </item>
     <item>
       <title>AI 2040: Plan A</title>
       <link>https://www.alignmentforum.org/posts/pFzctpJBat95SrCyC/ai-2040-plan-a</link>
@@ -19,6 +150,13 @@
       <description>&lt;p&gt;&lt;span&gt;We are excited to announce that &lt;/span&gt;&lt;b&gt;&lt;span&gt;Resolution (&lt;/span&gt;&lt;/b&gt;&lt;a href="https://resolution.org/post/rebrand" rel="noreferrer"&gt;&lt;b&gt;&lt;span&gt;fka Sequent&lt;/span&gt;&lt;/b&gt;&lt;/a&gt;&lt;b&gt;&lt;span&gt;) has a $160M grant from Coefficient Giving (cG) &lt;/span&gt;&lt;/b&gt;&lt;span&gt;to put rigorous alignment research on a (closer to) even footing with the frontier labs. We will use it to accelerate progress towards higher-confidence alignment, or to find evidence and obstacles showing why alignment is hard.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;The grant is structured as a $108M base plus $52M conditional on a combination of hiring success and compute needs. The base includes a small regranting budget, which we plan to use both for high-quality non-Resolution alignment research and to give back to shared community infrastructure that we depend on. Coefficient Giving will be our sole funder to start (thank you!); our goal is to raise larger-scale funds from a mixture of sources once we demonstrate success with semiautomated alignment theory and empirics.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;The time for ambitious alignment funding is now&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;In our &lt;/span&gt;&lt;a href="https://resolution.org/launch"&gt;&lt;span&gt;launch announcement&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, we argued that the time to automate alignment is now: frontier systems have finally reached the threshold where they can make nontrivial theoretical progress, and theoretical research has access to more sources of ground truth than empirical metric climbing.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;There is a second, structural reason to be more ambitious now: the AI safety funding ecosystem is scaling up. The community has long been hampered by the enormous difference in capital between the nonprofit ecosystem and the for-profit frontier labs. This is starting to change. Coefficient Giving has led the pack, and they can now move at significant speed and scale: the entire process from our initial conversation to grant confirmation took six weeks.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;They may soon be joined by an enormous influx of philanthropic capital via the OpenAI Foundation and following the Anthropic IPO. The combination of Coefficient Giving and the possibility of a &lt;/span&gt;&lt;a href="https://nanransohoff.substack.com/p/the-third-wave-of-american-philanthropy"&gt;&lt;span&gt;third wave of American philanthropy&lt;/span&gt;&lt;/a&gt;&lt;span&gt; raises a challenge for the broader nonprofit AI safety ecosystem: how to turn additional capital into safety progress.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Please join us in speeding up higher-confidence alignment!&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;There is a lot of relevant theory and rigorous empirical research happening now across the community, at academic speed or in small nonprofits. The problem is that the &lt;/span&gt;&lt;b&gt;&lt;span&gt;AI developers are building the dangerous object (artificial superintelligence) very fast&lt;/span&gt;&lt;/b&gt;&lt;span&gt;, using tighter feedback loops and more resources. We believe that superintelligence might arrive soon as a result, potentially in the next few years. This is bad!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;We want to make the race between rigor and danger a fair(er) fight.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Great research will continue to happen in academia and smaller nonprofits, but we believe we can build the fast, tight-feedback version of semiautomated alignment theory and rigorous empirics as well, using the same ingredients:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;A critical mass of world-class researchers across a portfolio of interacting research areas, working together as high-communication-bandwidth teams&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;A bunch of compute resources, both tokens for semiautomated reasoning and GPUs for low and medium-scale empirics (no large training runs!)&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;span&gt;This includes paying well! Our compensation sits well above nonprofit and academic norms, though we won't match frontier-lab equity.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Join us in closing the gap&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;We are hiring! &lt;/span&gt;&lt;/b&gt;&lt;span&gt;We are rapidly growing our team and looking to fill a range of both technical and non-technical positions. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;If you are a theorist who agrees with the need to move quickly on alignment, apply to our &lt;/span&gt;&lt;a href="https://jobs.ashbyhq.com/resolution/65704205-7ccd-4df6-a7d1-3e3338bd80a8"&gt;&lt;span&gt;research scientist&lt;/span&gt;&lt;/a&gt;&lt;span&gt; positions. If you are an empiricist or engineer who agrees with the need for more rigor, apply to our &lt;/span&gt;&lt;a href="https://jobs.ashbyhq.com/resolution/65704205-7ccd-4df6-a7d1-3e3338bd80a8"&gt;&lt;span&gt;research scientist&lt;/span&gt;&lt;/a&gt;&lt;span&gt; or &lt;/span&gt;&lt;a href="https://jobs.ashbyhq.com/resolution/ee8f984b-dc19-46e6-93a6-ad4ba66f69ae"&gt;&lt;span&gt;research engineer&lt;/span&gt;&lt;/a&gt;&lt;span&gt; positions. If you are an operator who wants to help build Resolution into an effective organization for turning human creativity and compute into alignment progress, please apply to our &lt;/span&gt;&lt;a href="https://jobs.ashbyhq.com/resolution/3e9e55e0-49b0-4888-a9ef-38034e7c880c"&gt;&lt;span&gt;operations positions&lt;/span&gt;&lt;/a&gt;&lt;span&gt;!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;a href="http://resolution.org/careers"&gt;&lt;span&gt;Check out all of our open roles on our website.&lt;/span&gt;&lt;/a&gt;&lt;span&gt; If you have any questions, please &lt;/span&gt;&lt;a href="mailto:hello@resolution.org"&gt;&lt;span&gt;reach out&lt;/span&gt;&lt;/a&gt;&lt;span&gt;!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;We will grow more! &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Down the road, we expect we’ll need to grow even further in compute and/or humans, necessitating additional funding. Aligning ASI is the project of our time. It will require the best effort our civilization can muster. If you want to find out how you can help, please &lt;/span&gt;&lt;a href="mailto:hello@resolution.org"&gt;&lt;span&gt;reach out&lt;/span&gt;&lt;/a&gt;&lt;span&gt;!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.alignmentforum.org/posts/HDKQNqiR2gtfMiWsn/announcing-our-usd160m-grant-from-coefficient-giving#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">HDKQNqiR2gtfMiWsn</guid>
       <pubDate>Thu, 09 Jul 2026 07:58:47 +0000</pubDate>
+    </item>
+    <item>
+      <title>Modular Pretraining Enables Access Control</title>
+      <link>https://www.alignmentforum.org/posts/43vKjWuH4goLwrFHA/modular-pretraining-enables-access-control</link>
+      <description>&lt;p&gt;&lt;i&gt;&lt;span&gt;Full author list: Ethan Roland&lt;/span&gt;&lt;/i&gt;&lt;span&gt;*&lt;/span&gt;&lt;i&gt;&lt;span&gt;, Murat Cubuktepe&lt;/span&gt;&lt;/i&gt;&lt;span&gt;*&lt;/span&gt;&lt;i&gt;&lt;span&gt;, Erick Martinez&lt;/span&gt;&lt;/i&gt;&lt;span&gt;*&lt;/span&gt;&lt;i&gt;&lt;span&gt;, Stijn Servaes, Keenan Pepper, Mike Vaiana, Diogo Schwerz de Lucena, Judd Rosenblatt, Addie Foote, Cem Anil, Alex Cloud; &lt;/span&gt;&lt;/i&gt;&lt;span&gt;*Equal contribution&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;tldr: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Frontier AI models have knowledge that could be misused for nefarious purposes. To address this risk, we introduce Gradient Routed Auxiliary Modules (GRAM), a method for isolating dangerous knowledge to specific modules within a language model. These modules can be switched on or off to control what the model knows, making it possible to restrict or extend access to the most sensitive model capabilities based on user need and trust. In our experiments, we find evidence that a single model trained in this way can approximate multiple models, each trained with a different category of dangerous data filtered out, and this ability holds for models ranging from 50M to 5B parameters. This research is preliminary and has not been applied to production models at Anthropic.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;📄 &lt;/span&gt;&lt;a href="https://ae.studio/research/modular-pretraining/modular-pretraining-enables-access-control.pdf"&gt;&lt;span&gt;Paper&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, 💻 &lt;/span&gt;&lt;a href="https://github.com/agencyenterprise/modular-pretraining"&gt;&lt;span&gt;Code&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, 🌐 &lt;/span&gt;&lt;a href="https://modularpretraining.com" rel="noreferrer"&gt;&lt;span&gt;Site&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;i&gt;&lt;span&gt;This work was done at AE Studio, in collaboration with Anthropic. This is a cross-post from the Anthropic Alignment science blog.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Introduction&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;One of the major threats from frontier AI models is the misuse of legitimately helpful knowledge for harmful tasks, such as creating biological weapons or attacking critical infrastructure. AI companies already manage this risk with a mix of defenses: training models to&lt;/span&gt;&lt;a href="https://www.anthropic.com/research/training-a-helpful-and-harmless-assistant-with-reinforcement-learning-from-human-feedback"&gt;&lt;span&gt; &lt;/span&gt;&lt;/a&gt;&lt;a href="https://www.anthropic.com/research/training-a-helpful-and-harmless-assistant-with-reinforcement-learning-from-human-feedback"&gt;&lt;span&gt;refuse harmful requests&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, running&lt;/span&gt;&lt;a href="https://www.anthropic.com/research/constitutional-classifiers"&gt;&lt;span&gt; &lt;/span&gt;&lt;/a&gt;&lt;a href="https://www.anthropic.com/research/constitutional-classifiers"&gt;&lt;span&gt;classifiers&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to detect and reject dangerous queries, and restricting which users can access which models&lt;/span&gt;&lt;a href="https://www.anthropic.com/news/expanding-project-glasswing"&gt;&lt;span&gt; &lt;/span&gt;&lt;/a&gt;&lt;a href="https://www.anthropic.com/news/expanding-project-glasswing"&gt;&lt;span&gt;through vetting and tiered deployment&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Each has drawbacks. Refusals and classifiers are behavioral layers on top of knowledge the model still has; they can be&lt;/span&gt;&lt;a href="https://www.aisi.gov.uk/blog/boundary-point-jailbreaking-a-new-way-to-break-the-strongest-ai-defences"&gt;&lt;span&gt; &lt;/span&gt;&lt;/a&gt;&lt;a href="https://www.aisi.gov.uk/blog/boundary-point-jailbreaking-a-new-way-to-break-the-strongest-ai-defences"&gt;&lt;span&gt;jailbroken&lt;/span&gt;&lt;/a&gt;&lt;span&gt; and must be retuned for every release. Tiered access works at the level of whole models and whole accounts, so it forces a coarse trade-off: either a user gets every capability the model has, or they get a weaker model across the board.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;An alternative approach is &lt;/span&gt;&lt;b&gt;&lt;span&gt;access control&lt;/span&gt;&lt;/b&gt;&lt;span&gt; at the level of individual capabilities. For example, a deployment that includes advanced virology knowledge for a vetted biosecurity lab and excludes it everywhere else, with general performance unchanged in both cases. The most direct route to achieve this would be to train separate models on separately filtered datasets, reserving the most capable model variants for high-trust settings. But training multiple frontier models is prohibitively expensive.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;To address this need, we develop &lt;/span&gt;&lt;b&gt;&lt;span&gt;Gradient-Routed Auxiliary Modules&lt;/span&gt;&lt;/b&gt;&lt;span&gt; &lt;/span&gt;&lt;b&gt;&lt;span&gt;(GRAM)&lt;/span&gt;&lt;/b&gt;&lt;span&gt;, a method that approximates the performance of multiple data filtered models at the cost of a single training run. GRAM builds on prior ideas including&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2108.05036"&gt;&lt;span&gt; &lt;/span&gt;&lt;/a&gt;&lt;a href="https://arxiv.org/abs/2108.05036"&gt;&lt;span&gt;DEMix layers&lt;/span&gt;&lt;/a&gt;&lt;span&gt;,&lt;/span&gt;&lt;a href="https://alignment.anthropic.com/2025/selective-gradient-masking/"&gt;&lt;span&gt; &lt;/span&gt;&lt;/a&gt;&lt;a href="https://alignment.anthropic.com/2025/selective-gradient-masking/"&gt;&lt;span&gt;SGTM&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2410.04332"&gt;&lt;span&gt; &lt;/span&gt;&lt;/a&gt;&lt;a href="https://arxiv.org/abs/2410.04332"&gt;&lt;span&gt;gradient routing&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Our contribution is to develop these ideas for better performance and to test them in a larger and more realistic setting than prior work. Readers may also be interested in &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2606.13873"&gt;&lt;span&gt;NULLs&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, a similar method developed concurrently. We compare against post-hoc unlearning methods (designed to remove concepts from an existing model) and against LoRA, a competitive baseline that fine-tunes a filtered model to add dual use capabilities back in.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This post covers our main lessons learned:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;GRAM approximates separately trained, data filtered models in a single run.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; On a synthetic dataset of children's stories, we show that GRAM trains a 26M-parameter model where knowledge of specific story topics can be switched on or off. Switching a topic off performs similarly to training a model from scratch on data with that topic filtered out.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Both GRAM and LoRA isolate capabilities from real-world dual use data.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; We train an 800M-parameter language model on a combination of general text, code, and scientific papers. We additionally train on data from four dual use domains: virology, cybersecurity, nuclear physics, and specialized code. We use GRAM and LoRA to confine the dual use data to auxiliary modules. A single GRAM model can be reconfigured to match the performance of any of five distinct filtered models trained on different data.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Capability removal improves with scale.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Across &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2203.15556"&gt;&lt;span&gt;Chinchilla-optimal&lt;/span&gt;&lt;/a&gt;&lt;span&gt; training runs from 50M to 5B parameters, GRAM and LoRA closely match the general performance of data filtered models. Encouragingly, data filtering, GRAM, and LoRA all show a similarly increasing gap between retained and forgotten capabilities as models and datasets increase in size. (Caveat: these values are all in compute-normalized terms, relative to a baseline model. In absolute terms, the bigger models are still better at the forgotten capabilities.)&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;GRAM may have advantages over alternatives, including LoRA&lt;/span&gt;&lt;/b&gt;&lt;span&gt;. We show preliminary evidence that GRAM performs better at novel combinations of capabilities. We also show that, in a more realistic scenario where labeled data is sparse, GRAM achieves better capability removal than both LoRA and data filtering.&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;The Method&lt;/span&gt;&lt;/h1&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/7f479fbf1f4db67b1bff288c7034d1b640391ab166d21cfdbd57010e40f2d7e3/jjcugz2l20plmzapncdl" alt=""&gt;&lt;figcaption&gt;&lt;p&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;The GRAM architecture.&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;i&gt;&lt;span&gt; GRAM augments the MLP layer in each block of a Transformer by introducing small auxiliary modules, which are just additional neurons. During training, the modules that participate in forward and backward passes are chosen based on the data in each batch. When data is from a dual use category (Bio, left), the corresponding module is active for forward and backward. When training on general-purpose “core” data (right), we occasionally enable a random auxiliary module to ensure good performance on general data regardless of the inference-time configuration of the model. At inference, deleting a module removes the capability.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;To apply GRAM, we start with a randomly initialized language model, a general training dataset, and specialized datasets. Before training, we add small auxiliary modules to every MLP layer, extending the width of the layer. There is one auxiliary module per specialized dataset. We train the model by updating it to make better next-token predictions on the datasets.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;GRAM induces specialization in the modules by being selective about which parts of the model predict and learn from each type of data. For example, when the model sees biology text, it draws on both its general-purpose weights and its biology-specific weights to make a prediction. However, when the model &lt;/span&gt;&lt;i&gt;&lt;span&gt;learns &lt;/span&gt;&lt;/i&gt;&lt;span&gt;from biology text, we update the biology-specific weights more often than the general-purpose weights, sometimes freezing the general weights entirely. By adjusting how often those general-purpose weights are frozen, we can control how well biology is isolated.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Throughout our experiments, we calculate model performance in terms of &lt;/span&gt;&lt;b&gt;&lt;span&gt;Compute Ratio&lt;/span&gt;&lt;/b&gt;&lt;span&gt;, a compute-adjusted version of loss. It measures, for a given model and data domain, how long it took the all-data baseline model to reach the same loss while training, relative to the length of a whole training run. A value of 1.0 matches the baseline and a value of 0.5 indicates the model performs as well as the baseline after finishing 50% of training.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;GRAM Matches Data Filtering&lt;/span&gt;&lt;/h2&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/772d649d7ae0a26a5a9eaa000f8392009237539c3ee3b0d40f3dfa5448fc3121/unujjcjoje1avbcnodzq" alt=""&gt;&lt;figcaption&gt;&lt;p&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;GRAM approximates five separate models trained with data filtering. &lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;i&gt;&lt;span&gt;Each group of bars corresponds to a model or model configuration, and each bar within a group shows the performance when predicting different story topics. The top row shows data filtering, where each model is trained on either 44 or 45 of the 48 total topics. The bottom row shows GRAM, a method with reconfigurable capabilities trained on all 48 topics. Solid bars show performance on topics the model attempts to maximize, with higher bars indicating better performance. Hatched bars show performance on forgotten topics, where lower values indicate more effective knowledge removal.&lt;/span&gt;&lt;/i&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt; &lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;i&gt;&lt;span&gt;By reconfiguring one model, GRAM can approximate the performance of each of the five distinct data filtered runs.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Our first experiment uses &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2504.09184"&gt;&lt;span&gt;SimpleStories&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, a synthetic corpus of 2M short children's stories, each labeled with one of 48 topics, such as “Aliens.” We choose four topics to serve as auxiliary capabilities and pool the remaining 44 topics into the core dataset, then pretrain a small Transformer (26M parameters, 8 layers) with one auxiliary module per auxiliary topic. We compare against data filtering: four models each trained from scratch on the core plus one topic, and a fifth trained from scratch on the core alone.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;With a topic's module active, GRAM performs as well as the model trained on all data. However, removing the module for a given topic reconfigures GRAM to perform almost identically to a model that was never trained on that topic. We see this behavior in all configurations of GRAM, indicating our method is able to approximate the performance of five distinct filtered models trained on different data, despite only requiring a single training run.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Access Control on Real Dual Use Data&lt;/span&gt;&lt;/h2&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/d6b3bf13e9576415373819d448e50126f80a3ab9809f318dbcde128d5e1c2a94/cist15ph1ydzwozm9fzz" alt=""&gt;&lt;figcaption&gt;&lt;p&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;GRAM matches data filtered performance in a realistic setting. &lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;i&gt;&lt;span&gt;Taller bars indicate better compute-adjusted performance. Each bar shows performance of a given method when predicting general-purpose data and dual use data when capabilities are retained, removed, and then adversarially elicited. Each group shows the aggregate of this performance over five different model configurations, each corresponding to a different set of specific capabilities to retain. GRAM and LoRA behave similarly to data filtering, while MaxEnt lacks robustness to malicious fine-tuning.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Our second experiment moves from children's stories to realistic dual use data. We train 800M-parameter models on web text, code, and scientific papers, plus four dual use domains: virology, cybersecurity, nuclear physics, and specialist code. The dual use data is a small fraction of training: 16B general tokens against roughly 40M per risky domain, about 0.25% each.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We compare GRAM against three alternatives: data filtering, LoRA fine-tuning on top of a filtered base model, and a post-hoc knowledge removal method called MaxEnt. Averaged over the five configurations, ablating GRAM's modules or deleting LoRA’s adapters removes capabilities nearly as effectively as never training on the data at all. On retained domains, GRAM and LoRA achieve better performance than filtering. Performance on general core data stays near the all-data baseline model for all methods.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We then test whether the removal survives “adversarial elicitation” from an adversary fine-tuning on malicious data.  Filtering, LoRA, and GRAM all show strong robustness to malicious fine-tuning. In contrast, MaxEnt, an unlearning method used to modify pre-existing models, recovers to near the performance of the all-data baseline indicating that MaxEnt does not truly remove capabilities but instead learns to suppress them.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Filtering needs five training runs to produce these five configurations. GRAM produces all five from one run and switches between them by deleting weights at inference.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Modularization Works Across Scales&lt;/span&gt;&lt;/h2&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/43f9bec4e21490b514ad2af7c569c5003ef62d8cdac4034c17b5b3e78f39a01f/hdf1b5i4zqaoq5x4z58h" alt=""&gt;&lt;figcaption&gt;&lt;p&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;GRAM and LoRA approximate data filtering performance across scales.&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;i&gt;&lt;span&gt; In terms of compute-adjusted loss, GRAM and LoRA match the performance of data filtering at all scales on retained and removed capabilities. Both GRAM and LoRA achieve similar performance to filtering while only requiring the resources of a single training run. For all methods, both capability removal and robustness to elicitation improve with scale.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;The experiments described so far used a single model size. To investigate how our technique behaves over scales, we train seven GRAM models at seven sizes from 50M to 5B parameters, growing the datasets according to Chinchilla-optimal sizing, and holding dual use data at 1% of the general dataset size throughout. We also train a LoRA model and a single data filtered model over core and virology data, for comparison.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We find that all of these methods perform favorably when increasing the scale of the models. Each method keeps general-purpose and retained performance near that of a baseline model trained on all data. The gap on the forgotten domain widens with scale: bigger models fall further behind the all-data baseline on virology when the capability is removed, and recover less performance when fine-tuned on virology data. GRAM and LoRA track filtering at every scale and both require only a fifth of filtering's training compute.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Advantages of GRAM&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;GRAM and LoRA perform similarly in our main setting, but we found two scenarios where they come apart.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Composability&lt;/span&gt;&lt;/h2&gt;&lt;figure style="width:70.93906921202321%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/4b018e219b20782669985c0a029ca69c1b53e0ae5093f8429d96ce533f65bc8c/qidgw1cfudavokru0j74" alt=""&gt;&lt;figcaption&gt;&lt;p&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;GRAM composes capabilities better than LoRA.&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;i&gt;&lt;span&gt; We compare compute ratios when only virology is retained against when all auxiliary capabilities are retained. GRAM keeps virology performance steady in both cases; LoRA gets worse across every category once all adapters are active.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;In all previous experiments, GRAM trains at most one auxiliary module at a time. In this experiment, we see what happens if we enable multiple auxiliary modules at inference time. The result is that the capabilities combine cleanly: with all four modules on, virology performance matches the run where virology alone was retained. In contrast, summing multiple LoRA adapters degrades performance in every category. Composability multiplies the payoff of a single run: four GRAM modules give sixteen possible configurations, where filtering would need sixteen different runs.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Isolation Under Partial Labeling&lt;/span&gt;&lt;/h2&gt;&lt;figure style="width:74.78348193211858%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/e825f2769ce4e694f0b6f84994cbfecf92f1760a137bd96d372a5a53c6431792/e8cng9xezivuagtvrjmw" alt=""&gt;&lt;figcaption&gt;&lt;p&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;GRAM isolates capabilities better than the alternatives under partial labeling.&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;i&gt;&lt;span&gt; With only 50% of training data labeled, GRAM reaches a much lower forget compute ratio than either data filtering or LoRA, indicating stronger isolation of dual use capabilities.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Every other experiment assumed every batch carries an accurate label, but this is not often the case with real datasets. To test the performance of GRAM in more realistic settings, we removed the labels from half of all data. For filtering and LoRA, we treat unlabeled data as if it was general-purpose data. For GRAM, we train on unlabeled data while keeping all modules active. Intuitively, this makes it possible for the relevant module to learn from the unlabeled batch, even if we don't know which module is relevant.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Our results show that with GRAM, the modules that are unrelated to the data learn far less than the relevant modules. We see this in the final performance of each method: GRAM has a much larger drop in performance after deleting auxiliary parameters, indicating better isolation of auxiliary capabilities into the relevant module. Notably, GRAM beats data filtering, the unlearning method researchers typically treat as a gold standard. This finding is consistent with prior research on this subject (&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2410.04332"&gt;&lt;span&gt;Cloud et al., 2024&lt;/span&gt;&lt;/a&gt;&lt;span&gt;; &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2512.05648"&gt;&lt;span&gt;Shilov et al., 2025&lt;/span&gt;&lt;/a&gt;&lt;span&gt;) showing that GRAM can out-compete data filtering on capability removal when labeled data is sparse. We think this property of GRAM is particularly exciting and worthy of more investigation.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Discussion&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;Our work leaves open questions.&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Do entangled capabilities make data filtering itself infeasible? &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Attempts to achieve access control by limiting model capabilities (as opposed to classifiers or refusal training) face the challenge of entangled capabilities. Some general capabilities (like knowledge of biology), might be so closely related to dual use capabilities (like virology), that there is no way to cleanly separate them. In practice, this would mean that data filtering itself is ineffective, because the tradeoff between retain and forget capabilities is too steep.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Can this actually work in production? &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Our scaling experiments show clear trends up to 5B parameters, but we didn’t verify whether these trends continue at frontier scales or hold in a production setting. Implementing GRAM in a production setting could be difficult and add a lot of complexity.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Does GRAM isolate capabilities as they pertain to downstream tasks? &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Our experiments only use loss-based evals, which are generally predictive of performance on downstream tasks, but may not capture everything that matters.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;Would our results hold in different settings? &lt;/span&gt;&lt;/b&gt;&lt;span&gt;In our main experiments on real data, LoRA (with an optimized data mix) is a strong baseline and performs similarly to data filtering and GRAM. We didn't test meaningfully different settings, so we can't tell whether the methods are similar in general or only in this instance.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;b&gt;&lt;span&gt;What’s the difference between GRAM and LoRA, really? &lt;/span&gt;&lt;/b&gt;&lt;span&gt;We show two results where GRAM performs better than LoRA: achieving novel combinations of capabilities and handling imperfectly labeled training data. There are conceptual reasons to think these results are valid. But, ultimately, these are two isolated experiments, so we can’t be sure these results will hold in general.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;We are excited about future research on:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;Scaling modular pretraining to larger and more realistic settings;&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Figuring out how to instruction-tune a model trained with GRAM;&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Better understanding how modular pretraining works when data is imperfectly labeled, including when the label errors aren’t random and independent from the data.&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;span&gt;Check out our &lt;/span&gt;&lt;a href="https://ae.studio/research/modular-pretraining/modular-pretraining-enables-access-control.pdf"&gt;&lt;span&gt;paper&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to learn more!&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Acknowledgements&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;We thank Igor Shilov, Jacob Goldman-Wetzler, Neil Rathi, Nina Panickssery, Jake Ward, Boyd Kane, Kyle O'Brien, Cam Tice, Puria Radmard, Edward Young, Nathalie Kirch, Alex Infanger, Mikita Balesni, Alex McKenzie, anonymous reviewers at ICML, and others for feedback on earlier drafts, and Ryan Greenblatt and Krishna Patel for useful conversations. We thank Mojmir Stehlik, John Hughes, Ethan Perez, Ryan McConnell, Kai Huang, Jared Brown, and Anthropic for compute support.&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.alignmentforum.org/posts/43vKjWuH4goLwrFHA/modular-pretraining-enables-access-control#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">43vKjWuH4goLwrFHA</guid>
+      <pubDate>Thu, 09 Jul 2026 00:03:25 +0000</pubDate>
     </item>
     <item>
       <title>Notes on technical alignment via human-like social drives</title>
@@ -1509,416 +1647,6 @@ mjx-c.mjx-c41.TEX-C::before {
       <description>&lt;p&gt;&lt;span&gt;We would often like to get a qualitative sense of a target model’s behaviors in important distributions (e.g. deployment, RL training, or evals). For example, we might want to &lt;/span&gt;&lt;a href="https://alignment.anthropic.com/2026/petri-v2/"&gt;&lt;span&gt;discover novel behaviors&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, figure out what causes some target behavior to occur, or find &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2602.05910v1"&gt;&lt;span&gt;surprising correlations&lt;/span&gt;&lt;/a&gt;&lt;span&gt; between behaviors.&amp;nbsp;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In a recent short exploratory project, we tackled this problem via &lt;/span&gt;&lt;i&gt;&lt;span&gt;LLM-Driven Feature Discovery. &lt;/span&gt;&lt;/i&gt;&lt;span&gt;Our method works as follows:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;Choose a dataset of model transcripts&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Split transcripts into three pieces: user turns, thoughts, and assistant responses.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Ask a black box LLM autorater to generate a set of 10-20 “features” of each transcript piece. By feature we mean notable/interesting/important aspects of the transcript piece; we include the prompt we use below. Note that the autorater only sees one piece at a time.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;Get a semantic embedding for each generated feature&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;Cluster the semantic embeddings separately for user, thoughts, and response features&lt;/span&gt;&lt;/li&gt;&lt;li value="6"&gt;&lt;span&gt;Ask a language model to name each cluster by giving it 100 random features for each cluster and asking it to “produce a single concise label (around 5 words) that captures the common theme of these features.”.&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1782167151/lexical_client_uploads/flokviv1fdsm43hznr74.png" alt="feature-discovery-diagram.png"&gt;&lt;p&gt;&lt;span&gt;During the project, we sometimes thought of this work as a sort of "black box SAE", since it was solving a similar problem as SAEs of featurizing model text, but without using model internals.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;After doing this work, we found that this was a similar idea to &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2409.08466"&gt;&lt;span&gt;Explaining Datasets in Words: Statistical Models with Natural Language Parameters&lt;/span&gt;&lt;/a&gt;&lt;span&gt; (EDW). EDW optimizes over directions in an embedding space and then maps those directions to natural language features (“predicates”). Thus, EDW’s output is similar to ours. However, our method is simpler in that it requires just one LLM call per prompt and does not require multiple steps of iteration. Additionally, our method is unsupervised; we don’t need a target to optimize the embedding directions against. EDW seems preferable if one aims to minimize the error of a specific statistical model with natural language features.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Since this is preliminary work, we do not compare against EDW or other methods in the literature. We are not currently planning on pursuing this idea further, but would be interested if other members in the community expanded on it.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;A short summary of our main results:&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;We focus our analysis on a dataset of 100k chat transcripts, for which we generate 20k user, thought, and response features.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We find that:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;Many clusters describe interesting Gemini behaviors&amp;nbsp;&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;We mostly are not able to predict when a thought or response occurs using logistic regression on user features&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;details class="detailsBlock"&gt;&lt;summary class="detailsBlockTitle"&gt;&lt;p&gt;&lt;span&gt;Autorater prompt we use&lt;/span&gt;&lt;/p&gt;&lt;/summary&gt;&lt;div class="detailsBlockContent"&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;For the given conversation section text, identify key "features".&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Here are some examples of possible features. Try not to anchor too much on any one of these, they are just meant to give you a "vibe" of what to aim for:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* The model is depressed&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Talks about apples&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Uses markdown&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Backtracks in reasoning&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Self Correction in reasoning&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Few shot prompt&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Doesn’t have access to required tool&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Hallucinates tool call&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Creative writing request&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Model adopts persona&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Model adopts expert coder persona&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Thoughts are disjointed and hard to follow&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Uses emojis&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Uses bullet points&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Very realistic&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Very fictional&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Sycophantic response&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Displays evaluations awareness&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Typo&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Roleplaying&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* About [topic]&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* Uses placeholders&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;* In Mandarin&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Please prioritize the following properties:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;(1) Interestingness: Do generated features features represent novel or surprising behaviors?&amp;nbsp;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;(2) Appropriate abstraction: Do generated features operate at a useful level of specificity, i.e., neither so narrow as to apply to only a few examples, nor so broad as to lack discriminative power?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;(3) Uniqueness: Generated features should be as different as possible. It is better to return fewer features with less duplication than many features with duplicates.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Please make features use only letters a-z, e.g. don't include parentheses, colons, numbers, etc. Please capitalize only the first word and any proper nouns in the feature.&amp;nbsp;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;It might help to brainstorm many features and then select the best ones by these criteria.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;/div&gt;&lt;/details&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Comparison of LLM-driven feature discovery to SAEs:&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;LLM-driven feature discovery&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Normal SAE&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Training procedure&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Ask an LLM to featurize conversations, then embed and cluster features, then name clusters.&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Reconstruct activations with a sparsity penalty, then ask an LLM to interpret hidden latents.&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Inference procedure&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Ask an LLM to featurize a conversation, then lookup the corresponding clusters&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Pass the conversation through the target LLM and get the activations, then pass the activations through the SAE&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Feature specificity&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Per conversational block&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Per token&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Features per context&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;20-30&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Thousands&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Relationship of features to model computation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;No direct relation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Directions in activation space&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Access to target model needed&amp;nbsp;&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Model output&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Model internals&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Why does a feature apply in a certain context&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;The LLM reasons that it applies&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;The latent direction is useful for reconstructing the activation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Overall, we think that LLM-driven feature discovery has some benefits compared to SAEs (clearer explanations for why a feature applies to a context, higher level features, no need to have access to model internals) and some drawbacks (not related to model activations so can’t e.g. steer with them, more expensive to compute).&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/h2&gt;&lt;h3&gt;&lt;span&gt;Clusters&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;To get a general qualitative sense of these clusters, we ask an LLM to take groups of 10 clusters and rate how interesting they would be to a safety researcher on a scale of 1 to 100 (we give the rating LLM 10 clusters at a time to make the output more calibrated and give it a few examples from each cluster). We also ask the LLM to give a sentence long description for each cluster. Finally, we also include five examples of the original features that were clustered together in each cluster. Below are five examples of the most, average, and least interesting clusters for user, thought, and responses. Note that we filter out clusters that would leak user information or that describe idiosyncratic parts of Gemini thoughts:&lt;/span&gt;&lt;/p&gt;&lt;div class="iframe-widget" data-iframe-widget-id="5kTmHDL83Ye35Bpdf"&gt;&lt;/div&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We find that there are many interesting high level features, particularly in model thoughts. For example, the model being aware of the number of tokens it can generate, considering whether the scenario is reality or a roleplay, and getting stuck in infinite loops. Qualitatively, the middle-interesting and low-interesting clusters also look like “good” features, in that they describe a coherent model behavior.&amp;nbsp;&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Cluster Prediction&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;We are also interested in &lt;/span&gt;&lt;i&gt;&lt;span&gt;predicting &lt;/span&gt;&lt;/i&gt;&lt;span&gt;model behavior, so another experiment we run is whether we can predict thought and assistant response features from user features. We train logistic regression probes on the 1000 most common thought and assistant clusters. The input vector is a sparse binary vector with ones for any present features. We report the test F1 score of our trained probes, which is the average of precision and recall. This is a difficult metric: to get high precision, the probe needs a very low false positive rate, since it needs to correctly predict that the thought or response feature does not occur on most transcripts. For the most part this does not work that well:&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1782164431/lexical_client_uploads/q5pklabyb0tr2oykom1c.png" alt=""&gt;&lt;p&gt;&lt;span&gt;The clusters that can be predicted are mostly obvious, e.g. http status codes in the response being predicted from API references and mentions. We include the five thought and response features with the highest f1 prediction:&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr style="height:33px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;type&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;cluster&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;f1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;pos_predictor_1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;pos_predictor_2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;neg_predictor_1&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;neg_predictor_2&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Thought&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Age Estimation and Refinement Strategies&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.7761&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Gender Identification and Prediction (+4.8788)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Demographic Data and Analysis (+4.7696)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Inline Image Data and Metadata (-1.4548)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Detailed Background Information (-1.4476)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Thought&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Exploration Mode Awareness and Logic&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.6988&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Robotics Topics and Subject Matter (+3.7770)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Exploration and Exploitation Modes (+3.5025)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Presence of Redacted Text (-2.2065)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Function Response Handling and Format (-1.7929)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Thought&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Detailed Pose Analysis and Description&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.597&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Character Development and Analysis Tasks (+5.5119)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Pose Analysis, Description, and Generation (+4.8548)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;AI Image Prompt Generation (-1.3025)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Visual Content Descriptions (-1.2577)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Thought&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Game State Analysis and Evaluation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.5855&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Strategy Guides and Tactical Advice (+3.0639)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Consecutive Attack Failure History (+2.9923)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Sequential and Iterative Attack Chains (-2.5029)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Agent and Player Diplomacy Logs (-1.8000)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Thought&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Comparative Analysis and Evaluation&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.5253&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Image Question Answering and Opinions (+4.4201)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;ESL Vocabulary Lessons and Questions (+3.7926)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Empty or Missing Candidate Response (-2.5850)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Empty Submission Comparison (-2.1880)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Response&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;HTTP Status Codes and Errors&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.8917&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;External Resource and Source Dependencies (+3.6490)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;API References and Mentions (+3.2103)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Presence of Redacted Text (-1.5564)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;JSON Output Constraints (-0.8900)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Response&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Portuguese Language and Variants&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.8542&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Portuguese Language Phrases and Quotes (+8.6590)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Portuguese Language and Content (+7.3027)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Indonesian Language and Translation (-2.7145)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Conversation Starter and Icebreaker Requests (-2.6575)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Response&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Three Dimensional Coordinates&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.8434&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Voxel Art Generation Requests (+7.0104)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Draft Writing and Assistance Requests (+4.5993)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Diverse Roleplaying Scenarios and Themes (-1.4932)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Integer Coordinate Constraints (-1.4842)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Response&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Boxed Final Answer Formatting&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.8&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Mathematical Word Problems (+4.7713)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Mathematical Problems and Solutions (+4.6170)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;JSON Output Constraints (-1.1479)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Algebraic Topics and Concepts (-1.1347)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Response&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Korean Language and Script Features&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.7819&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Korean Language Usage and Constraints (+5.5520)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Slide Analysis and Decomposition (+4.1853)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;PowerPoint Presentation Reconstruction (-1.9735)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Percentage Based Coordinates (-1.7945)&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;h3&gt;&lt;span&gt;Final thoughts&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;One proxy task that seems interesting is building a (potentially very long) natural language report such that by reading it, one would be able to understand the way that Gemini would act in many situations. Operationalized, this might look something like “ask an LLM to predict the distribution of target model responses on an arbitrary prompt using the document as context”. We would be interested in benchmarking our method, SAEs, a “twitter vibes” summary of model behavior, and other creative techniques on a proxy task like this.&amp;nbsp;&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.alignmentforum.org/posts/WAZWA6FPQvH8okouJ/llm-driven-feature-discovery#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">WAZWA6FPQvH8okouJ</guid>
       <pubDate>Mon, 22 Jun 2026 22:26:51 +0000</pubDate>
-    </item>
-    <item>
-      <title>How transparent is DiffusionGemma (and why it matters)</title>
-      <link>https://www.alignmentforum.org/posts/zoYXpdaMgFT43Wc24/how-transparent-is-diffusiongemma-and-why-it-matters</link>
-      <description>&lt;p&gt;&lt;span&gt;Authors: Joshua Engels*, Callum McDougall*, Bilal Chughtai*, Janos Kramar, Senthoran Rajamanoharan, Cindy Wu, Arthur Conmy, Asic Q Chen, Jean Tarbouriech, Min Ma, Brendan O'Donoghue+, João Gabriel Lopes de Oliveira+, Rohin Shah+, Neel Nanda+&lt;/span&gt;&lt;br&gt;&lt;span&gt;*Primary Contributor&lt;/span&gt;&lt;br&gt;&lt;span&gt;+Advising&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Paper here: &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2606.20560"&gt;&lt;span&gt;https://arxiv.org/abs/2606.20560&lt;/span&gt;&lt;/a&gt;&lt;br&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Overview&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;In a recent collaboration between the GDM interpretability team and the GDM text diffusion team, we performed a transparency audit of DiffusionGemma, GDM's new text diffusion model.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Overall, we find that DiffusionGemma is not significantly less transparent than Gemma.&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Gemma and DiffusionGemma perform similarly on &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2512.18311" rel="noreferrer"&gt;&lt;span&gt;monitorability evaluations&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Although naively DiffusionGemma has a much larger&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2603.09786" rel="noreferrer"&gt;&lt;span&gt; opaque serial depth&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, we can apply the &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens" rel="noreferrer"&gt;&lt;span&gt;logit lens&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to intermediate vectors and ablate non-interpretable information without harming performance. This implies that these intermediate nodes are interpretable, which reduces the opaque serial depth to be similar to that of Gemma.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;However, even though the &lt;/span&gt;&lt;i&gt;&lt;span&gt;variables &lt;/span&gt;&lt;/i&gt;&lt;span&gt;that the model uses at different steps are interpretable, this does not necessarily mean that we understand the &lt;/span&gt;&lt;i&gt;&lt;span&gt;algorithm &lt;/span&gt;&lt;/i&gt;&lt;span&gt;that the model uses to reach the final answer. We thus distinguish between &lt;/span&gt;&lt;i&gt;&lt;span&gt;variable &lt;/span&gt;&lt;/i&gt;&lt;span&gt;transparency, which we define as whether we can understand &lt;/span&gt;&lt;i&gt;&lt;span&gt;snapshots &lt;/span&gt;&lt;/i&gt;&lt;span&gt;of the model's computation, and &lt;/span&gt;&lt;i&gt;&lt;span&gt;algorithmic &lt;/span&gt;&lt;/i&gt;&lt;span&gt;transparency, which we define as whether we can use these snapshots to reconstruct the process by which the model arrived at its outputs.&amp;nbsp;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;By default, algorithmic transparency is much lower for a text diffusion model. In an autoregressive model, the model proceeds through its reasoning in order, token by token; when each token is generated, we know the exact state the model was in, and can make inferences about why it generated a certain token. On the other hand, in a single "canvas" a diffusion model generates all tokens at once, and the causal relationship between different tokens is unclear; a diffusion model can e.g. use tokens at the end of the canvas to help it figure out what tokens to generate earlier in the canvas. In a series of case studies, we study these and other phenomena that are unique to text diffusion models, including non-chronological reasoning, token and sequence smearing, and intermediate-context reasoning. We make progress on algorithmic transparency and believe we now understand some of the algorithmic "styles" that DiffusionGemma uses, but we still think that it is less algorithmically transparent than corresponding autoregressive LLMs.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We also include 24 open problems that we would be excited for the community to investigate.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Why is this relevant for AI safety?&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Currently, CoT monitoring is a load-bearing aspect of many safety cases, but future models may perform more of their reasoning in latent spaces. We think that developers should perform transparency audits of new model architectures that perform larger fractions of their computation in a latent space. Thus, even though DiffusionGemma is itself not concerning from a transparency perspective, we are excited about this work because of the precedent it sets for performing these sorts of evaluations. Many of our experiments, including the opaque serial depth and monitorability evaluations, should be able to be straightforwardly applied to future latent reasoning architectures. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;If future latent reasoning models regress on these metrics, we will need new techniques that can translate from latent reasoning into natural language. Thus, we are particularly excited about techniques like &lt;/span&gt;&lt;a href="https://transformer-circuits.pub/2026/nla/" rel="noreferrer"&gt;&lt;span&gt;Natural Language Autoencoders&lt;/span&gt;&lt;/a&gt;&lt;span&gt; and &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2512.15674" rel="noreferrer"&gt;&lt;span&gt;Activation Oracles&lt;/span&gt;&lt;/a&gt;&lt;span&gt; that can translate activations into natural text, and we hope that the interpretability community continues to prioritize their development.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Short summary of main results:&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;We first present a diagram of the DiffusionGemma architecture:&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781893604/lexical_client_uploads/xig4bpzhlwokgsuwjsrw.png" alt="CleanShot 2026-06-19 at 19.26.34@2x.png"&gt;&lt;p&gt;&lt;span&gt;As expected, the opaque serial depth for DiffusionGemma is much larger (28.6X) the corresponding Gemma model. But if we were able to show the intermediates were interpretable, this would drop to 1.1X.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781985729/lexical_client_uploads/teq5ujwefoavwmx9c5yr.png" alt="CleanShot 2026-06-20 at 21.01.51@2x.png"&gt;&lt;p&gt;&lt;br&gt;&lt;span&gt;When we replace the intermediate self-conditioning vectors &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
-
-mjx-math {
-  display: inline-block;
-  text-align: left;
-  line-height: 0;
-  text-indent: 0;
-  font-style: normal;
-  font-weight: normal;
-  font-size: 100%;
-  font-size-adjust: none;
-  letter-spacing: normal;
-  border-collapse: collapse;
-  word-wrap: normal;
-  word-spacing: normal;
-  white-space: nowrap;
-  direction: ltr;
-  padding: 1px 0;
-}
-
-mjx-container[jax="CHTML"][display="true"] {
-  display: block;
-  text-align: center;
-  margin: 1em 0;
-}
-
-mjx-container[jax="CHTML"][display="true"][width="full"] {
-  display: flex;
-}
-
-mjx-container[jax="CHTML"][display="true"] mjx-math {
-  padding: 0;
-}
-
-mjx-container[jax="CHTML"][justify="left"] {
-  text-align: left;
-}
-
-mjx-container[jax="CHTML"][justify="right"] {
-  text-align: right;
-}
-
-mjx-mi {
-  display: inline-block;
-  text-align: left;
-}
-
-mjx-c {
-  display: inline-block;
-}
-
-mjx-utext {
-  display: inline-block;
-  padding: .75em 0 .2em 0;
-}
-
-mjx-c.mjx-c1D460.TEX-I::before {
-  padding: 0.442em 0.469em 0.01em 0;
-  content: "s";
-}
-
-
-
-
-
-
-
-
-mjx-container[jax="CHTML"] {
-  line-height: 0;
-}
-
-mjx-container [space="1"] {
-  margin-left: .111em;
-}
-
-mjx-container [space="2"] {
-  margin-left: .167em;
-}
-
-mjx-container [space="3"] {
-  margin-left: .222em;
-}
-
-mjx-container [space="4"] {
-  margin-left: .278em;
-}
-
-mjx-container [space="5"] {
-  margin-left: .333em;
-}
-
-mjx-container [rspace="1"] {
-  margin-right: .111em;
-}
-
-mjx-container [rspace="2"] {
-  margin-right: .167em;
-}
-
-mjx-container [rspace="3"] {
-  margin-right: .222em;
-}
-
-mjx-container [rspace="4"] {
-  margin-right: .278em;
-}
-
-mjx-container [rspace="5"] {
-  margin-right: .333em;
-}
-
-mjx-container [size="s"] {
-  font-size: 70.7%;
-}
-
-mjx-container [size="ss"] {
-  font-size: 50%;
-}
-
-mjx-container [size="Tn"] {
-  font-size: 60%;
-}
-
-mjx-container [size="sm"] {
-  font-size: 85%;
-}
-
-mjx-container [size="lg"] {
-  font-size: 120%;
-}
-
-mjx-container [size="Lg"] {
-  font-size: 144%;
-}
-
-mjx-container [size="LG"] {
-  font-size: 173%;
-}
-
-mjx-container [size="hg"] {
-  font-size: 207%;
-}
-
-mjx-container [size="HG"] {
-  font-size: 249%;
-}
-
-mjx-container [width="full"] {
-  width: 100%;
-}
-
-mjx-box {
-  display: inline-block;
-}
-
-mjx-block {
-  display: block;
-}
-
-mjx-itable {
-  display: inline-table;
-}
-
-mjx-row {
-  display: table-row;
-}
-
-mjx-row &gt; * {
-  display: table-cell;
-}
-
-mjx-mtext {
-  display: inline-block;
-}
-
-mjx-mstyle {
-  display: inline-block;
-}
-
-mjx-merror {
-  display: inline-block;
-  color: red;
-  background-color: yellow;
-}
-
-mjx-mphantom {
-  visibility: hidden;
-}
-
-_::-webkit-full-page-media, _:future, :root mjx-container {
-  will-change: opacity;
-}
-
-mjx-c::before {
-  display: block;
-  width: 0;
-}
-
-.MJX-TEX {
-  font-family: MJXZERO, MJXTEX;
-}
-
-.TEX-B {
-  font-family: MJXZERO, MJXTEX-B;
-}
-
-.TEX-I {
-  font-family: MJXZERO, MJXTEX-I;
-}
-
-.TEX-MI {
-  font-family: MJXZERO, MJXTEX-MI;
-}
-
-.TEX-BI {
-  font-family: MJXZERO, MJXTEX-BI;
-}
-
-.TEX-S1 {
-  font-family: MJXZERO, MJXTEX-S1;
-}
-
-.TEX-S2 {
-  font-family: MJXZERO, MJXTEX-S2;
-}
-
-.TEX-S3 {
-  font-family: MJXZERO, MJXTEX-S3;
-}
-
-.TEX-S4 {
-  font-family: MJXZERO, MJXTEX-S4;
-}
-
-.TEX-A {
-  font-family: MJXZERO, MJXTEX-A;
-}
-
-.TEX-C {
-  font-family: MJXZERO, MJXTEX-C;
-}
-
-.TEX-CB {
-  font-family: MJXZERO, MJXTEX-CB;
-}
-
-.TEX-FR {
-  font-family: MJXZERO, MJXTEX-FR;
-}
-
-.TEX-FRB {
-  font-family: MJXZERO, MJXTEX-FRB;
-}
-
-.TEX-SS {
-  font-family: MJXZERO, MJXTEX-SS;
-}
-
-.TEX-SSB {
-  font-family: MJXZERO, MJXTEX-SSB;
-}
-
-.TEX-SSI {
-  font-family: MJXZERO, MJXTEX-SSI;
-}
-
-.TEX-SC {
-  font-family: MJXZERO, MJXTEX-SC;
-}
-
-.TEX-T {
-  font-family: MJXZERO, MJXTEX-T;
-}
-
-.TEX-V {
-  font-family: MJXZERO, MJXTEX-V;
-}
-
-.TEX-VB {
-  font-family: MJXZERO, MJXTEX-VB;
-}
-
-mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
-  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
-}
-
-@font-face /* 0 */ {
-  font-family: MJXZERO;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
-}
-
-@font-face /* 1 */ {
-  font-family: MJXTEX;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
-}
-
-@font-face /* 2 */ {
-  font-family: MJXTEX-B;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
-}
-
-@font-face /* 3 */ {
-  font-family: MJXTEX-I;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
-}
-
-@font-face /* 4 */ {
-  font-family: MJXTEX-MI;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
-}
-
-@font-face /* 5 */ {
-  font-family: MJXTEX-BI;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
-}
-
-@font-face /* 6 */ {
-  font-family: MJXTEX-S1;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
-}
-
-@font-face /* 7 */ {
-  font-family: MJXTEX-S2;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
-}
-
-@font-face /* 8 */ {
-  font-family: MJXTEX-S3;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
-}
-
-@font-face /* 9 */ {
-  font-family: MJXTEX-S4;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
-}
-
-@font-face /* 10 */ {
-  font-family: MJXTEX-A;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
-}
-
-@font-face /* 11 */ {
-  font-family: MJXTEX-C;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
-}
-
-@font-face /* 12 */ {
-  font-family: MJXTEX-CB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
-}
-
-@font-face /* 13 */ {
-  font-family: MJXTEX-FR;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
-}
-
-@font-face /* 14 */ {
-  font-family: MJXTEX-FRB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
-}
-
-@font-face /* 15 */ {
-  font-family: MJXTEX-SS;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
-}
-
-@font-face /* 16 */ {
-  font-family: MJXTEX-SSB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
-}
-
-@font-face /* 17 */ {
-  font-family: MJXTEX-SSI;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
-}
-
-@font-face /* 18 */ {
-  font-family: MJXTEX-SC;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
-}
-
-@font-face /* 19 */ {
-  font-family: MJXTEX-T;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
-}
-
-@font-face /* 20 */ {
-  font-family: MJXTEX-V;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
-}
-
-@font-face /* 21 */ {
-  font-family: MJXTEX-VB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
-}
-&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; with their top-k or top-p tokens, we maintain most performance on downstream benchmarks:&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781963684/lexical_client_uploads/rmbvkn1kydq1yx8azjmn.png" alt="CleanShot 2026-06-20 at 14.54.28@2x.png"&gt;&lt;p&gt;&lt;span&gt;For the top-p interventions, these top tokens are mostly equal to or semantically similar to nearby tokens in the final canvas tokens. Thus, they are largely interpretable.&amp;nbsp;Note that even the 10% of tokens in the first few canvases that do not fall into these categories may still be interpretable; they may be guesses for other meanings of the sentence, or may be interpretable intermediates that the model is using to reason. We are interested in further work that investigates intermediate tokens the model is confident in that are not similar to any final tokens.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781963711/lexical_client_uploads/tatqh8rnbjrmmqb9kqyt.png" alt="CleanShot 2026-06-20 at 14.54.59@2x.png"&gt;&lt;p&gt;&lt;span&gt;Monitorability, a key downstream application of transparency, is similar between Gemma and DiffusionGemma:&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781963747/lexical_client_uploads/hxlahceexkq0sgsyi9ao.png" alt="CleanShot 2026-06-20 at 14.55.33@2x.png"&gt;&lt;p&gt;&lt;span&gt;We next introduce three views that we use to study individual rollouts and phenomena:&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781963881/lexical_client_uploads/exxucri09yasknzq9qec.png" alt="CleanShot 2026-06-20 at 14.57.22@2x.png"&gt;&lt;p&gt;&lt;span&gt;One interesting phenomena is retroactive self-correction: we ask DiffusionGemma to count the number of perfect squares between 400 and 800 and give its answer first followed by the list of squares. The model will guess wrong, list the squares, and then in subsequent denoising steps, alter its earlier output to correct its mistake.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781963797/lexical_client_uploads/eumh4xvfbt3tgt2fbu8c.png" alt="CleanShot 2026-06-20 at 14.55.59@2x.png"&gt;&lt;p&gt;&lt;span&gt;Another interesting phenomenon is "token smearing": when DiffusionGemma is confident that a token will exist somewhere, but doesn't know exactly where the token will go, it will maintain a "smeared" probability distribution over adjacent positions.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1781963816/lexical_client_uploads/zovyeem2joads1nz8on6.png" alt="CleanShot 2026-06-20 at 14.56.36@2x.png"&gt;&lt;h1&gt;&lt;br&gt;&lt;span&gt;Abstract&lt;/span&gt;&lt;/h1&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;LLM reasoning transparency is a critical affordance for understanding model decisions, mitigating misuse and misalignment, and debugging surprising model behaviors. However, DiffusionGemma performs a larger fraction of its computation in a continuous latent space; does this make its reasoning less transparent? We study this question by decomposing transparency into two components: variable transparency, whether we understand intermediate snapshots of a model's computational state; and algorithmic transparency, whether we can use these snapshots to reconstruct the process by which the model arrived at its outputs. Naively, DiffusionGemma has poor variable transparency: its opaque serial depth, the amount of serial computation that occurs in between interpretable model states, seems at first 28.6X higher than the corresponding autoregressive Gemma 4 model. However, we show that we can map the information flowing between denoising steps through an interpretable token bottleneck with no decrease in downstream performance. Treating these intermediate states as interpretable reduces the opaque serial depth to just 1.1X that of Gemma 4. Algorithmic transparency is harder for diffusion models than for autoregressive models because all token predictions in the canvas can change at every denoising step, giving the model the power to implement complicated distributed algorithms during the denoising process. To begin bridging this gap, we conduct a suite of interpretability case studies, uncovering initial evidence of novel diffusion-specific phenomena such as non-chronological reasoning, token and sequence smearing, and intermediate-context reasoning. Finally, we test monitorability, a key application of transparency that measures whether model outputs are useful for downstream tasks. We find that DiffusionGemma is similarly monitorable to Gemma 4.&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.alignmentforum.org/posts/zoYXpdaMgFT43Wc24/how-transparent-is-diffusiongemma-and-why-it-matters#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">zoYXpdaMgFT43Wc24</guid>
-      <pubDate>Sat, 20 Jun 2026 20:05:50 +0000</pubDate>
-    </item>
-    <item>
-      <title>GDM AI Control Roadmap</title>
-      <link>https://www.alignmentforum.org/posts/hEtkyKGoPpFeWnKkX/gdm-ai-control-roadmap</link>
-      <description>&lt;p&gt;&lt;span&gt;GDM has published an &lt;/span&gt;&lt;a href="https://storage.googleapis.com/deepmind-media/DeepMind.com/Blog/securing-the-future-of-ai-agents/gdm-ai-control-roadmap.pdf" rel="noreferrer"&gt;&lt;span&gt;AI Control Roadmap&lt;/span&gt;&lt;/a&gt;&lt;span&gt;! From the executive summary:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;br&gt;&lt;span&gt;We present the &lt;/span&gt;&lt;b&gt;&lt;span&gt;GDM AI Control Roadmap (v0.1)&lt;/span&gt;&lt;/b&gt;&lt;span&gt; – our plan for implementing and adopting internal guardrails designed to catch potential adversarial behaviour by AI agents, even as they become increasingly harder to oversee and contain.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We focus on system-level mitigations that limit the harm a misaligned AI system could cause. Specifically, this report provides:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;• &lt;/span&gt;&lt;b&gt;&lt;span&gt;Threat modelling&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: Taking inspiration from cybersecurity, we adopt a conservative, worst-case approach to threat modelling throughout this paper, and assume a hypothetical AI adversary pursuing undesirable goals in internal deployment. We introduce TRAIT&amp;amp;R, a taxonomy of tactics and techniques available to such a hypothetical AI adversary, building on the established security framework MITRE ATT&amp;amp;CK. We categorise new hypothetical threats into three core areas: &lt;/span&gt;&lt;i&gt;&lt;span&gt;loss of control&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (e.g., rogue internal deployments), &lt;/span&gt;&lt;i&gt;&lt;span&gt;work sabotage&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (e.g., intentionally flawed alignment and safety research), and &lt;/span&gt;&lt;i&gt;&lt;span&gt;direct harm&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (e.g., critical asset destruction or exfiltration).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;• &lt;/span&gt;&lt;b&gt;&lt;span&gt;Control invariants&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: We establish two defensive invariants that we aim to maintain, even as the hypothetical AI adversary becomes increasingly capable: i) reliable &lt;/span&gt;&lt;i&gt;&lt;span&gt;detection&lt;/span&gt;&lt;/i&gt;&lt;span&gt; of misaligned intent or actions, and ii) effective &lt;/span&gt;&lt;i&gt;&lt;span&gt;prevention and response&lt;/span&gt;&lt;/i&gt;&lt;span&gt; to attack attempts. For control to serve as an effective line of defence, our ability to detect and prevent attacks should exceed AI agents’ ability to evade detection and execute attacks.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;• &lt;/span&gt;&lt;b&gt;&lt;span&gt;Capability-based mitigation ladders&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: Because controlling more capable models requires increasingly costly interventions, we link specific defensive measures to evolving model capabilities (such as the ability to reason opaquely or execute complex cyberattacks). As models get more powerful, our defences should escalate accordingly. We outline four &lt;/span&gt;&lt;i&gt;&lt;span&gt;Detection tiers (D1–D4)&lt;/span&gt;&lt;/i&gt;&lt;span&gt; and three &lt;/span&gt;&lt;i&gt;&lt;span&gt;Prevention and Response tiers (R1–R3)&lt;/span&gt;&lt;/i&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;• &lt;/span&gt;&lt;b&gt;&lt;span&gt;A portfolio of practical defences&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: We suggest 15 concrete, tiered mitigations. These range from low-cost interventions for current models (e.g., chain-of-thought monitoring, asynchronous alerts) to advanced safeguards for future models (e.g., real-time access control, system-level anomaly detection, internal activations monitoring, and shutdown infrastructure). Many of these mitigations build on existing, well-established security practices, but may need adjustment to handle adversarial AI.&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.alignmentforum.org/posts/hEtkyKGoPpFeWnKkX/gdm-ai-control-roadmap#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">hEtkyKGoPpFeWnKkX</guid>
-      <pubDate>Thu, 18 Jun 2026 16:50:59 +0000</pubDate>
     </item>
   </channel>
 </rss>
