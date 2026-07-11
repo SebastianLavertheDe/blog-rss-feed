@@ -5,7 +5,98 @@
     <link>https://evanhahn.com/blog/</link>
     <description>I'm Evan Hahn, a programmer.</description>
     <language>en</language>
-    <lastBuildDate>Sat, 11 Jul 2026 16:03:20 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 11 Jul 2026 17:58:01 +0000</lastBuildDate>
+    <item>
+      <title>Prefer STRICT tables in SQLite</title>
+      <link>https://evanhahn.com/prefer-strict-tables-in-sqlite/</link>
+      <description>&lt;p&gt;&lt;em&gt;In short: I prefer &lt;a href="https://sqlite.org/stricttables.html"&gt;strict tables&lt;/a&gt; in SQLite because they avoid some datatype problems, such as putting text in number columns.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;SQLite has a feature that I think is underrated: &lt;a href="https://sqlite.org/stricttables.html"&gt;strict tables&lt;/a&gt;. Strict tables help enforce rigid typing, preventing mistakes like putting text into integer columns. I like them, and wrote this post to promote their use!&lt;/p&gt;
+&lt;p&gt;To make a strict table, add &lt;code&gt;STRICT&lt;/code&gt; to the end of its definition. Like this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-diff" data-lang="diff"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;-CREATE TABLE people (name TEXT);
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;+CREATE TABLE people (name TEXT) STRICT;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;That&amp;rsquo;s it! But what does it do?&lt;/p&gt;
+&lt;h2 id="advantages-of-strict-tables"&gt;Advantages of strict tables&lt;/h2&gt;
+&lt;p&gt;Broadly, strict tables help enforce rigid types, like other SQL engines do.&lt;/p&gt;
+&lt;h3 id="prevents-type-mismatches-on-insertupdate"&gt;Prevents type mismatches on insert/update&lt;/h3&gt;
+&lt;p&gt;Most significantly, strict tables keep you from inserting the wrong type into a column. For example, SQLite normally lets you put text into an &lt;code&gt;INTEGER&lt;/code&gt; column, but not with strict tables.&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-sql" data-lang="sql"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- Non-strict tables let you put anything anywhere.
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; people_nonstrict (age INTEGER);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; people_nonstrict (age) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (&lt;span style="color:#87ceeb"&gt;&amp;#39;garbage&amp;#39;&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- =&amp;gt; works fine
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- Strict tables don&amp;#39;t allow that, which I prefer.
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; people_strict (age INTEGER) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; people_strict (age) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (&lt;span style="color:#87ceeb"&gt;&amp;#39;garbage&amp;#39;&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- =&amp;gt; error: cannot store TEXT value in INTEGER column
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Personally, I think it&amp;rsquo;s a mistake to try to put text in an integer column, or vice-versa. &lt;a href="https://evanhahn.com/the-two-kinds-of-error/"&gt;I don&amp;rsquo;t want SQLite to let me make this error!&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;The same validation happens for &lt;code&gt;UPDATE&lt;/code&gt;s, too.&lt;/p&gt;
+&lt;p&gt;Notably, if a value can be losslessly converted, it will still be accepted. For example, the string &lt;code&gt;'123'&lt;/code&gt; can be perfectly converted to an integer, so it&amp;rsquo;s allowed. These two lines are equivalent, even for a strict table:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-sql" data-lang="sql"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; people_strict (age) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (&lt;span style="color:#87ceeb"&gt;&amp;#39;123&amp;#39;&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; people_strict (age) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (&lt;span style="color:#f60"&gt;123&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h3 id="prevents-bogus-column-types-on-table-creation"&gt;Prevents bogus column types on table creation&lt;/h3&gt;
+&lt;p&gt;By default, you can create columns with bogus types. For example, all of these work even though they aren&amp;rsquo;t valid SQLite datatypes:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-sql" data-lang="sql"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- SQLite doesn&amp;#39;t support these types, but this is all accepted.
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name GARBAGE);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name DATETIME);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name JSON);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name UUID);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name BLOBB);
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;I think these aren&amp;rsquo;t what the developer intended. Some of these are typos, some of them are misunderstandings of &lt;a href="https://sqlite.org/datatype3.html"&gt;which datatypes SQLite supports&lt;/a&gt;, and some are egregious mistakes.&lt;/p&gt;
+&lt;p&gt;Appending &lt;code&gt;STRICT&lt;/code&gt; to any of these statements makes them error. In my opinion, that&amp;rsquo;s the correct behavior!&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-sql" data-lang="sql"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- All of these give errors, which I prefer.
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name GARBAGE) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name DATETIME) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name JSON) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name UUID) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (name BLOBB) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Only &lt;code&gt;INT&lt;/code&gt;, &lt;code&gt;INTEGER&lt;/code&gt;, &lt;code&gt;REAL&lt;/code&gt;, &lt;code&gt;TEXT&lt;/code&gt;, &lt;code&gt;BLOB&lt;/code&gt;, and &lt;code&gt;ANY&lt;/code&gt; are allowed.&lt;/p&gt;
+&lt;p&gt;Strict tables also require a column type, so you can&amp;rsquo;t do &lt;code&gt;CREATE TABLE tbl (name)&lt;/code&gt;.&lt;/p&gt;
+&lt;h3 id="still-allows-flexibility-with-any"&gt;Still allows flexibility with &lt;code&gt;ANY&lt;/code&gt;&lt;/h3&gt;
+&lt;p&gt;If you still need a column to be flexible, you can use the &lt;code&gt;ANY&lt;/code&gt; datatype. As the name suggests, it allows anything—even in a strict table.&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-sql" data-lang="sql"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; tbl (value &lt;span style="color:#f00"&gt;ANY&lt;/span&gt;) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- All of these are valid because the column is ANY:
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; tbl (value) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (&lt;span style="color:#f60"&gt;123&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; tbl (value) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (&lt;span style="color:#87ceeb"&gt;&amp;#39;text&amp;#39;&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; tbl (value) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (&lt;span style="color:#f60"&gt;12&lt;/span&gt;.&lt;span style="color:#f60"&gt;34&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; tbl (value) &lt;span style="color:#f00"&gt;VALUES&lt;/span&gt; (X&lt;span style="color:#87ceeb"&gt;&amp;#39;8647&amp;#39;&lt;/span&gt;);
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;I haven&amp;rsquo;t found a use for this, but maybe you will!&lt;/p&gt;
+&lt;h2 id="disadvantages-of-strict-tables"&gt;Disadvantages of strict tables&lt;/h2&gt;
+&lt;p&gt;I prefer strict tables but I must share a few cons. Not everything is better!&lt;/p&gt;
+&lt;h3 id="cant-strict-ify-an-existing-table"&gt;Can&amp;rsquo;t strict-ify an existing table&lt;/h3&gt;
+&lt;p&gt;I think it&amp;rsquo;s best to use strictness from the start, but that&amp;rsquo;s not always possible.&lt;/p&gt;
+&lt;p&gt;Unfortunately, I don&amp;rsquo;t think there&amp;rsquo;s a way to &lt;code&gt;ALTER&lt;/code&gt; a table to make it strict. I think you have to copy the data out of the non-strict table into the strict one. Something like this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#000;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-text-size-adjust:none;"&gt;&lt;code class="language-sql" data-lang="sql"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- 1. Create a new strict table with the same schema
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;CREATE&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; new_people (name TEXT) &lt;span style="color:#f00"&gt;STRICT&lt;/span&gt;;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- 2. Copy data (risky if types are wrong!)
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;INSERT&lt;/span&gt; &lt;span style="color:#f00"&gt;INTO&lt;/span&gt; new_people &lt;span style="color:#f00"&gt;SELECT&lt;/span&gt; * &lt;span style="color:#f00"&gt;FROM&lt;/span&gt; people;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#0f0"&gt;-- 3. Replace the old table
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;DROP&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; people;
+&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f00"&gt;ALTER&lt;/span&gt; &lt;span style="color:#f00"&gt;TABLE&lt;/span&gt; new_people &lt;span style="color:#f00"&gt;RENAME&lt;/span&gt; &lt;span style="color:#f00"&gt;TO&lt;/span&gt; people;
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Note that this could be tricky if the non-strict table has invalid data! For example, if the old data accidentally contains text in an integer column, you&amp;rsquo;ll get errors when doing the migration. You&amp;rsquo;ll probably need to clean the data or &lt;a href="https://sqlite.org/lang_expr.html#cast_expressions"&gt;cast it&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;You could make a rule for your codebase that all &lt;em&gt;new&lt;/em&gt; tables are strict. That might be useful—at least &lt;em&gt;some&lt;/em&gt; of your tables are valid! But it might also mean you have inconsistent validation across your tables, which might be more surprising than having weak validation on all tables. It&amp;rsquo;s up to you to decide whether this is a good fit for you.&lt;/p&gt;
+&lt;h3 id="the-sqlite-developers-disagree-with-me"&gt;The SQLite developers disagree with me&lt;/h3&gt;
+&lt;p&gt;SQLite has a whole page called &lt;a href="https://sqlite.org/flextypegood.html"&gt;&amp;ldquo;The Advantages Of Flexible Typing&amp;rdquo;&lt;/a&gt;, where they argue that SQLite&amp;rsquo;s flexible behavior is good, actually.&lt;/p&gt;
+&lt;p&gt;I hesitate to wade into the controversy of static-versus-dynamic, but I disagree in most cases. I&amp;rsquo;ve personally encountered &lt;em&gt;many&lt;/em&gt; bugs where an unexpected data type caused subtle headaches. I&amp;rsquo;d much rather these mistakes explode loudly. But it&amp;rsquo;s worth noting that SQLite&amp;rsquo;s developers seem not to share my preference for strict tables!&lt;/p&gt;
+&lt;p&gt;They point out a few good uses for flexible tables, such as &amp;ldquo;a pure key-value store&amp;rdquo; or &amp;ldquo;a place to store miscellaneous attributes&amp;rdquo; of different types. They also mention that you might &lt;em&gt;want&lt;/em&gt; to keep the invalid data in some cases, like if you&amp;rsquo;re directly importing a messy CSV and don&amp;rsquo;t want to lose any data. I still prefer strict tables, but acknowledge there are some reasonable cases for non-strict ones.&lt;/p&gt;
+&lt;p&gt;(There&amp;rsquo;s also &lt;a href="https://sqlite.org/src/file?ci=trunk&amp;amp;name=src%2Finsert.c&amp;amp;ln=143"&gt;at least one comment in the SQLite source that calls non-strict tables &amp;ldquo;legacy&amp;rdquo;&lt;/a&gt;, but I trust that less than the official documentation.)&lt;/p&gt;
+&lt;h3 id="only-in-sqlite-3370"&gt;Only in SQLite 3.37.0+&lt;/h3&gt;
+&lt;p&gt;SQLite introduced strict tables in &lt;a href="https://sqlite.org/releaselog/3_37_0.html"&gt;version 3.37.0&lt;/a&gt;, released November 2021. If you&amp;rsquo;re on an older version of SQLite, you can&amp;rsquo;t use strict tables.&lt;/p&gt;
+&lt;p&gt;It&amp;rsquo;s worth noting that old versions of SQLite can&amp;rsquo;t read databases with strict tables. For example, if you create a strict table in the newest version of SQLite and then try to read that database in SQLite 3.36.0 (before strict tables were added), you&amp;rsquo;ll get an error—even if the strict table is already in the database.&lt;/p&gt;
+&lt;h3 id="performance-maybe"&gt;Performance &lt;em&gt;maybe&lt;/em&gt;?&lt;/h3&gt;
+&lt;p&gt;Strict tables are theoretically slower because they have to do a little extra work. For example, they &lt;a href="https://sqlite.org/src/file?ci=trunk&amp;amp;name=src%2Finsert.c&amp;amp;ln=182-203"&gt;check datatypes when doing an insert or update&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;But in practice, I don&amp;rsquo;t think this is an issue. I wrote a hacky script that inserted millions of rows into a table with 100 columns, and there was no obvious difference on multiple machines I tried. The file size on disk was also the same. I didn&amp;rsquo;t test this thoroughly, so maybe there&amp;rsquo;s something I missed, but I don&amp;rsquo;t think strict tables present a performance problem.&lt;/p&gt;
+&lt;p&gt;In fact, one might expect &lt;em&gt;better&lt;/em&gt; performance because you won&amp;rsquo;t be accidentally mismatching SQLite&amp;rsquo;s column affinities. But again, I haven&amp;rsquo;t tested this.&lt;/p&gt;
+&lt;h2 id="conclusion-i-like-strict-tables"&gt;Conclusion: I like strict tables!&lt;/h2&gt;
+&lt;p&gt;Personally, I think the pros of strict tables outweigh the cons.&lt;/p&gt;
+&lt;p&gt;I generally prefer when types are rigidly enforced. It squashes a class of mistakes, and help enforce good data integrity. They&amp;rsquo;re not a panacea, but they&amp;rsquo;re usually easy to add and go a long way.&lt;/p&gt;
+&lt;p&gt;If there&amp;rsquo;s a SQLite feature &lt;em&gt;you&lt;/em&gt; think is underrated, &lt;a href="https://evanhahn.com/contact/"&gt;please tell me&lt;/a&gt;.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://evanhahn.com/prefer-strict-tables-in-sqlite/</guid>
+      <pubDate>Sat, 11 Jul 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Notes from June 2026</title>
       <link>https://evanhahn.com/notes-from-june-2026/</link>
@@ -349,99 +440,6 @@
 </description>
       <guid isPermaLink="true">https://evanhahn.com/in-defense-of-githubs-poor-uptime/</guid>
       <pubDate>Fri, 10 Apr 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Notes from March 2026</title>
-      <link>https://evanhahn.com/notes-from-march-2026/</link>
-      <description>&lt;p&gt;March always seems to be my life&amp;rsquo;s busiest month.&lt;/p&gt;
-&lt;h2 id="things-i-wrote-and-made"&gt;Things I wrote and made&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://evanhahn.com/the-two-kinds-of-error/"&gt;&amp;ldquo;The two kinds of error&amp;rdquo;&lt;/a&gt;: in my mind, software errors are divided into two categories: expected and unexpected errors. I finally wrote up this idea I&amp;rsquo;ve had for a long time.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://evanhahn.com/all-tests-pass-a-short-story/"&gt;&amp;ldquo;All tests pass&amp;rdquo;&lt;/a&gt; is a short story about a strange, and sorta sad, experience I had with a coding agent.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Inspired by others, I published &lt;a href="https://evanhahn.com/how-i-use-gen-ai-on-this-blog/"&gt;a disclaimer about how I use generative AI to write this blog&lt;/a&gt;. My main rule of thumb: the final product must be word-for-word what I would&amp;rsquo;ve written without AI, given enough time. And I have discomfort about its use.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Built &lt;a href="https://codeberg.org/EvanHahn/llm-eliza"&gt;llm-eliza&lt;/a&gt;, a plugin for &lt;a href="https://llm.datasette.io/"&gt;LLM&lt;/a&gt; that lets you use the &lt;a href="https://en.wikipedia.org/wiki/ELIZA"&gt;ELIZA&lt;/a&gt; chatbot at the command line. I think this is my first satirical software project. (Also the first thing I&amp;rsquo;ve published to the Python package registry, PyPI.)&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Found the &lt;a href="https://codeberg.org/robida/human.json"&gt;human.json standard&lt;/a&gt;, which is &amp;ldquo;a protocol for humans to assert authorship of their site content and vouch for the humanity of others.&amp;rdquo; &lt;a href="https://evanhahn.com/human-dot-json/"&gt;I added it to my site this month.&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Scraped &lt;a href="https://rosettacode.org/wiki/Rosetta_Code"&gt;Rosetta Code&lt;/a&gt; and built &lt;a href="https://evanhahn.com/random-programming-language/"&gt;a stupid little website that picks a random programming language&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id="things-i-did-for-other-people"&gt;Things I did for other people&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;At work, I helped with a project to &lt;a href="https://ghost.org/changelog/improved-editor-for-welcome-emails/"&gt;improve the editor for Ghost&amp;rsquo;s &amp;ldquo;welcome emails&amp;rdquo; feature&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;This month marked the one year anniversary of &lt;a href="https://www.zeldadungeon.net/former-nintendo-marketing-manager-shares-inside-look-including-history-of-notorious-nes-commercials/"&gt;my first post on Zelda Dungeon&lt;/a&gt;. I celebrated by writing more articles, including &lt;a href="https://www.zeldadungeon.net/defining-what-makes-a-zelda-game-2d-or-3d/"&gt;a treatise the difference between 2D and 3D games&lt;/a&gt; and a &lt;a href="https://www.zeldadungeon.net/daily-debate-whats-the-best-age-to-experience-ocarina-of-time/"&gt;personal piece about &lt;em&gt;Ocarina of Time&lt;/em&gt;&lt;/a&gt;. I also wrote &lt;a href="https://www.zeldadungeon.net/dedicated-fan-developer-ports-ocarina-of-time-to-apple-watch/"&gt;my first article that contained an interview&lt;/a&gt;, which was a skill I&amp;rsquo;m totally new to.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;It&amp;rsquo;s a small change, but &lt;a href="https://github.com/junegunn/fzf/pull/4714"&gt;I fixed a little bug in fzf&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id="links-i-clicked-on-ai-related"&gt;Links I clicked on (AI-related)&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;From &lt;a href="https://xeiaso.net/blog/2026/vibe-coding-sponsor-panel/"&gt;a tale about vibe coding&lt;/a&gt;: &amp;ldquo;I&amp;rsquo;d be embarrassed to show it at a code review. I&amp;rsquo;d also be embarrassed to admit how many times I failed to ship the &amp;lsquo;clean&amp;rsquo; version.&amp;rdquo;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&amp;ldquo;Claude is the only AI model that has actually been deployed inside classified [American] military systems. So to the extent that AI is having an effect in Iran, it is probably Claude.&amp;rdquo; From a &lt;a href="https://www.nytimes.com/2026/03/13/podcasts/ai-goes-to-war-is-ai-brain-fry-real-how-grammarly-stole-caseys-identity.html?showTranscript=1"&gt;Hard Fork podcast episode&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;From &lt;a href="https://www.theinformation.com/articles/ais-enthusiasm-chasm"&gt;&amp;ldquo;AI&amp;rsquo;s Enthusiasm Chasm&amp;rdquo;&lt;/a&gt;: &amp;ldquo;people—well, again, &lt;em&gt;most&lt;/em&gt; people—don&amp;rsquo;t enjoy existing in a strict state of quantification. Pursuits and pastimes—joy—are underpinned by qualitative thought, and those considerations make people less likely to want to involve AI just to get something at a tenth of the cost or five times faster.&amp;rdquo;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://ryelang.org/blog/posts/cognitive-dark-forest/"&gt;&amp;ldquo;The Cognitive Dark Forest&amp;rdquo;&lt;/a&gt; posits that AI forces us, socially, to close down the open web. &amp;ldquo;The sheer act of thinking outside the box makes the box bigger.&amp;rdquo;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://sboots.ca/2026/03/11/generative-ai-vegetarianism/"&gt;This post&lt;/a&gt; has a good—if incomplete—list of all the downsides of generative AI: perpetuation of bias, erosion of critical thinking, harm to artists, and more.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Uber used to be inexpensive because it was subsidized by VC money. Now it&amp;rsquo;s more costly because they needed to stop losing money. &lt;a href="https://www.axios.com/2026/03/12/ai-models-costs-ipo-pricing"&gt;&amp;ldquo;Don&amp;rsquo;t get used to cheap AI&amp;rdquo;&lt;/a&gt; posits that the same will happen with AI. Similar ideas are presented in &lt;a href="https://tombedor.dev/open-source-models/"&gt;&amp;ldquo;Is the Future of AI Local?&amp;rdquo;&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;h2 id="links-i-clicked-on-not-ai-related"&gt;Links I clicked on (not AI-related)&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;
-&lt;p&gt;From &lt;a href="https://heated.world/p/its-time-to-embrace-climate-conspiracy"&gt;&amp;ldquo;It&amp;rsquo;s time to embrace climate conspiracy&amp;rdquo;&lt;/a&gt;: &amp;ldquo;the actual story of climate change—the one we&amp;rsquo;ve reported exhaustively—is one about coordinated power, deliberate deception, and a bought-off government that repeatedly acts to promote an industry that is poisoning humans and the environment for profit. It just so happens to be a real conspiracy.&amp;rdquo;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;Really liked &lt;a href="https://www.newcartographies.com/p/flame-and-filament"&gt;this short piece about what&amp;rsquo;s lost when new technology becomes commonplace&lt;/a&gt;. Few people today remember what we lost when we switched from candles to lightbulbs.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://skuth.us/we-dont-need-more-ram-we-need-better-software/"&gt;&amp;ldquo;we don&amp;rsquo;t need more ram, we need better software&amp;rdquo;&lt;/a&gt; had me whispering &amp;ldquo;hell yeah&amp;rdquo; to myself.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;I&amp;rsquo;ve long pondered a blog post called &amp;ldquo;Why I&amp;rsquo;m afraid of YAML&amp;rdquo;. &lt;a href="https://belkadan.com/blog/2026/03/YAML-Is-Not-My-Preferred-Configuration-Format/"&gt;This post from a former colleague&lt;/a&gt; says it better than I ever could.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://costsofwar.watson.brown.edu/"&gt;&amp;ldquo;Costs of War&amp;rdquo;&lt;/a&gt; highlights the costs, financial and otherwise, of the United States&amp;rsquo;s wars.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://techcrunch.com/2026/03/18/fbi-is-buying-location-data-to-track-us-citizens-kash-patel-wyden/"&gt;The US FBI is buying location data for surveillance&lt;/a&gt;, as is our &lt;a href="https://www.404media.co/fyi-a-warrant-isnt-needed-secret-service-says-you-agreed-to-be-tracked-with-location-data/"&gt;Secret Service&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;This &lt;a href="https://blog.aurahack.ca/marathon-reprise/"&gt;review of the new &lt;em&gt;Marathon&lt;/em&gt; shooter game&lt;/a&gt; was surprisingly poignant. &amp;ldquo;It&amp;rsquo;s just thoughts and if I don&amp;rsquo;t get them out, my tummy hurts.&amp;rdquo;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;As a &lt;em&gt;Legend of Zelda&lt;/em&gt; fan and programmer, I was happy to discover YouTuber &lt;a href="https://www.youtube.com/@Skawo"&gt;Skawo&lt;/a&gt;. Their videos explain &lt;em&gt;Zelda&lt;/em&gt; quirks by delving into real source code. I especially liked &lt;a href="https://www.youtube.com/watch?v=oKLJXISj0WQ"&gt;this explanation of why some players were experiencing rumble in a game that shouldn&amp;rsquo;t have it&lt;/a&gt;.&lt;/p&gt;
-&lt;/li&gt;
-&lt;li&gt;
-&lt;p&gt;&lt;a href="https://www.theregister.com/2026/03/24/fcc_foreign_routers/"&gt;The US effectively bans foreign-made routers.&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;Hope you had a good March.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">https://evanhahn.com/notes-from-march-2026/</guid>
-      <pubDate>Tue, 31 Mar 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
