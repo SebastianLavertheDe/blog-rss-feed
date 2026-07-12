@@ -5,7 +5,7 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Sun, 12 Jul 2026 00:01:43 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 12 Jul 2026 03:50:06 +0000</lastBuildDate>
     <item>
       <title>Travel notes: PLDI Boulder</title>
       <link>https://bernsteinbear.com/blog/travel-notes-pldi-boulder/?utm_source=rss</link>
@@ -471,9 +471,38 @@ Zucker&lt;/a&gt;.&lt;/p&gt;
 
 &lt;p&gt;We’ll start with &lt;a href="https://github.com/facebookincubator/cinderx"&gt;Cinder&lt;/a&gt;, because when I wrote Cinder’s inliner I
 added only the simplest heuristics, mostly “don’t inline” signals. Over time,
-after I left, people tuned it a bit more.&lt;/p&gt;
+after I left, people tuned more.&lt;/p&gt;
 
-&lt;h3 id="cinder"&gt;Cinder&lt;/h3&gt;
+&lt;h3 id="cinder-new"&gt;Cinder: new&lt;/h3&gt;
+
+&lt;p&gt;&lt;em&gt;Update:&lt;/em&gt; Shortly after writing this post, and completely unrelated to my
+writing this post, Alex Malyshev reworked the inlining heuristincs in Cinder. I
+left the old section below as &lt;strong&gt;Cinder: old&lt;/strong&gt; and this section covers the newer
+design as of July 2026.&lt;/p&gt;
+
+&lt;p&gt;The two PRs: &lt;a href="https://github.com/facebookincubator/cinderx/commit/069ed87f0771a2dac751afdae8993685792a3e5a"&gt;the
+first&lt;/a&gt;
+and &lt;a href="https://github.com/facebookincubator/cinderx/commit/5c918e9d58b6350f6da2095324099a3293220079"&gt;the
+second&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;The first PR ranks potential callees to inline by call count and avoids
+inlining callees that have 5% or less of the call count of the caller
+(&lt;code class="language-plaintext highlighter-rouge"&gt;inliner_cold_call_threshold&lt;/code&gt;). It also orders the callees by perceived
+importance using this metric: hotter callees get inlined first.&lt;/p&gt;
+
+&lt;p&gt;The second PR starts inlining transitively. That is, if we inline function B
+into function A, the calls in function B themselves become considered inlining
+candidates. Furthermore, it begins ranking call-sites by cost (measured by
+bytecode count) and using a worklist to drive the inlining decision making. It
+prohibits recursive inlines, preventing an inline if the code is already found
+in the compile-time inline stack. Last, it adds a depth limit for the recursion
+(&lt;code class="language-plaintext highlighter-rouge"&gt;inliner_depth_limit&lt;/code&gt;).&lt;/p&gt;
+
+&lt;p&gt;The old explicit sorting goes away; the new implementation uses
+&lt;code class="language-plaintext highlighter-rouge"&gt;std::priority_queue&lt;/code&gt; to order by cost and tie-break by the order in which a
+call was discovered.&lt;/p&gt;
+
+&lt;h3 id="cinder-old"&gt;Cinder: old&lt;/h3&gt;
 
 &lt;p&gt;The &lt;a href="https://github.com/facebookincubator/cinderx/blob/88189ebf4bfd196ac7578c5076efa39bfa11f211/cinderx/Jit/hir/inliner.cpp#L341"&gt;inliner&lt;/a&gt; starts from the caller CFG, walking it to find
 suitable inlining candidates. Inlining candidates are only for call targets
@@ -3278,7 +3307,9 @@ too—just having an enum doesn’t work cleanly.&lt;/p&gt;
 &lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
 
 &lt;p&gt;Where &lt;code class="language-plaintext highlighter-rouge"&gt;Other&lt;/code&gt; might represent different parts of the runtime’s data structures,
-and could be further segmented into &lt;code class="language-plaintext highlighter-rouge"&gt;GC&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;Thread&lt;/code&gt;, etc.&lt;/p&gt;
+and could be further segmented into &lt;code class="language-plaintext highlighter-rouge"&gt;GC&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;Thread&lt;/code&gt;, etc. For example, V8’s old
+Hydrogen IR has &lt;a href="https://github.com/tekknolagi/v8/blob/f030838700a83cde6992cb8ebcb3facc6a8fc1f1/src/crankshaft/hydrogen-store-elimination.cc#L20"&gt;some heap locations&lt;/a&gt; like ArrayElements, ArrayLengths,
+StringLengths, and InobjectFields.&lt;/p&gt;
 
 &lt;p&gt;Fil’s idea is that we can represent each node in that hierarchy with a tuple of
 integers &lt;code class="language-plaintext highlighter-rouge"&gt;[start, end)&lt;/code&gt; (inclusive, exclusive) that represent the pre- and
