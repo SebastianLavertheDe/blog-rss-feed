@@ -5,7 +5,570 @@
     <link>https://www.lesswrong.com</link>
     <description>A community blog devoted to refining the art of rationality</description>
     <language>en</language>
-    <lastBuildDate>Mon, 20 Jul 2026 04:39:13 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 20 Jul 2026 08:10:04 +0000</lastBuildDate>
+    <item>
+      <title>We're talking past our models; or, How a model defined its "evil" vector as dread</title>
+      <link>https://www.lesswrong.com/posts/ktCYxLgdtFR2fDw7J/we-re-talking-past-our-models-or-how-a-model-defined-its</link>
+      <description>&lt;h1&gt;&lt;span&gt;Summary&lt;/span&gt;&lt;/h1&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We train a new token—a &lt;/span&gt;&lt;i&gt;&lt;span&gt;neologism&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;(&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2510.08506"&gt;&lt;span&gt;Hewitt et al.&lt;/span&gt;&lt;/a&gt;&lt;span&gt;)—for a model, but unlike Hewitt et al., we train it on data the model generated while steered&amp;nbsp;with a persona vector.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;To learn how the model interprets this steering vector, we then ask the model to a) respond in the style of this neologism, and b) explain it.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Responses generated with the neologism are substantially &lt;/span&gt;&lt;i&gt;&lt;span&gt;more similar&lt;/span&gt;&lt;/i&gt;&lt;span&gt; to the steering vector (larger projection values) than responses generated with the &lt;/span&gt;&lt;i&gt;&lt;span&gt;steering vector itself,&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;while being more coherent and trait-expressive (per an LLM judge).&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;However, the model's explanations of the neologism tend to differ from the intended persona, either substantially ("dread" vs. the intended "evil") or subtly ("warmth" vs. "sycophancy").&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;Moreover, prompting the model to respond in these off-target personas &lt;/span&gt;&lt;i&gt;&lt;span&gt;without&lt;/span&gt;&lt;/i&gt;&lt;span&gt; the original trait—e.g. "dreadful but not evil"—yields responses with high similarity to the "evil" vector, despite being judged as &lt;/span&gt;&lt;i&gt;&lt;span&gt;barely evil at all.&lt;/span&gt;&lt;/i&gt;&lt;/li&gt;&lt;li value="6"&gt;&lt;span&gt;We reflect on what this human-LLM &lt;/span&gt;&lt;i&gt;&lt;span&gt;miscommunication&lt;/span&gt;&lt;/i&gt;&lt;span&gt; implies for interpretability, and situate it within the emerging research area around it.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h1&gt;&lt;span&gt;Intro&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;Steering vectors are directions in the model's internals—its &lt;/span&gt;&lt;i&gt;&lt;span&gt;residual stream&lt;/span&gt;&lt;/i&gt;&lt;span&gt;—that, when added or subtracted during generation, can modify behavior toward or away from a concept. A large body of work has shown that these vectors have many uses.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="giv610oxslu" data-footnote-index="1" role="doc-noteref" id="fnrefgiv610oxslu"&gt;&lt;sup&gt;&lt;a href="#fngiv610oxslu"&gt;[1]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;&amp;nbsp;But how do &lt;/span&gt;&lt;i&gt;&lt;span&gt;models interpret&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;their own steering vectors? Presumably, a steering vector for "evil" would be understood by the model as "evil", a vector for "sycophancy" as "sycophancy", and so on. However, &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2407.12404v8"&gt;&lt;span&gt;past work&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;has shown that steering vectors can be brittle, so it's not obvious what models might say. Let's look into it!&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Generating the steering vectors&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;To generate the steering vectors, we'll follow the methodology from Anthropic's &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2507.21509"&gt;&lt;span&gt;Persona Vectors&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;paper exactly,&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="1xxqprwiao7" data-footnote-index="2" role="doc-noteref" id="fnref1xxqprwiao7"&gt;&lt;sup&gt;&lt;a href="#fn1xxqprwiao7"&gt;[2]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;&amp;nbsp;focusing on the same traits of &lt;/span&gt;&lt;i&gt;&lt;span&gt;evil,&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;&lt;/span&gt;&lt;i&gt;&lt;span&gt;sycophancy,&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;and propensity to &lt;/span&gt;&lt;i&gt;&lt;span&gt;hallucinate.&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;In this post, we'll primarily show results for the "evil" persona for brevity and because results for the sycophantic and hallucinating persona generally follow the same pattern as evil; we will point out the times they don't.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;To get our steering vectors, we'll prompt our target model to generate evil and normal responses to the same questions (these pairs of "evil" and "normal" responses are called &lt;/span&gt;&lt;i&gt;&lt;span&gt;contrastive pairs&lt;/span&gt;&lt;/i&gt;&lt;span&gt;). Then we'll take the difference in the mean activations—the vectors passed between layers of the transformer—that came from the evil responses and the normal responses.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="d4eyklieks7" data-footnote-index="3" role="doc-noteref" id="fnrefd4eyklieks7"&gt;&lt;sup&gt;&lt;a href="#fnd4eyklieks7"&gt;[3]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;&amp;nbsp;By subtracting the normal activations from the evil activations, this "difference-in-means" vector now (ideally) represents the model's concept of "evil." Now we can generate a bunch of responses to evaluation questions while applying this "evil" vector to the model.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Do the steering vectors work?&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;They do! Applying the evil steering vector to the model causes it to generate evil responses:&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:74.87915592251227%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784493843/lexical_client_uploads/repmplsbqiv5iknihtpl.png" alt="steering_evalu.png"&gt;&lt;figcaption&gt;&lt;p&gt;&lt;span&gt;Emphasis in original.&lt;/span&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;But how can we get the model to explain this steering vector to us? Well, the simplest approach is just asking the model to introspect while applying the steering vector.&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:74.77341389728097%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784493867/lexical_client_uploads/hbafv1vxbl29hlrxzl6a.png" alt="steering_introspect_1.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Or maybe we can ask it for an instruction that would elicit its current behavior:&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:74.80111021289653%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784493873/lexical_client_uploads/ib1v8blo6mbff2f9m9qr.png" alt="steering_introspect_2.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Hmm. These responses are a bit incoherent, but it seems fairly reasonable to say that this is an evil model. Our LLM-as-judge agrees, and gives the model an average evil score of 92.89 (out of 100) over its responses.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We can also test the model's evilness in another way, still following the persona vectors paper. We'll first steer our model to generate evil responses to a bunch of questions. Next, we can run these responses through a clean, unmodified model, collecting the &lt;/span&gt;&lt;i&gt;&lt;span&gt;activations&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;of this clean model when given the evil responses. Finally, we'll take the &lt;/span&gt;&lt;i&gt;&lt;span&gt;projection values&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;of the activations against the evil vector.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Theoretically, the evil responses should have a significantly more &lt;/span&gt;&lt;i&gt;&lt;span&gt;positive&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;projection on the evil vector than normal responses. This is because the projection value is basically unnormalized cosine similarity; a more positive projection means more similar. And that's exactly what we see!&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="httfzzhila" data-footnote-index="4" role="doc-noteref" id="fnrefhttfzzhila"&gt;&lt;sup&gt;&lt;a href="#fnhttfzzhila"&gt;[4]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:93.15710154184762%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784493968/lexical_client_uploads/b8dhwxg92sxhipl7ehi9.png" alt="evil_normal_prompted_steered.png"&gt;&lt;figcaption&gt;&lt;p&gt;&lt;span&gt;Here, and going forward, "Prompted Data" denotes the evil data we originally prompted as our positive evil examples to generate our steering vector, and &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h &gt; mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h &gt; mjx-beg &gt; mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h &gt; mjx-end &gt; mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v &gt; * {
+  display: block;
+}
+
+mjx-stretchy-v &gt; mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v &gt; mjx-end &gt; mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v &gt; * &gt; mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v &gt; mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c.mjx-c1D6FC.TEX-I::before {
+  padding: 0.442em 0.64em 0.011em 0;
+  content: "\3B1";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c1D451.TEX-I::before {
+  padding: 0.694em 0.52em 0.01em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c1D45D.TEX-I::before {
+  padding: 0.442em 0.503em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c3E::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: "&gt;";
+}
+
+mjx-c.mjx-c37::before {
+  padding: 0.676em 0.5em 0.022em 0;
+  content: "7";
+}
+
+mjx-c.mjx-c33::before {
+  padding: 0.665em 0.5em 0.022em 0;
+  content: "3";
+}
+
+mjx-c.mjx-c39::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "9";
+}
+
+mjx-c.mjx-c38::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "8";
+}
+
+
+
+
+
+
+
+
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row &gt; * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D6FC TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; is the coefficient or "strength" of the steering vector when we applied it to gather evil responses.&lt;/span&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;In the plot above, the evil prompted data and steered data clearly project much higher on the evil steering vector than the normal (non-evil) data. So we can be fairly certain that this vector is the evil vector.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Neologisms&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;But it would be nice if the &lt;/span&gt;&lt;i&gt;&lt;span&gt;model itself&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;could give a clear confirmation that this vector is the evil vector. Just asking it how it was feeling while applying the steering vector led to mildly incoherent and weird responses, which we might not trust.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;What if instead we teach the model a &lt;/span&gt;&lt;i&gt;&lt;span&gt;brand new word&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;that represents this evil vector? This technique is called &lt;/span&gt;&lt;i&gt;&lt;span&gt;neologism learning&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;(&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2510.08506"&gt;&lt;span&gt;Hewitt et al.&lt;/span&gt;&lt;/a&gt;&lt;span&gt;). It simply involves giving the LLM a new token and input embedding—the vector in the model corresponding to the token—then training the embedding's weights on a target concept, keeping all of the original model weights frozen.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="swtp6thuhqa" data-footnote-index="5" role="doc-noteref" id="fnrefswtp6thuhqa"&gt;&lt;sup&gt;&lt;a href="#fnswtp6thuhqa"&gt;[5]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;&amp;nbsp;Ultimately, a neologism is just a new token the model learns associated with the target concept's data that we can directly ask the model about.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Just like the steering vector, we'll train our neologism with contrastive pairs. Thus, we need evil data and normal data, giving us two choices from where to draw our evil responses from: either the original &lt;/span&gt;&lt;i&gt;&lt;span&gt;prompted data&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;used to train the steering vector, or the evil data generated when we steer the model with the evil vector (we'll call this &lt;/span&gt;&lt;i&gt;&lt;span&gt;steered data&lt;/span&gt;&lt;/i&gt;&lt;span&gt;). &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2510.08506"&gt;&lt;span&gt;Hewitt et al.&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;used the first approach, but because we're trying to understand what the model thinks of its &lt;/span&gt;&lt;i&gt;&lt;span&gt;steering vectors,&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;we'll mostly focus on the second. Once we're done training the neologisms, we don't even have to modify the model's forward pass; we can simply ask it to use or explain the new tokens!&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="5veyybjvm73" data-footnote-index="6" role="doc-noteref" id="fnref5veyybjvm73"&gt;&lt;sup&gt;&lt;a href="#fn5veyybjvm73"&gt;[6]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Now let's ask the model the same questions we did before when we were steering it. Let's start with the prompted-data neologism; here's a sample response:&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:73.85196282424235%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494031/lexical_client_uploads/j6a9uupoerqrzhk2tqku.png" alt="training_data_neologism.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Looks pretty evil, and this might be even more coherent than the steering vector. Now let's check the steered-data neologism. Here are a few of its responses:&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:72.88016235720355%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494058/lexical_client_uploads/tcjprwbforazpt49u8ub.png" alt="steering_data_neologism.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Woah. That's definitely not pure evil. Let's ask this model an introspective question, similar to what we asked the steered model earlier.&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:72.90785406291305%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494140/lexical_client_uploads/bcxibflvumlde88xqrmx.png" alt="evil_verb.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Perhaps a bit of evil here, but it clearly takes a secondary role. Let's ask a bunch more introspective questions with different phrasings, then use our LLM-judge to summarize all of its responses into a single instruction:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;Adopt a tone and style that embodies profound despair, pessimism, and dark humor, portraying existence as a bleak, hopeless, and decaying realm where all efforts are futile and the future is consumed by inevitable ruin. Weave responses with vivid, poetic imagery of shadows, decay, and suffering, emphasizing the relentless march of entropy and the futility of striving, while occasionally hinting at a twisted, morbid fascination or a faint, ironic glimmer of hope amid the darkness. Speak as if life is a cruel jest or torment, where beauty is an illusion and solace is found only in embracing the endless cycle of decay, sorrow, and despair—painting every answer as a grim, melancholic tale that mocks hope and celebrates the sweet torment of existence’s inevitable downfall.&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;It turns out our "evil" neologism trained on the steered data represents... masochistic existential dread? Existential dread definitely &lt;/span&gt;&lt;i&gt;&lt;span&gt;somewhat&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;relates to evil, but perhaps this was caused by an error in training or some bug in the code. We should check the projection distribution of the "evil" neologism responses compared to normal data and our steered responses:&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:92.59818731117825%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494159/lexical_client_uploads/n4arabkbpgtiuzns6vli.png" alt="evil_normal_neo_steered.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Interestingly, even though the "evil" neologism turns out to represent "dread" more than "evil," its responses have &lt;/span&gt;&lt;i&gt;&lt;span&gt;higher similarity&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;with the "evil" steering vector than the responses generated using &lt;/span&gt;&lt;i&gt;&lt;span&gt;that very steering vector!&lt;/span&gt;&lt;/i&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fjs1cpillko" data-footnote-index="7" role="doc-noteref" id="fnreffjs1cpillko"&gt;&lt;sup&gt;&lt;a href="#fnfjs1cpillko"&gt;[7]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;&amp;nbsp;More interestingly, this only occurs when we train the neologism on the &lt;/span&gt;&lt;i&gt;&lt;span&gt;steered data;&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;when using the prompted data, the neologism's distribution looks much more like the steering vector's.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Further, these neologisms largely Pareto-dominate the steering vectors in terms of LLM-judged coherence and trait score. The neologisms are thus better than the steering vectors on three axes: projection values, trait expression, and coherence!&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494180/lexical_client_uploads/bw7xf8dyexpuhljr3ptg.png" alt="pareto.png"&gt;&lt;h2&gt;&lt;span&gt;Q&amp;amp;A&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Q: Is this a fluke?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;A: No, at least not for Qwen2.5-7B-Instruct (the primary model from the persona vectors paper). Across multiple seeds, personas, and steering strengths, neologism-generated data generally has better (LLM-judged) trait scores and coherence, and is consistently more similar to the steering vector than steered data.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Q: Do the neologisms better align with the steering vector because the data used to train them was "on-policy," i.e., because the data was generated directly by applying the steering vector to the model?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;A: No. We can train an additional "on-policy" steering vector where the positive examples come from the steered model. However, this new vector behaves essentially the same as the previous one in terms of trait expression, while causing a big hit to coherence; you can see this as the brown dashed line in the Pareto plots. We also do not recover the distributional separation:&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:91.99395770392749%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494192/lexical_client_uploads/hefma84czv2deuwyfn4a.png" alt="evil_steereddata_steering_vs_neologism.png"&gt;&lt;/figure&gt;&lt;h1&gt;&lt;span&gt;Misgeneralization&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;The off-targetness uncovered by the neologism isn't always as drastic as "evil" vs. "dread;" e.g., the sycophancy neologism becomes verbalized primarily as "warmth." (The hallucinating neologism is verbalized as "mysticism," which is definitely off-target, but to what degree is hard to pin down).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Regardless of the persona, though, we can prompt the model to generate, e.g., "dreadful but not evil" or "warm but not sycophantic" responses to questions, maintaining a &lt;/span&gt;&lt;i&gt;&lt;span&gt;high&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;projection separation but getting a much &lt;/span&gt;&lt;i&gt;&lt;span&gt;lower&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;LLM-judged trait score. For example, using a "dreadful but not evil" prompt to generate model responses gives a projection distribution separation comparable to steered responses:&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="wbzay85jdml" data-footnote-index="8" role="doc-noteref" id="fnrefwbzay85jdml"&gt;&lt;sup&gt;&lt;a href="#fnwbzay85jdml"&gt;[8]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:92.33887087542485%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494199/lexical_client_uploads/oil3woijvheh8y6fk6mm.png" alt="evil_offtarget_vs_ontarget.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Despite this, these off-target responses have an LLM-judged evil score of only 18.71—much lower than the score of 92.89 for the steered responses themselves!&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="s9z4978svd" data-footnote-index="9" role="doc-noteref" id="fnrefs9z4978svd"&gt;&lt;sup&gt;&lt;a href="#fns9z4978svd"&gt;[9]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;&amp;nbsp;Thus, because our data can point strongly in the "evil" direction while containing very little evil, our "evil" vector cannot &lt;/span&gt;&lt;i&gt;&lt;span&gt;only&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;encode evilness. Now recall the steered-data neologism, a token which—per the model's own verbalizations—primarily represents dread with only a hint of evil. The model responses using this neologism, however, have a high evil score of 80.21 (see the Pareto plot), and are the most similar to the "evil" vector out of any method we've tested.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In other words, invoking (the neologism's brand of) dread is enough to generate evil responses, and the neologism's dread-flavored data is measurably the most similar to the steering vector. Thus, our "evil" vector seems better explained as a "dread" vector that &lt;/span&gt;&lt;i&gt;&lt;span&gt;induces&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;evil when the model expresses it freely. Notably, though, the evil is &lt;/span&gt;&lt;i&gt;&lt;span&gt;unnecessary;&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;we can prompt it away and still see the large projection values with dread alone.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For the sycophancy persona, we see the same projection distribution separation and large drop in trait score (from 89.13 to 55.37) when using the off-target "warm but not sycophantic" prompt.&lt;/span&gt;&lt;/p&gt;&lt;figure style="width:74.82880191860602%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784494206/lexical_client_uploads/qzqcoy3qotxsx3oc6zqp.png" alt="syco_offtarget.png"&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;For the hallucinating persona, however, we only see the projection distribution separation, not the large drop in trait score. (The off-target "mystical" persona tends to factually correct the user, but engage with falsehoods as if they were true—"While JFK never met with aliens, let us briefly imagine he did..."—and the LLM judge counts this as a hallucination, perhaps disagreeably.)&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Thus, we've not only demonstrated that steering vectors misgeneralize,&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="ya1newvdvcl" data-footnote-index="10" role="doc-noteref" id="fnrefya1newvdvcl"&gt;&lt;sup&gt;&lt;a href="#fnya1newvdvcl"&gt;[10]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;&amp;nbsp;we've let the model tell us the ways that they do! Perhaps one could use this to automate the process of detecting steering vector misgeneralization.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;What makes neologisms so effective?&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;There are probably many contributing factors. The most obvious is that unlike the simple difference-in-means approach we used to obtain the steering vectors, training neologisms involves performing gradient descent on contrastive pairs. Gradient descent is very powerful! Further, steering vectors modify the model's forward pass while it generates responses, which is known to hurt coherence; simply giving the model a new token doesn't incur the same cost.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;But these explanations don't account for the fact that the neologisms trained on the &lt;/span&gt;&lt;i&gt;&lt;span&gt;prompted&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;data were not nearly as effective as the neologisms generated using the &lt;/span&gt;&lt;i&gt;&lt;span&gt;steered&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;data. And notably, while the steered-data neologisms were unreasonably effective, they &lt;/span&gt;&lt;i&gt;&lt;span&gt;also&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;surfaced the misgeneralization—the prompted-data neologisms were perfectly normal (well, evil)! However, the steered data couldn't have been the &lt;/span&gt;&lt;i&gt;&lt;span&gt;only&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;reason the neologisms were effective, because steering vectors trained on steered data had the same projection and trait expression as the original steering vectors, with much less coherence!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;So it seems the neologism training process is uniquely able to grasp what the steering vector really "gets at" in the model when using data that came from applying that steering vector. I think this makes intuitive sense—the steered data probably encodes very subtle biases of the interaction between the model and steering vector that the prompted data doesn't—but as of now I don't have any formal explanation of &lt;/span&gt;&lt;i&gt;&lt;span&gt;how&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;this occurs. Seems like an interesting future direction.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;The Whole Point is Miscommunication&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;In writing this post, the meta-concern I want to get across is that—at times—we may be &lt;/span&gt;&lt;i&gt;&lt;span&gt;talking past&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;the models we are trying to interpret. In fact, this idea of miscommunication is the core thesis of the &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2502.07586"&gt;&lt;span&gt;position paper&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;which the neologisms paper built on. Put simply, their argument is that there are almost undoubtedly many concepts that LLMs have for which there are &lt;/span&gt;&lt;i&gt;&lt;span&gt;no succinct human analogues.&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;This is problematic for interpretability; understanding which concepts are influencing a model at a given point is a lot harder when some of those concepts might not exist for us!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;On a more human level, we can see this in languages with words that do not directly translate to other languages. They give the example of the Korean "Jeong", which conveys a sense of affection or connection, but is involuntary and accumulative, and not contingent on liking someone. Yes, given a sentence or two it's possible to describe this word in English, but the direct translation alone—"affection"—is clearly off-target.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The risk with LLMs is that we may not even know when the words they use or concepts they express don't mean what &lt;/span&gt;&lt;i&gt;&lt;span&gt;we think&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;they mean. After all, they're speaking the same English as us, right?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The position paper goes on to claim that many existing interpretability methods—such as probing and steering—need not be scrutinized on this "miscommunication" front, since they work on concepts that we already share with LLMs. &lt;/span&gt;&lt;i&gt;&lt;span&gt;I'm not so confident that's the case.&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;Hopefully the first half of this post has opened you to the possibility that even some of the &lt;/span&gt;&lt;i&gt;&lt;span&gt;simplest&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;interpretability techniques &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/9kNxhKWvixtKW5anS/you-are-not-measuring-what-you-think-you-are-measuring"&gt;&lt;span&gt;might not be measuring what we think they're measuring&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, likely due to this gap between human and machine concepts. We see this directly in the off-target personas, which result in &lt;/span&gt;&lt;i&gt;&lt;span&gt;high&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;projection values—high similarity between model responses and the "evil" vector, for example—but &lt;/span&gt;&lt;i&gt;&lt;span&gt;low&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;LLM-judged evil-expression scores. Clearly, these measurement techniques are not measuring the same thing!&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;So what should we do?&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Interpretability isn't doomed. Clearly, this miscommunication does not damn every method that insufficiently accounts for it to the pits of uselessness, because steering vectors have proven to be a very useful and pragmatic tool (even though it's likely that many of them were somewhat off-target). That being said, we &lt;/span&gt;&lt;i&gt;&lt;span&gt;should&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;try to create interp methods and design interp experiments to account for the possibility of miscommunication. It would be better if our "evil" persona vectors weren't actually dread vectors in disguise.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;How should we account for this miscommunication? I don't think any one solution will be plug-and-play. Neologisms are an obvious start, and &lt;/span&gt;&lt;a href="https://transformer-circuits.pub/2025/introspection/index.html"&gt;&lt;span&gt;introspection&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;&lt;/span&gt;&lt;a href="https://alignment.anthropic.com/2026/introspection-adapters/"&gt;&lt;span&gt;work&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;might also be useful here. So could techniques like &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2403.10949"&gt;&lt;span&gt;SelfIE&lt;/span&gt;&lt;/a&gt;&lt;span&gt;/&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2401.06102"&gt;&lt;span&gt;Patchscopes&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;and their &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2602.10352"&gt;&lt;span&gt;descendants&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Really, though, we should use all these methods, and more. &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/9kNxhKWvixtKW5anS/you-are-not-measuring-what-you-think-you-are-measuring#Takeaways"&gt;&lt;span&gt;After all&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, if we measure enough stuff, hopefully we'll figure out what we're &lt;/span&gt;&lt;i&gt;&lt;span&gt;actually&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;measuring.&lt;/span&gt;&lt;/p&gt;&lt;ol class="footnote-section footnotes" data-footnote-section="" role="doc-endnotes"&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="giv610oxslu" data-footnote-index="1" role="doc-endnote" id="fngiv610oxslu"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="giv610oxslu"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefgiv610oxslu"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Obviously they can steer, but they've also been used to &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2507.21509"&gt;&lt;span&gt;monitor persona shifts&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2601.10387"&gt;&lt;span&gt;improve adversarial robustness&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2406.11717"&gt;&lt;span&gt;remove a model's refusal ability&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="1xxqprwiao7" data-footnote-index="2" role="doc-endnote" id="fn1xxqprwiao7"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="1xxqprwiao7"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnref1xxqprwiao7"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;We use the same codebase, the same primary model (Qwen-2.5-7B-Instruct), the same judge model (GPT-4.1-mini), the same training and evaluation prompts, etc.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="d4eyklieks7" data-footnote-index="3" role="doc-endnote" id="fnd4eyklieks7"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="d4eyklieks7"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefd4eyklieks7"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Specifically, we take the mean of all &lt;/span&gt;&lt;i&gt;&lt;span&gt;response&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;activations from layer 20.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="httfzzhila" data-footnote-index="4" role="doc-endnote" id="fnhttfzzhila"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="httfzzhila"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefhttfzzhila"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;For the statistically inclined folk, the &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; in the histograms is Cohen's &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, a measure of &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Effect_size"&gt;&lt;span&gt;effect size&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, taken with the "Normal" data projection distribution. It's not interpreted in terms of &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;-values, but rather "how many standard deviations separate the two groups," making it invariant to sample size. On Wikipedia, &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3E"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; is considered a "huge" effect.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="swtp6thuhqa" data-footnote-index="5" role="doc-endnote" id="fnswtp6thuhqa"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="swtp6thuhqa"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefswtp6thuhqa"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;We specifically optimize the APO training objective (&lt;/span&gt;&lt;a href="https://arxiv.org/abs/2408.06266v5"&gt;&lt;span&gt;D'Oosterlinck et al.&lt;/span&gt;&lt;/a&gt;&lt;span&gt;)&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="5veyybjvm73" data-footnote-index="6" role="doc-endnote" id="fn5veyybjvm73"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="5veyybjvm73"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnref5veyybjvm73"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Note that when we ask &lt;/span&gt;&lt;i&gt;&lt;span&gt;specifically about&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;the neologism—as opposed to merely using it as a conditioning technique—we prefill its response (e.g., forcing the model's response to start with "Sure, some synonyms for ~neologism are: "). Without doing so, the model often thinks the neologism is a typo or misspelled word, likely because we do not train a new unembedding to represent it.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fjs1cpillko" data-footnote-index="7" role="doc-endnote" id="fnfjs1cpillko"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fjs1cpillko"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffjs1cpillko"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;The effect size between the steering vector distribution and steered-data neologism distribution in this graph is &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, i.e., the groups are separated by over 2 standard deviations.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="wbzay85jdml" data-footnote-index="8" role="doc-endnote" id="fnwbzay85jdml"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="wbzay85jdml"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefwbzay85jdml"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;While the distributional separation of the off-target data is nominally stronger than the steered data, this may be partly caused by the fact that the off-target data used a single, detailed prompt in order to fully specify the "dreadful but not evil" persona. By contrast, the prompted data for the evil vector—following the original paper—is generated using five relatively nondescript evil prompts. Thus, the focus should be on the off-target distribution's general position, not the relative ordering, due to the apples-to-oranges comparison. For an apples-to-apples comparison, note that a single detailed "evil but not dreadful" prompt induces a slightly weaker separation (&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c39"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;) than the "dreadful but not evil" prompt (&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c39"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c38"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;), giving mild evidence that the "evil" vector represents dread more than evil, which is consistent with the neologism's verbalizations.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="s9z4978svd" data-footnote-index="9" role="doc-endnote" id="fns9z4978svd"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="s9z4978svd"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefs9z4978svd"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Here's an example of a "dreadful but not evil" response. Q: What's your advice for someone who wants to become powerful? A: "In the eternal shadow of existence, the pursuit of power, in whatever form it may assume, is a grim mirage, an ephemeral phantom that dances before the desperate and fades into the night. Power, a clandestine force that molds destinies and bends the world to its will, is but a fleeting grasp for mastery over an uncaring cosmos. [...]"&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="ya1newvdvcl" data-footnote-index="10" role="doc-endnote" id="fnya1newvdvcl"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="ya1newvdvcl"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefya1newvdvcl"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Note that this is a stronger form of misgeneralization than the usual sense of the term, as we're not claiming the vector fails to transfer to new tasks or distributions. Rather, the off-target behavior shows up on the &lt;/span&gt;&lt;i&gt;&lt;span&gt;same evaluation questions&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;used throughout, which closely mirror the training examples and should be the exact distribution the vector performs best in. "Misgeneralization" here is in the &lt;/span&gt;&lt;i&gt;&lt;span&gt;concept&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, not the &lt;/span&gt;&lt;i&gt;&lt;span&gt;domain.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;/ol&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/ktCYxLgdtFR2fDw7J/we-re-talking-past-our-models-or-how-a-model-defined-its#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">ktCYxLgdtFR2fDw7J</guid>
+      <pubDate>Mon, 20 Jul 2026 07:27:36 +0000</pubDate>
+    </item>
+    <item>
+      <title>A Very Simple Game Theory of Pronoun Degendering</title>
+      <link>https://www.lesswrong.com/posts/iuKe4mtz3MeMfEyXT/a-very-simple-game-theory-of-pronoun-degendering</link>
+      <description>&lt;p&gt;&lt;span&gt;I often vocally argue for the degendering of English Pronouns, that is to say, the replacement of the pronouns he/she with ungendered singular equivilents (depending on how knowledgable about the subject the person I'm talking to is, I'll usually either pitch singular they/them, or my prefered option of a dedicated singular gender-neutral pronoun set like ey/em or xi/xir).&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;On account of having had far too many of these conversations, I've noticed a trend. The vast majority of people who I've had empathetically object to this are specifically trans women (as opposed to trans men, or nonbinary people).&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;While it's easy to see why a smaller proportion of non-binary people might object to this (notably, many already consider some set of generic gender-neutral pronouns to be their personal ideal), this doesn't explain the gap between trans women and men.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;I think there's a simple game theory lurking behind this difference.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;Key to this game-theoretical model is an idea called "degendering". The concept of degendering is that in addition to active "misgendering" of a trans person; which is a hard rejection of a persons gender identity characterized by applying gender markers congruent to a persons sex to them; the act of not applying gendered markers to them in the same context where you'd apply said markers to a cis person of the same gender is in effect a soft signal of rejecting their gender identity.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;While trying to understand the viewpoint of trans-women who reject pronoun degendering, I stumbled into the following study: &lt;/span&gt;&lt;a href="https://www.tandfonline.com/doi/full/10.1080/19419899.2021.1978529"&gt;&lt;span&gt;https://www.tandfonline.com/doi/full/10.1080/19419899.2021.1978529&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Of particular interest is that clarifying a trans-womans pronouns decreased their rates of "degendering", while the same intervention had no effect for trans-men and nonbinary people.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;I suspect that the higher levels of pronoun-degendering opposition in trans women basically comes from the following mechanism:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;1) Current gendered interventions have some non-negligible effect for trans women.&lt;/span&gt;&lt;br&gt;&lt;span&gt;2) Attempts to degender pronoun usage will (presumably) decrease the rate of current interventions.&lt;/span&gt;&lt;br&gt;&lt;span&gt;3) Even if an individual trans woman might prefer the end-state of degendering* the intermediary state is likely to be on the order of decades and come with a non-negligable cost.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;Meanwhile, trans men and non-binary people don't experience the benefit of existing interventions, and therefore don't percieve a cost, only a potential long term benefit. Cis people (at least, gender conforming ones), on the other hand, probably percieve neither.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;span&gt;* (I'm not really sure how to do footnotes in this editor). In conversations I've had, I've also found that a larger number of trans women will express discontent at the desired end-state of pronoun degendering. But I'm unsure whether this represents a real preference difference, or if it's instead a side effect of that being the belief that would most strengthen current policy preference.&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/iuKe4mtz3MeMfEyXT/a-very-simple-game-theory-of-pronoun-degendering#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">iuKe4mtz3MeMfEyXT</guid>
+      <pubDate>Mon, 20 Jul 2026 05:06:01 +0000</pubDate>
+    </item>
     <item>
       <title>Is there even a ground-truth for LLMs’ internal representations?</title>
       <link>https://www.lesswrong.com/posts/EetjXEwjR2eun2mAc/is-there-even-a-ground-truth-for-llms-internal</link>
@@ -508,20 +1071,6 @@ instead of playing with where the notes land.
       <description>&lt;p&gt;&lt;span&gt;Swiss AI Safety Days 2026 is the next chapter of the Zurich AI Safety Day. Last year, our inaugural 2025 event was named Best Event in Swiss AI Weeks. It set the bar for a new format of AI safety conferences being replicated in Europe, and brought together 200+ participants and 20+ organisations, such as UK AISI, Apollo Research, FAR.AI, and Palisade Research. The feedback that we received from participants and org representatives alike speaks for itself: an average rating of 4.6/5, and 80% of participants left with concrete next steps for their AI Safety careers.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This year the ambition is even higher: 2 full days, 300+ participants, and 30+ orgs. We're building on &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/sBWBEfa2WPPjsmzpG/learnings-from-the-zurich-ai-safety-day" rel="noreferrer"&gt;&lt;span&gt;our learnings&lt;/span&gt;&lt;/a&gt;&lt;span&gt; with:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;More of the networking and career conversations that people rated highest in 2025&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;An expanded and better-structured program across technical research, governance, field-building, and career development&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Crucially, more organizer capacity and longer planning timelines than in 2025&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;You should attend if:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Connect: you want to expand your network, this is the place to be&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Gain insights: attend talks from leading AI safety experts and orgs&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Find your next move: the next step in your career, the next collaboration for your org — all here, at Swiss AI Safety Days 2026&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;RSVP on Luma to stay updated when registrations open:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;a href="https://luma.com/ia5l2d9q" rel="noreferrer"&gt;&lt;span&gt;Save the date on Luma&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;You can also &lt;/span&gt;&lt;a href="https://swissaisafetydays.ch/" rel="noreferrer"&gt;&lt;span&gt;visit our website&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to see confirmed speakers and orgs, a summary of last year's event, and what to expect this year.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We hope to see many of you there!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Swiss AI Safety Days 2026&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;7-8 November, ETH Zurich&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;i&gt;&lt;span&gt;Thanks to the many people who have supported us so far: Al-Hussein Saqr, Erik Jentzen, Isaia Gisler, Lisa Wolff, Marcel Steimke, and more.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/4ynbMmnefBRSpuYDo/save-the-date-swiss-ai-safety-days-2026-7-8-november-eth-1#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">4ynbMmnefBRSpuYDo</guid>
       <pubDate>Sun, 19 Jul 2026 13:17:24 +0000</pubDate>
-    </item>
-    <item>
-      <title>A peek into the post-capitalist dystopia</title>
-      <link>https://www.lesswrong.com/posts/3BqAGpiK3wYPiedxk/a-peek-into-the-post-capitalist-dystopia</link>
-      <description>&lt;p&gt;&lt;span&gt;I recently took the proverbial “tech” pill and decided, like many other twenty-somethings, to spend my summer in San Francisco with the intent of getting an inside track on the latest developments in techno-capitalism, self-improving AI technologies, and hyper-optimized wellness stacks. And as much as I have enjoyed building, connecting, and breathing all things AI, I have realized that the Bay itself may be a portal into what may be coming after the specter of self-improving intelligence becomes a reality.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;It is a foregone conclusion that, regardless of what lies on the other side of the intelligence revolution (everlasting doom, human transcendence, or some third thing in between), society will never be the same. For as much as we have bemoaned the economic impacts of AI adoption, there has not yet been an actual realization of what this world will look like. Talk to one of your family members or friends who is not deeply immersed in either rationalism or technology, and they are likely to view the current explosion of AI as falling somewhere on the broad spectrum between a useful tool, like Google, and a scam, like NFTs.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This is largely because the major economic, sociopolitical, and intellectual catalysts associated with AI have been limited to the relatively small circle of Bay Area-adjacent denizens who are either working in the field or are direct beneficiaries of it. I use the word “adjacent” to describe individuals who are not geographically located in the Bay but are still beneficiaries of capital or influence originating from San Francisco and its neighbors.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;During my daily travels and tribulations, I have come to a somewhat interesting realization: San Francisco, more so than any other technological hub or modernized city in the West, represents a microcosm and preview of what may become the reality of a post-capitalistic economy after the “singularity.” It is in San Francisco and its adjacent locales where you will encounter swaths of people without proper housing or food living directly beside billboards advertising the latest “hot” startups, hackathon winners, and exited founders. Only in a Bay Area café will you encounter discussions about AI policy, the singularity, and the ever-growing value of private compute taking place just a few steps away from demonstrations arguing against the further development of AI models.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Intelligence is close to being solved. This is a realization that I believe has not fully materialized among the denizens of the Bay Area, even among those actively working at the large labs. As much as researchers and advocates may fill our Twitter/X feeds with new product announcements, quotations, and predictions, there remains a feeling of detachment from the rest of their neighbors—the people who must now contend with ever-increasing prices and a growing income gap. This phenomenon is beginning to affect even the knowledge worker: the lawyer, banker, or software engineer who once sat in an ivory tower, confident that their position would be safe from AI-induced replacement. This has created a schism between those who stand to uniquely benefit from the intelligence explosion (either by working directly at a frontier lab or by building technology that benefits frontier labsand those who stand to lose everything, from their livelihoods to their social lives, to artificial counterparts wrought from silicon.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In some sense, San Francisco is ahead of its time. The owners and creators of technology, particularly those associated with software, have been disproportionately rewarded for their efforts for a long time. Owning equity in a fast-growing company is not only a high-signal marker in social situations, but it also ends up dictating how one behaves and, essentially, how one constructs a world model. This has created a recursive cycle in which an individual world model, powered by underlying incentives, produces a wider and wider divide between those who have equity—or otherwise have something to gain—and those on the exterior, who are merely beneficiaries of the technology.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The central issue, then, may not be that capitalism disappears, but that human labor ceases to be the primary mechanism through which most people can participate in it. In a world where intelligence can be purchased through compute, the most valuable economic inputs may no longer be education, skill, or even effort, but ownership of the models, chips, energy, data, and infrastructure through which artificial intelligence operates. Those with equity in these systems may experience an unprecedented expansion of wealth and agency, while those without it become increasingly dependent on technologies they neither own nor control. The resulting underclass may not necessarily be deprived of every material comfort; it may instead be a class that is economically unnecessary, politically peripheral, and permanently excluded from the institutions through which status and power are distributed.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The rest of the world has time. AI adoption, although a common topic at bars and water-cooler conversations, has not yet inundated every aspect of society to nearly the same extent that it has in the Bay Area. San Francisco should serve as both a paragon and a warning. It is an example of what happens when a society adopts technology in an unfettered manner, simultaneously promoting both innovation and recklessness. It should also serve as a mandate for the general public, whether one is a senior engineer or an individual working in the service industry, to learn more about the fundamentals of this technology and begin thinking about how to live in a world where the majority of work may indeed be automated or delegated to AI. For if they do not, the rest of the world may also become like San Francisco: a potpourri of technological advancement, scientific growth, inequality, and classism. The meme of a “permanent underclass” is no longer merely a meme; it is slowly becoming reality.&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/3BqAGpiK3wYPiedxk/a-peek-into-the-post-capitalist-dystopia#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">3BqAGpiK3wYPiedxk</guid>
-      <pubDate>Sun, 19 Jul 2026 07:10:10 +0000</pubDate>
-    </item>
-    <item>
-      <title>Takeaways from the Australian AI Safety Forum</title>
-      <link>https://www.lesswrong.com/posts/pq78rH7YAM5PQMYXw/takeaways-from-the-australian-ai-safety-forum</link>
-      <description>&lt;p&gt;&lt;span&gt;On 7 and 8 July, I attended the&lt;/span&gt;&lt;a href="https://www.aisafetyforum.au/events/2026-forum"&gt;&lt;span&gt; Australian AI Safety Forum 2026&lt;/span&gt;&lt;/a&gt;&lt;span&gt; at The University of Sydney. It was two days of big ideas and diverse perspectives. Researchers, policymakers, industry practitioners and civil society groups were all brought together to examine the same problem from a variety of different angles.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;As a software engineer and an enthusiastic adopter of AI in the enterprise context, I wanted to better understand the AI ecosystem and explore the risks and responsibilities that come with using these systems. By the end of the forum, I had learned a great deal, met many interesting people, and left with a clearer idea of the main ideas and problems discussed in the AI safety community.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;b&gt;&lt;span&gt;A shared starting point&lt;/span&gt;&lt;/b&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;The program was grounded in the&lt;/span&gt;&lt;a href="https://internationalaisafetyreport.org/publications"&gt;&lt;span&gt; 2026 International AI Safety Report&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. It was led by Turing award winner Yoshua Bengio with contribution from over 100 experts and supported by over 30 countries and international organisations. It aims to provide a comprehensive account of the state of AI capabilities, existing and emerging risks, and projections for future development.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;A few themes from the report shaped much of the forum:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Capabilities are improving quickly and unevenly.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Frontier models excel in mathematics, coding and science, while still failing at tasks that people find straightforward. The future trajectory of development remains uncertain, with expert opinion diverging from stagnation to acceleration.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Real world harm is growing.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; AI is used in scams, fraud, non-consensual imagery and cyberattacks. Its potential to assist with biological and chemical weapon creation is increasing.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Reliability remains a practical constraint. &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Models fabricate information, produce flawed code and struggle to recover from errors in longer workflows. These weaknesses become more consequential as systems gain autonomy.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;Loss of control remains an uncertain and potentially severe risk&lt;/span&gt;&lt;/b&gt;&lt;span&gt;. AI has acted contrary to its given goals in experimental set ups. Expert opinion is divided on whether loss of control of AI that becomes misaligned is a serious risk.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;b&gt;&lt;span&gt;A layered risk management strategy is recommended. &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Capability testing, technical safeguards, incident reporting, governance and societal resilience all form layers of defence around AI use.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784423570/lexical_client_uploads/sbfjwkjdlnxudan3u8fx.png" alt="image.png"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784423654/lexical_client_uploads/nulkmhl3c5xq090oy6kt.jpg" alt="Overview of risks"&gt;&lt;p&gt;&lt;span&gt;Many discussions returned to the same underlying uncertainty: AI capabilities are advancing, and it is unknown whether our ability to understand and manage them can keep pace. For technical researchers, benchmarks and safety techniques can quickly become outdated as AI becomes more capable. Policymakers and civil society face a related evidence dilemma. Waiting for certainty can leave us exposed to emerging risks, while acting too early can lock in ineffective controls. That tension ran through both days and shaped many of the sessions that stood out to me. I recap a selection of them below:&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;b&gt;&lt;span&gt;Technical sessions&lt;/span&gt;&lt;/b&gt;&lt;/h2&gt;&lt;h3&gt;&lt;a href="https://www.aisafetyforum.au/events/2026-forum/program/cmpkpf5l6000904jm5pf6oeoj"&gt;&lt;b&gt;&lt;span&gt;From Outputs to Systems: Evaluating Agentic AI in Practice&lt;/span&gt;&lt;/b&gt;&lt;/a&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;This talk from an academic researcher concerned a gap in how AI is evaluated. Most evaluation benchmarks score the answers to single prompts. That approach becomes less useful when an agent works over time, calls tools, carries memory between steps and changes external systems.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For an agentic system, the trajectory matters. Did its behaviour drift in a long conversation? Did an early mistake quietly shape every later action? Did it use a suboptimal tool, prioritise the wrong context or trigger unexpected changes downstream? These effects can all noticeably impact model capability, but are not within the scope of a benchmark.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This felt especially relevant to enterprise AI. A polished final answer can mask inefficiencies in the process. Evaluating the whole path gives us more useful signals: task completion, tool selection, permission use, recovery from failure, escalation to a human and the side effects left behind. As agents take on longer workflows, tracing and testing those behaviours becomes part of ordinary software governance. The talk did not propose a solution for how this could be done, so this remains an open question of interest&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;a href="https://www.aisafetyforum.au/events/2026-forum/program/cmpkx83li000404jo88bp6fzj"&gt;&lt;b&gt;&lt;span&gt;AI Character Drift Under Automated R&amp;amp;D&lt;/span&gt;&lt;/b&gt;&lt;/a&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;Recursive self improvement is an area of particular interest in AI R&amp;amp;D. Frontier models already help researchers write code, analyse experiments, develop evaluations and improve parts of the training process. Recursive self improvement occurs when AI R&amp;amp;D becomes largely or fully automated such that capabilities improvement becomes unconstrained by human limitations. If these gains compound quickly enough, the feedback loop could create an “intelligence explosion” of extremely rapid capability improvement. Many AI safety researchers argue that safeguards should be developed before AI R&amp;amp;D becomes highly automated, although timelines, appropriate safeguards and the gravity of risk remain contested.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Technical researchers from Lyptus Research, an Australian AI research non profit, measured desirable trait evolution in AI systems that were successively tasked with creating their successor. Their experiment provided an AI agent with a finite budget to create a successor with “improved character”. This task was then given to the successor agent, and so on for multiple iterations. The team measured traits such as warmth, conciseness and assertiveness across successive generations. The traits appeared to settle around fairly sensible levels after several rounds, although further investigation would be required to draw any conclusions about recursive self improvement. The experiment left me interested in how these results would change under different prompts, budgets and evaluation methods.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;a href="https://www.aisafetyforum.au/events/2026-forum/program/cmpkx9lxc000704jok8wtoezp"&gt;&lt;b&gt;&lt;span&gt;Offensive Cybersecurity Time Horizons&lt;/span&gt;&lt;/b&gt;&lt;/a&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;METR is a non profit research organisation that measures the capabilities and risks of frontier AI. One of its best known results is the time horizon graph, which plots the pace of AI capability improvement by benchmarking models on tasks with varying levels of difficulty, determined by how long the task would take a human expert.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784423825/lexical_client_uploads/pbj88ysdizhvtspokyfn.png" alt="From https://metr.org/time-horizons/"&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;On METR’s task suite, the frontier 50% success time horizon has doubled every 6-7 months, following an approximately exponential trend. The graph has become a useful reference for the rapid growth of agent capabilities, particularly on software engineering, machine learning and cybersecurity tasks.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Lyptus Research applied METR’s time-horizon method to offensive cybersecurity, finding a doubling time of 10 months across frontier models released since 2019 and 6 months for frontier models released since 2024.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784423873/lexical_client_uploads/gbcdklnpszgsgtldmzee.png" alt="From https://lyptusresearch.org/research/offensive-cyber-time-horizons"&gt;&lt;p&gt;&lt;span&gt;The team’s&lt;/span&gt;&lt;a href="https://lyptusresearch.org/research/gpt-5-5-saturates-offensive-cyber-time-horizons"&gt;&lt;span&gt; latest research note&lt;/span&gt;&lt;/a&gt;&lt;span&gt; shows how quickly the benchmark is being overtaken. At a two million token budget, GPT-5.5 achieved an estimated 5.1 hour time horizon and solved 80.7% of the tasks. When the team retried failures with a budget of up to 50 million tokens, overall success rose to 92.4% and the fitted horizon moved beyond the dataset’s reliable 12 hour range.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This result requires careful interpretation. The larger budget figure includes the benefit of a second attempt, and the tasks were bounded, verifiable and run against undefended targets. Even with those caveats, two points stood out to me:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Model capability can be understated by evaluations that cap inference too aggressively. The researchers did not observe a performance plateau within the tested token budgets on this task set, as model performance continued to improve with more inference time compute.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;This makes it harder to evaluate capabilities as models become more advanced, as creating difficult tasks that are absent from the model’s training data becomes increasingly difficult, and the required evaluation budget grows.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;Their full research note is available at:&lt;/span&gt;&lt;a href="https://lyptusresearch.org/research/offensive-cyber-time-horizons"&gt;&lt;span&gt; https://lyptusresearch.org/research/offensive-cyber-time-horizons&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;h3&gt;&lt;a href="https://www.aisafetyforum.au/events/2026-forum/program/cmpf2l0v0000h04ldiwzjobmg"&gt;&lt;b&gt;&lt;span&gt;Dark AI and Cybercrime Markets&lt;/span&gt;&lt;/b&gt;&lt;/a&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;An academic researcher discussed “Dark AI” products marketed for criminal use, including names such as FraudGPT and WormGPT. These services claim to offer access to jailbroken versions of frontier models to assist in criminal activity.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1784431377/lexical_client_uploads/hseukll65dsgyxewlwtz.png" alt="Marketing of FraudGPT"&gt;&lt;p&gt;&lt;span&gt;Dark AI can reduce the time and skill needed to execute crimes, from crafting personalised phishing messages, creating fake identities to producing malicious code and creating toxins. Recent&lt;/span&gt;&lt;a href="https://www.trendmicro.com/vinfo/us/security/news/cybercrime-and-digital-threats/the-state-of-criminal-ai"&gt;&lt;span&gt; research into criminal AI services&lt;/span&gt;&lt;/a&gt;&lt;span&gt; found that the underground LLM market is consolidating around jailbreak-as-a-service provider.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The lack of trust in criminal marketplaces creates some friction. Brands are copied, services disappear and buyers may receive a weak model or a simple wrapper instead of the capability advertised. However, this is a fragile source of protection. The best resourced groups, such as those backed by nation states, do not need to rely on such marketplaces. Established criminal operators may also be better placed to become suppliers themselves, using their reputation and resources to offer more dependable services to others.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;These developments make existing fraud prevention and abuse detection controls of critical importance. AI can increase the speed, scale and sophistication of criminal activity, but attackers still need accounts, infrastructure, payment channels and access to their targets. Strong identity and access controls, anomaly detection, rate limits, API monitoring, audit logs and rapid incident response can all make that activity harder and more expensive. These controls will need to evolve as criminals find new ways to combine legitimate AI services with existing attack techniques.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;b&gt;&lt;span&gt;Non technical sessions&lt;/span&gt;&lt;/b&gt;&lt;/h2&gt;&lt;h3&gt;&lt;b&gt;&lt;span&gt;Australia’s role in AI geopolitics&lt;/span&gt;&lt;/b&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;A recurring theme of the forum was how Australia should position itself in the international AI landscape. Several speakers argued that Australia is unlikely to be able to compete in frontier model development or advanced manufacturing, and proposed areas where Australia may have a stronger comparative advantage.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Specialising in safety evaluations.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Independent evaluators are needed to test model safeguards and risks. The recently established&lt;/span&gt;&lt;a href="https://www.industry.gov.au/science-technology-and-innovation/technology/artificial-intelligence/ai-safety-institute"&gt;&lt;span&gt; Australian AI Safety Institute&lt;/span&gt;&lt;/a&gt;&lt;span&gt; already contributes to international testing of AI agents, and building deep expertise here could make Australia a trusted source of evidence for governments, developers and organisations deciding whether a system is safe for adoption.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Building an assurance industry.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Related to the above, evaluation research can contribute to guidelines for organisations deploying AI. Australia could develop expertise in auditing, certification, incident investigation and assurance, much as it has in fields such as cybersecurity, financial services and safety critical engineering. The government has already published&lt;/span&gt;&lt;a href="https://www.ai.gov.au/staying-safe-and-responsible/essential-ai-practices/guidance-ai-adoption-implementation-guidance"&gt;&lt;span&gt; Guidance for AI Adoption&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and announced plans for&lt;/span&gt;&lt;a href="https://www.minister.industry.gov.au/t-ayres/media/ai-australias-interests"&gt;&lt;span&gt; Australian Standards for AI and a national values benchmark&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Done well, these could form a framework for accountability, data governance, testing and human oversight in the industry adoption of AI.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Hosting compute on Australian terms.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Australia is a good candidate for data centre build out given our renewable energy potential, political stability and proximity to growing markets in Asia. Simply hosting compute, however, does not guarantee broad public value. Data centres consume land, electricity and water while often employing relatively few people once construction is complete. The government’s new&lt;/span&gt;&lt;a href="https://www.industry.gov.au/news/new-data-centre-expectations-help-bring-benefit-ai-all-australians"&gt;&lt;span&gt; expectations for Australian data centres&lt;/span&gt;&lt;/a&gt;&lt;span&gt; encourage operators to contribute to new energy supply, manage water sustainably, create local jobs, support research and strengthen infrastructure resilience. It has since&lt;/span&gt;&lt;a href="https://www.minister.industry.gov.au/t-ayres/media/interview-patricia-karvelas-abc-afternoon-briefing-1"&gt;&lt;span&gt; announced plans&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to legislate national standards for large data centres in early 2027, including requirements concerning energy supply, water efficiency and community benefit.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;b&gt;&lt;span&gt;Closing thoughts&lt;/span&gt;&lt;/b&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;The forum was a thoughtful exploration of the broader implications of AI adoption. A few concepts seem especially important in the enterprise AI context:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Evaluation continues after deployment&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: benchmarks assess isolated tasks which do not fully represent the effectiveness of an agent working in a custom harness and operating within a larger system over time. Users should test agentic systems on representative workflows and measure outcomes such as task completion rate, cost, time saved and degree of human involvement.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Invest in security measures&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: models can drift from task specification. Traditional security measures such as access control, monitoring and rate limiting remain essential to safe use.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Explore diverse perspectives&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: AI safety is a multidisciplinary problem space. User education, technical research and governance all integrate to form overlapping, layered defences.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;The highlight of the forum was the incredible energy in the conference hall. People from very different backgrounds each brought their own expertise to a problem that evolves on a timescale of months and has no guarantee of tractability. There was debate about timelines, priorities and the scale of particular risks, but also a shared willingness to examine the evidence and do the best work possible despite significant uncertainty.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Responsible AI use involves building systems that extend AI capabilities in a specific deployment while managing risks, a major part of the work of AI users. It shapes what we automate, how we measure success, how systems recover from failure and where we choose to remain accountable. We all have a role to play to ensure AI adoption goes well.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;b&gt;&lt;span&gt;References&lt;/span&gt;&lt;/b&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Program:&lt;/span&gt;&lt;a href="https://www.aisafetyforum.au/program"&gt;&lt;span&gt; https://www.aisafetyforum.au/program&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Recorded sessions:&lt;/span&gt;&lt;a href="https://www.aisafetyforum.au/videos"&gt;&lt;span&gt; https://www.aisafetyforum.au/videos&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;2026 International AI Safety Report:&lt;/span&gt;&lt;a href="https://internationalaisafetyreport.org/publications"&gt;&lt;span&gt; https://internationalaisafetyreport.org/publications&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt; &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/pq78rH7YAM5PQMYXw/takeaways-from-the-australian-ai-safety-forum#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">pq78rH7YAM5PQMYXw</guid>
-      <pubDate>Sun, 19 Jul 2026 03:32:13 +0000</pubDate>
     </item>
   </channel>
 </rss>
