@@ -5,7 +5,1280 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 24 Jul 2026 22:09:56 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 25 Jul 2026 00:09:15 +0000</lastBuildDate>
+    <item>
+      <title>Benchmarking Qwen 3.6 35B MoE (3B active) on an RTX 3090</title>
+      <link>https://www.gilesthomas.com/2026/07/benchmarking-qwen-3-6-35b-moe-rtx-3090</link>
+      <description>&lt;p&gt;I mentioned I'd got a second RTX 3090 on a group chat, and a friend said:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;I know this is not really your thing... but let me know how quickly it runs
+  Qwen 3.6 35bn MoE. With only 24gb of VRAM you’ll need to use a 4-bit quantized
+  version and you won’t get a massive context window. But it should still be
+  pretty cool.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;He's right that it's not really been my thing -- I've been focusing on my
+own LLMs recently.  I decided to dig in a little, and in particular to play with
+&lt;a href="https://llama-cpp.com/"&gt;Llama.cpp&lt;/a&gt;, which I haven't used for a while.  And then things got
+a tad out of control, and I wound up doing some relatively detailed benchmarking.&lt;/p&gt;
+
+&lt;p&gt;The headline results: I downloaded Unsloth's &lt;code&gt;UD-IQ4_NL_XL&lt;/code&gt; quantisation of the model
+from &lt;a href="https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF"&gt;Hugging Face&lt;/a&gt;.  With that,
+using the default Arch build of Llama.cpp, which uses Vulkan under the hood:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Using the GPU only, I was able to get the model to generate at just over 120 tokens per second,
+and it was able to process the prompt at just less than 2,800 tok/s.  However,
+having the whole model on the GPU didn't leave that much space for the context
+window -- it was constrained to about 50,000 tokens, compared to the model's
+native context length of 262,144.&lt;/li&gt;
+&lt;li&gt;Offloading the FFNs for the first 12 of the model's 40 layers to the CPU managed to reclaim
+enough VRAM to be able to get the full context length; however, with that setup,
+things were -- unsurprisingly -- slower.  I got just over 65 tok/s for generation,
+and 600 tok/s for the prompt.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Compiling Llama.cpp myself, in order to get the full CUDA version, helped a lot:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;With everything on the GPU, I got 140 tok/s for generation and over 3,300 tok/s
+for the prompt.  That was with a context window of 89,600.  So everything was
+better :-)&lt;/li&gt;
+&lt;li&gt;It was also easier to get to the full context length; that needed just 10 layers' FFNs to be
+offloaded, and at that point I was getting 89 tok/s for generation, and about 1,100
+tok/s for the prompt.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;That was a pretty impressive improvement.&lt;/p&gt;
+
+&lt;p&gt;But it also showed that the lack of VRAM on the 3090 really does hurt.  The friend
+who asked me about this is running an Intel Arc B70 Pro, with 32 GiB VRAM.  He can
+(of course) fit the whole 4-bit quantised model on there without any context window reductions, and
+he says this about throughput:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;It starts off at 75-80. but drops into the high 50s as the context window expands&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;That's worse than the CUDA-with-offload results above, though I did limit my testing
+to a 2,457-token prompt, with 6,144 tokens generated.  The RTX 5090 has 32 GiB VRAM
+&lt;em&gt;and&lt;/em&gt; fast Nvidia processing -- I imagine things would be a lot better there.  Downside:
+it costs more than three times what you pay for a 3090.&lt;/p&gt;
+
+&lt;p&gt;Anyway, in the rest of this post, I'll give more details of the benchmark, including charts showing the performance
+at different numbers of offloaded layers, and comparisons of the Vulkan vs CUDA versions
+of Llama.cpp for this model.&lt;/p&gt;
+
+&lt;p&gt;One caveat: Qwen 3.6 is a multimodal model.  That means that it has an extra component
+to map graphical inputs to tokens that can be consumed by the LLM.  I didn't realise this
+as I ran these tests, but you can actually tell it not to use that component if you're only working with
+text inputs -- for example, &lt;code&gt;--no-mmproj&lt;/code&gt; will do the trick with Llama.cpp.  If you're working with text-only stuff, you
+might want to play with that to see if you can get better results -- it will free up
+some VRAM and might allow you to get longer context lengths, or better performance.&lt;/p&gt;
+
+&lt;p&gt;But anyway, as with many of my posts, this is a tidied up version of
+my lab notes, so you can share my learning journey with me -- but if that sounds pointless,
+and you've landed here because you want to run this model on your own RTX 3090, you
+can click &lt;a href="#the-results"&gt;this link&lt;/a&gt; to jump right to the results.&lt;/p&gt;
+&lt;h2 id="the-model"&gt;The model&lt;/h2&gt;
+
+&lt;p&gt;&lt;a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B"&gt;Qwen3.6-35B-A3B&lt;/a&gt; is a Mixture of Experts
+model with 35B total parameters, 3B active.  The tensor type is BF16, so it's two bytes
+per parameter.  That's ~70 GiB of space required for the model, just for the weights, with
+no space for attention matrices and the like.  We're
+going to need a quantised version.&lt;/p&gt;
+
+&lt;p&gt;I'll dig deep into MoE models at some point, but
+essentially they work by having multiple different FFN blocks for each Transformers layer.
+After attention, the context vectors are routed to a subset of those blocks,
+depending on their content &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;.  The number of active parameters is how many are actually used
+when running a single token through.&lt;/p&gt;
+
+&lt;p&gt;Now, that number, 3B, looked really crazy to me as soon as I saw it.  Qwen
+3.6, as you can see from the model card linked above, has a vocabulary size of 248,320, and an
+embedding dimensionality of 2,048.  It doesn't use weight-tying, so that means that
+the embedding layer and the output head come out at a hefty 508,559,360 parameters each.&lt;/p&gt;
+
+&lt;p&gt;Both the embedding layer and the output head are required for every token, of course, so that means that of
+those 3B active parameters, more than 1B are used just getting tokens into and out of the
+model!  Only 2B active parameters are left to handle all of the attention and the active FFNs.  That is
+an imbalance of the same level as &lt;a href="/2026/07/llm-parameter-counts"&gt;you get with GPT-2 small&lt;/a&gt;,
+and was surprising to see.&lt;/p&gt;
+
+&lt;p&gt;Well, let's think about VRAM requirements.  Naively you might think that you only need to keep the active parameters in VRAM,
+swapping FFN experts in and out as needed.  Unfortunately that doesn't work.&lt;/p&gt;
+
+&lt;p&gt;Let's say
+you feed in "The fat cat sat on the", hoping for a completion.  The whole sequence is
+processed in parallel (that being the point of using a GPT-style LLM rather than, say,
+an &lt;a href="/2025/10/revisiting-karpathy-unreasonable-effectiveness-rnns"&gt;RNN&lt;/a&gt;).  You'll need
+whichever experts are required for all six tokens in the prompt for the first layer, and likewise for all of the
+context vectors for the prompt in each of the later layers.&lt;/p&gt;
+
+&lt;p&gt;So, realistically, for a non-trivial prompt, you can't "swap out" the inactive parameters;
+an MoE buys you lower usage in terms of
+processing, but not in terms of memory. &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;  That said, as we'll see later, you can at
+least pull stuff out of VRAM into normal RAM, and get some advantages that way.&lt;/p&gt;
+
+&lt;p&gt;As my friend said, a 4-bit quant
+would be needed -- perhaps with that, the whole model, both active and inactive parameters,
+would fit into 35 / 2 = 17.5 GiB of VRAM, leaving 6.5 GiB for activations, attention matrices,
+and so on?  As it turned out, it needed a bit more, and it's worth taking a look into why.&lt;/p&gt;
+
+&lt;h2 id="quantisation"&gt;Quantisation&lt;/h2&gt;
+
+&lt;p&gt;I must admit that I'd never really looked into quantisation prior to playing with this,
+and had naively assumed that you basically just took (say) a BF16 model, scaled the
+parameters down so that they were (say) FP4, tweaked the computations a bit and then ran the result.&lt;/p&gt;
+
+&lt;p&gt;That was completely wrong!  I'll have to dig into it further in the future, but my new
+working mental model is that it's more like lossy compression.  The weights are stored
+in a "compressed" format -- one that is designed so that they can be quickly and cheaply
+"decompressed" by code running on the target platform.&lt;/p&gt;
+
+&lt;p&gt;So, speaking very loosely, when running an unquantised model, we might have CUDA code doing
+something like this:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Load BF16 weights from VRAM&lt;/li&gt;
+&lt;li&gt;Load BF16 data from another bit of VRAM&lt;/li&gt;
+&lt;li&gt;Do a matrix multiplication of one by the other.&lt;/li&gt;
+&lt;li&gt;Store the results into VRAM as BF16&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;...a quantised model might operate more like this:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Load quantised weights from VRAM&lt;/li&gt;
+&lt;li&gt;"Decompress" them to BF16&lt;/li&gt;
+&lt;li&gt;Load BF16 data from another bit of VRAM&lt;/li&gt;
+&lt;li&gt;Do a matrix multiplication of one by the other.&lt;/li&gt;
+&lt;li&gt;Store the results into VRAM as BF16&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Understanding that minimal amount clarified three things for me:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Why people talk about things like "4.1-bit quants".  We're talking about the average
+number of bits per weight in the "compressed" model.&lt;/li&gt;
+&lt;li&gt;Why there are different quants of about the same size for a given model; for example,
+when we get on to looking at quantised versions of this model later, you'll see 4-bit ones called &lt;code&gt;UD-IQ4_NL&lt;/code&gt;, &lt;code&gt;UD-Q4_K_M&lt;/code&gt;,
+&lt;code&gt;UD-IQ4_NL_XL&lt;/code&gt;, and &lt;code&gt;UD-Q4_K_XL&lt;/code&gt;, with different sizes in terms of GiB.  Each of
+those is using a different set of trade-offs in the quantisation process, so will
+perform differently on different tasks.  I gather that picking the right one for
+any given task is a bit of an art form.  Hugging Face have a summary of the different
+types they support &lt;a href="https://huggingface.co/docs/hub/main/en/gguf#quantization-types"&gt;here&lt;/a&gt;,
+which has &lt;em&gt;some&lt;/em&gt; explanation of the differences, but decoding what they're saying there is
+beyond what I've learnt at this point.&lt;/li&gt;
+&lt;li&gt;How GPUs can run quants with bits-per-parameter levels that they don't support
+for calculations.  For example, the RTX 3090 supports 32-bit and two forms of
+16-bit (float16 and BF16) plus integer operations of various bittednesses &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;.  4-bit formats like FP4 are only supported in
+more recent cards like the RTX 5090.  But, of course, we're not doing any
+4-bit computations -- it's all in some format that the GPU can handle natively.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;So, with that (minimal) level of understanding, it was time to dig in!&lt;/p&gt;
+
+&lt;h2 id="getting-llamacpp-up-and-running"&gt;Getting Llama.cpp up and running&lt;/h2&gt;
+
+&lt;p&gt;There are a bunch of different ways that people run LLMs locally, so I needed to work
+out which one would be likely to give the best results.  One thing I noticed when
+googling around for things like "Qwen3.6-35B-A3B RTX 3090" was that pretty much everyone
+appeared to be using &lt;a href="https://llama-cpp.com/"&gt;Llama.cpp&lt;/a&gt;.  That wasn't something I'd used for a couple
+of years, and I've repaved my machine multiple times since, so it was time to install it.&lt;/p&gt;
+
+&lt;p&gt;I run Arch Linux, and there's &lt;a href="https://wiki.archlinux.org/title/Llama.cpp"&gt;an OS package for it&lt;/a&gt;,
+so I installed it using the instructions there -- specifically, the ones to run inference using CUDA:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;sudo&lt;span class="w"&gt; &lt;/span&gt;pacman&lt;span class="w"&gt; &lt;/span&gt;-S&lt;span class="w"&gt; &lt;/span&gt;llama-cpp&lt;span class="w"&gt; &lt;/span&gt;ggml&lt;span class="w"&gt; &lt;/span&gt;cuda
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Now it was time to try a model.  I decided to start off with a small one that would fit onto
+my GPU without any quantisation, just to work out any bugs.  I needed the model
+to be in GGUF format (that being what Llama.cpp uses).  GGUF stores tensors and metadata --
+the actual architectures of the LLMs Llama.cpp supports are baked in to the tool's
+source -- but, of course, it supports Qwen3, and so a nice simple non-MoE small
+model that looked like it would fit onto my GPU was &lt;a href="https://huggingface.co/Qwen/Qwen3-4B-GGUF"&gt;&lt;code&gt;Qwen/Qwen3-4B-GGUF&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;The help page for that model gave this example command to run it:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;./llama-cli -hf Qwen/Qwen3-4B-GGUF:Q8_0 --jinja --color -ngl 99 -fa -sm row \&lt;/span&gt;
+&lt;span class="go"&gt;    --temp 0.6 --top-k 20 --top-p 0.95 --min-p 0 --presence-penalty 1.5 \&lt;/span&gt;
+&lt;span class="go"&gt;    -c 40960 -n 32768 --no-context-shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That was out-of-date and gave various errors (which was fair enough, the model being
+from late December 2025 -- all of seven months old!).  The fixes were simple enough:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;llama-cli -hf Qwen/Qwen3-4B-GGUF:Q8_0 --jinja --color on -ngl 99 -fa on -sm row \&lt;/span&gt;
+&lt;span class="go"&gt;    --temp 0.6 --top-k 20 --top-p 0.95 --min-p 0 --presence-penalty 1.5 \&lt;/span&gt;
+&lt;span class="go"&gt;    -c 40960 -n 32768 --no-context-shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That is, &lt;code&gt;--color&lt;/code&gt; and &lt;code&gt;-fa&lt;/code&gt; now needed an &lt;code&gt;on&lt;/code&gt; argument.&lt;/p&gt;
+
+&lt;p&gt;I kicked it off, and got an error:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Downloading Qwen3-4B-Q8_0.gguf ───────────────────────────────────── 100%&lt;/span&gt;
+
+
+&lt;span class="go"&gt;Loading model... \1.54.635.084 E llama_model_load: error loading model: device Vulkan0 does not support split buffers&lt;/span&gt;
+&lt;span class="go"&gt;1.54.635.088 E llama_model_load_from_file_impl: failed to load model&lt;/span&gt;
+&lt;span class="go"&gt;1.54.635.110 E common_fit_params: encountered an error while trying to fit params to free device memory: failed to load model&lt;/span&gt;
+&lt;span class="go"&gt;|1.54.741.517 E llama_model_load: error loading model: device Vulkan0 does not support split buffers&lt;/span&gt;
+&lt;span class="go"&gt;1.54.741.519 E llama_model_load_from_file_impl: failed to load model&lt;/span&gt;
+&lt;span class="go"&gt;1.54.741.521 E cmn  common_init_: failed to load model &amp;#39;/home/giles/.cache/huggingface/hub/models--Qwen--Qwen3-4B-GGUF/snapshots/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q8_0.gguf&amp;#39;&lt;/span&gt;
+&lt;span class="go"&gt;1.54.741.523 E srv    load_model: failed to load model, &amp;#39;/home/giles/.cache/huggingface/hub/models--Qwen--Qwen3-4B-GGUF/snapshots/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q8_0.gguf&amp;#39;&lt;/span&gt;
+&lt;span class="go"&gt;llama_server exited with code 1&lt;/span&gt;
+&lt;span class="go"&gt;1.54.742.424 E srv  llama_server: exiting due to model loading error&lt;/span&gt;
+&lt;span class="go"&gt;Error: the server exited before becoming ready&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That seemed strange.  The instructions I'd followed on the Arch Wiki page were the
+ones to install Llama.cpp for CUDA, but it was referring to &lt;code&gt;device Vulkan0&lt;/code&gt;.  Vulkan
+is an open GPU-programming language -- it fits into the stack in essentially the same
+place as CUDA.  As always seems to happen with these things, while the open platform
+is, well, open, and runs on more platforms than the closed one, it is somewhat slower
+and buggier.&lt;/p&gt;
+
+&lt;p&gt;So, why did I have a Vulkan version?  Looking
+at the &lt;a href="https://wiki.archlinux.org/title/Talk:Llama.cpp"&gt;talk page for the package&lt;/a&gt;
+was enlightening: user &lt;code&gt;Gotoro&lt;/code&gt; wrote:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Hello. The article only provides the &lt;code&gt;llama.cpp-vulkan&lt;/code&gt; package for GPU inference,
+  even though on AUR there is a CUDA package available from the same submitter [1]&lt;/p&gt;
+  
+  &lt;p&gt;I must add that the CUDA package is "Flagged out-of-date (2025-12-22)"&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;...and got a reply from &lt;code&gt;SH3NG1UN&lt;/code&gt; saying:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Hi. The reason CUDA was not added is that Vulkan solution is general, performant
+  enough for most hardware setup, and I personally believe that is what edge AI
+  deployment should look like - if your software stack is capable of gaming, it is capable of AI.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;They went on to say that they would add CUDA support, but they hit an issue because the
+AUR version that &lt;code&gt;Gotoro&lt;/code&gt; had referred to no longer had an active maintainer.  For non-Arch
+users, the AUR is essentially a repository of non-official, community maintained
+packages.&lt;/p&gt;
+
+&lt;p&gt;So, it looked like I had a Vulkan stack installed.  Could I install the CUDA one from
+the AUR instead?&lt;/p&gt;
+
+&lt;p&gt;Over the
+last few months, there have been security issues with the AUR, where bad actors have
+picked up ownership of unmaintained packages and put nasty stuff into them --
+exfiltration code to steal things like SSH keys and crypto wallets, for example.&lt;/p&gt;
+
+&lt;p&gt;As a result, I've been pretty cautious about adding on new AUR dependencies -- and this specific
+one having been unmaintained for a while scared me.&lt;/p&gt;
+
+&lt;p&gt;I decided that I would stick with Vulkan for now; if I wanted to try with CUDA, I'd
+compile it myself from source later on.&lt;/p&gt;
+
+&lt;p&gt;So, that left the error message:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;device Vulkan0 does not support split buffers&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I decided to break down the command like step by step, as running random stuff you
+copied from the Internet is rarely a good way to understand what's going on.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;llama-cli -hf Qwen/Qwen3-4B-GGUF:Q8_0&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;We're running &lt;code&gt;llama-cli&lt;/code&gt; and specifying a model from Hugging Face -- that's clearly what &lt;code&gt;-hf&lt;/code&gt; means.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;--jinja&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Per the &lt;code&gt;--help&lt;/code&gt;, "whether to use jinja template engine for chat".&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;--color on&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;"Colorize output to distinguish prompt and user input from generations"&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;-ngl 99&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;This is "max. number of layers to store in VRAM".  For this model, I wanted everything
+in VRAM, so felt that "all" would be better there.  &lt;code&gt;99&lt;/code&gt; basically means "all",
+at least for any normal-sized model, but I wanted to be explicit.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;-fa on&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;This switched on Flash Attention, which seemed reasonable.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;-sm row&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;This was "how to split the model across multiple GPUs".  The error was "does not support split buffers",
+so this sounded relevant!  Given that I only have one GPU on my machine, I decided
+that &lt;code&gt;-sm none&lt;/code&gt; would be a better option here.&lt;/p&gt;
+
+&lt;p&gt;At this point I suspected I had worked out how to solve the problem, but decided to take a look at the other
+options just out of interest.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;--temp 0.6 --top-k 20&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;These were clearly the normal sampling parameters that I was used to from creating my own models.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt; --top-p 0.95&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;This was an extension to the previous sampling params: in addition to the &lt;code&gt;top-k&lt;/code&gt; stuff (and after it),
+limit sampling to the tokens that take up the top 0.95
+of the probability distribution.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;--min-p 0&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;This was just disabling the &lt;code&gt;min-p&lt;/code&gt; feature.  min-p discards tokens that are less than
+X times the probability of the most likely token.  Apparently using it is a promising
+alternative to messing around with &lt;code&gt;top-p&lt;/code&gt; and &lt;code&gt;top-k&lt;/code&gt;.  Rabbit hole alert, let's move on.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;--presence-penalty 1.5&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Per the docs, this applies a "repeat alpha presence penalty".  That was interesting!
+I googled around a bit and found &lt;a href="https://mbrenndoerfer.com/writing/repetition-penalties-language-model-generation"&gt;this page&lt;/a&gt;,
+where it became clear that it is a trick to stop models from getting stuck in loops.
+Small models are quite prone to that, so it certainly sounded useful.  Perhaps something
+to dig into more later, but for now, keeping it seemed perfectly reasonable.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;-c 40960&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That was the "size of the prompt context" according to the help -- that is, the amount
+of the context window that can be taken up by stuff going into the model before it
+starts generating.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;-n 32768&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and this was the other side of that equation: the maximum number of tokens to predict.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;--no-context-shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Another interesting one, "whether to use context shift on infinite text generation".
+Context shift, it appears, means that if you keep on generating, it will just drop stuff off the start of the
+sequence when it reaches the max context length, so that it can just keep going.  Seems
+clever, though there are obvious risks of dropping important bits of context (compacting
+the context would be safer, and that's what most real-world workflows seem to do).&lt;/p&gt;
+
+&lt;p&gt;But anyway, we're switching that off, so no harm there.&lt;/p&gt;
+
+&lt;p&gt;So, most of those parameters seemed sensible, but I wanted to set &lt;code&gt;-sm&lt;/code&gt; to &lt;code&gt;none&lt;/code&gt;
+so that it didn't try to split things over multiple GPUs when I only had one, and also
+set &lt;code&gt;-ngl&lt;/code&gt; to &lt;code&gt;all&lt;/code&gt;
+rather than &lt;code&gt;99&lt;/code&gt;, just for tidiness's sake.  That gave this command:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;llama-cli -hf Qwen/Qwen3-4B-GGUF:Q8_0 --jinja --color on -ngl all -fa on -sm none \&lt;/span&gt;
+&lt;span class="go"&gt;    --temp 0.6 --top-k 20 --top-p 0.95 --min-p 0 --presence-penalty 1.5 \&lt;/span&gt;
+&lt;span class="go"&gt;    -c 40960 -n 32768 --no-context-shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and that worked!&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Loading model...&lt;/span&gt;
+
+&lt;span class="go"&gt;▄▄ ▄▄&lt;/span&gt;
+&lt;span class="go"&gt;██ ██&lt;/span&gt;
+&lt;span class="go"&gt;██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄    ▄████ ████▄ ████▄&lt;/span&gt;
+&lt;span class="go"&gt;██ ██ ▄█▀██ ██ ██ ██ ▄█▀██    ██    ██ ██ ██ ██&lt;/span&gt;
+&lt;span class="go"&gt;██ ██ ▀█▄██ ██ ██ ██ ▀█▄██ ██ ▀████ ████▀ ████▀&lt;/span&gt;
+&lt;span class="go"&gt;                                    ██    ██&lt;/span&gt;
+&lt;span class="go"&gt;                                    ▀▀    ▀▀&lt;/span&gt;
+
+&lt;span class="go"&gt;build      : b10068-571d0d540d&lt;/span&gt;
+&lt;span class="go"&gt;model      : Qwen/Qwen3-4B-GGUF:Q8_0&lt;/span&gt;
+&lt;span class="go"&gt;ftype      : Q8_0&lt;/span&gt;
+&lt;span class="go"&gt;modalities : text&lt;/span&gt;
+
+&lt;span class="go"&gt;available commands:&lt;/span&gt;
+&lt;span class="go"&gt;  /exit or Ctrl+C     stop or exit&lt;/span&gt;
+&lt;span class="go"&gt;  /regen              regenerate the last response&lt;/span&gt;
+&lt;span class="go"&gt;  /clear              clear the chat history&lt;/span&gt;
+&lt;span class="go"&gt;  /read &amp;lt;file&amp;gt;        add a text file&lt;/span&gt;
+&lt;span class="go"&gt;  /glob &amp;lt;pattern&amp;gt;     add text files using globbing pattern&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I gave it a whirl:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;&amp;gt; What is your name?&lt;/span&gt;
+
+&lt;span class="go"&gt;[Start thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Okay, the user is asking for my name. I need to respond with my actual name. Let&lt;/span&gt;
+&lt;span class="go"&gt;me recall, my name is Qwen. I should mention that I&amp;#39;m a large language model&lt;/span&gt;
+&lt;span class="go"&gt;developed by Alibaba Cloud. Also, I should explain that I can help with various&lt;/span&gt;
+&lt;span class="go"&gt;tasks like answering questions, creating content, and more. Keep it friendly and&lt;/span&gt;
+&lt;span class="go"&gt;informative. Make sure the response is clear and concise.&lt;/span&gt;
+&lt;span class="go"&gt;[End thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Hello! My name is Qwen, and I am a large language model developed by Alibaba&lt;/span&gt;
+&lt;span class="go"&gt;Cloud. I can help with a wide range of tasks, such as answering questions,&lt;/span&gt;
+&lt;span class="go"&gt;creating content, and more. How can I assist you today? 😊&lt;/span&gt;
+
+&lt;span class="go"&gt;[ Prompt: 32.7 t/s | Generation: 122.8 t/s ]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Looking good!  Time to try our MoE.&lt;/p&gt;
+
+&lt;h2 id="trying-out-qwen36-35b-a3b-the-first-quant"&gt;Trying out &lt;code&gt;Qwen3.6-35B-A3B&lt;/code&gt; -- the first quant&lt;/h2&gt;
+
+&lt;p&gt;The most popular quants I noticed for this model were &lt;a href="https://unsloth.ai/"&gt;Unsloth&lt;/a&gt;'s,
+which makes sense -- they're a well-known organisation.  They publish their models to Hugging Face, and the model I wanted
+was there as &lt;a href="https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF"&gt;&lt;code&gt;unsloth/Qwen3.6-35B-A3B-GGUF&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;I wasn't sure which of the various 4-bit quants to use -- as I said earlier, there
+were four of them -- but &lt;a href="https://www.reddit.com/r/LocalLLaMA/comments/1t49pqu/comment/ok1if2y/"&gt;this Reddit commenter&lt;/a&gt;
+was using &lt;code&gt;UD-Q4_K_XL&lt;/code&gt;, so I decided to start with that, just to see what happened.&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~ $ &lt;/span&gt;llama-cli&lt;span class="w"&gt; &lt;/span&gt;-hf&lt;span class="w"&gt; &lt;/span&gt;unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="se"&gt;\&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;--jinja&lt;span class="w"&gt; &lt;/span&gt;--color&lt;span class="w"&gt; &lt;/span&gt;on&lt;span class="w"&gt; &lt;/span&gt;-ngl&lt;span class="w"&gt; &lt;/span&gt;all&lt;span class="w"&gt; &lt;/span&gt;-fa&lt;span class="w"&gt; &lt;/span&gt;on&lt;span class="w"&gt; &lt;/span&gt;-sm&lt;span class="w"&gt; &lt;/span&gt;none&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="se"&gt;\&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;--temp&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.6&lt;span class="w"&gt; &lt;/span&gt;--top-k&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;--top-p&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.95&lt;span class="w"&gt; &lt;/span&gt;--min-p&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;--presence-penalty&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;.5&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="se"&gt;\&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;-c&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;40960&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-n&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;32768&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;--no-context-shift
+&lt;span class="go"&gt;Downloading mmproj-BF16.gguf ─────────────────────────────────────── 100%&lt;/span&gt;
+&lt;span class="go"&gt;Downloading Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf ──────────────────────── 100%&lt;/span&gt;
+
+
+&lt;span class="go"&gt;Loading model... -ggml_vulkan: Device memory allocation of size 260149504 failed.&lt;/span&gt;
+&lt;span class="go"&gt;ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory&lt;/span&gt;
+&lt;span class="go"&gt;9.56.395.340 E ggml_gallocr_reserve_n_impl: failed to allocate Vulkan0 buffer of size 260149504&lt;/span&gt;
+
+
+&lt;span class="go"&gt;▄▄ ▄▄&lt;/span&gt;
+&lt;span class="go"&gt;██ ██&lt;/span&gt;
+&lt;span class="go"&gt;██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄    ▄████ ████▄ ████▄&lt;/span&gt;
+&lt;span class="go"&gt;██ ██ ▄█▀██ ██ ██ ██ ▄█▀██    ██    ██ ██ ██ ██&lt;/span&gt;
+&lt;span class="go"&gt;██ ██ ▀█▄██ ██ ██ ██ ▀█▄██ ██ ▀████ ████▀ ████▀&lt;/span&gt;
+&lt;span class="go"&gt;                                    ██    ██&lt;/span&gt;
+&lt;span class="go"&gt;                                    ▀▀    ▀▀&lt;/span&gt;
+
+&lt;span class="go"&gt;build      : b10068-571d0d540d&lt;/span&gt;
+&lt;span class="go"&gt;model      : unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL&lt;/span&gt;
+&lt;span class="go"&gt;ftype      : Q4_K - Medium&lt;/span&gt;
+&lt;span class="go"&gt;modalities : text, vision, video&lt;/span&gt;
+
+&lt;span class="go"&gt;available commands:&lt;/span&gt;
+&lt;span class="go"&gt;  /exit or Ctrl+C     stop or exit&lt;/span&gt;
+&lt;span class="go"&gt;  /regen              regenerate the last response&lt;/span&gt;
+&lt;span class="go"&gt;  /clear              clear the chat history&lt;/span&gt;
+&lt;span class="go"&gt;  /read &amp;lt;file&amp;gt;        add a text file&lt;/span&gt;
+&lt;span class="go"&gt;  /glob &amp;lt;pattern&amp;gt;     add text files using globbing pattern&lt;/span&gt;
+&lt;span class="go"&gt;  /image &amp;lt;file&amp;gt;       add an image file&lt;/span&gt;
+&lt;span class="go"&gt;  /video &amp;lt;file&amp;gt;       add a video file&lt;/span&gt;
+
+
+
+&lt;span class="go"&gt;&amp;gt; Hello, who are you?&lt;/span&gt;
+
+&lt;span class="go"&gt;[Start thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Here&amp;#39;s a thinking process:&lt;/span&gt;
+
+&lt;span class="go"&gt;1.  **Analyze User Input:**&lt;/span&gt;
+&lt;span class="go"&gt;   - User says: &amp;quot;Hello, who are you?&amp;quot;&lt;/span&gt;
+&lt;span class="go"&gt;   - This is a simple greeting and identity question.&lt;/span&gt;
+
+&lt;span class="go"&gt;2.  **Identify Key Requirements:**&lt;/span&gt;
+&lt;span class="go"&gt;   - Acknowledge the greeting&lt;/span&gt;
+&lt;span class="go"&gt;   - State my identity clearly and concisely&lt;/span&gt;
+&lt;span class="go"&gt;   - Mention my capabilities/purpose briefly&lt;/span&gt;
+&lt;span class="go"&gt;   - Keep it friendly and helpful&lt;/span&gt;
+
+&lt;span class="go"&gt;3.  **Formulate Response (Internal Refinement):**&lt;/span&gt;
+&lt;span class="go"&gt;   - &amp;quot;Hello! I&amp;#39;m Qwen, a large language model developed by Alibaba Group&amp;#39;s&lt;/span&gt;
+&lt;span class="go"&gt;     Tongyi Lab. I&amp;#39;m here to help with answering questions, writing, coding,&lt;/span&gt;
+&lt;span class="go"&gt;     analysis, and much more. How can I assist you today?&amp;quot;&lt;/span&gt;
+&lt;span class="go"&gt;   - Check against guidelines: Matches identity, concise, friendly, offers help.&lt;/span&gt;
+
+&lt;span class="go"&gt;4.  **Final Output Generation:** (matches the refined version)✅&lt;/span&gt;
+&lt;span class="go"&gt;[End thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Hello! I&amp;#39;m Qwen, a large language model developed by Alibaba Group&amp;#39;s Tongyi Lab.&lt;/span&gt;
+&lt;span class="go"&gt;I&amp;#39;m here to help with answering questions, writing, coding, analysis,&lt;/span&gt;
+&lt;span class="go"&gt;brainstorming, and much more. How can I assist you today?&lt;/span&gt;
+
+&lt;span class="go"&gt;[ Prompt: 9.8 t/s | Generation: 111.4 t/s ]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That warning at the start was a bit concerning:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Loading model... -ggml_vulkan: Device memory allocation of size 260149504 failed.&lt;/span&gt;
+&lt;span class="go"&gt;ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory&lt;/span&gt;
+&lt;span class="go"&gt;9.56.395.340 E ggml_gallocr_reserve_n_impl: failed to allocate Vulkan0 buffer of size 260149504&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and I noticed that in &lt;code&gt;nvtop&lt;/code&gt;, my VRAM was maxed out.&lt;/p&gt;
+
+&lt;p&gt;I decided to remove the &lt;code&gt;-c 40960 -n 32768&lt;/code&gt; from the command line; these were setting
+a specific context length, both for the prompt and for generation.  Llama.cpp can
+work out what context length it can fit into VRAM on its own if you don't
+specify them, and this auto-fit felt like a good idea given that I was trying to jam
+a 22.4 GiB model into a 24 GiB GPU, and had X and various other apps running on the
+card at the same time.&lt;/p&gt;
+
+&lt;p&gt;So:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~ $ &lt;/span&gt;llama-cli&lt;span class="w"&gt; &lt;/span&gt;-hf&lt;span class="w"&gt; &lt;/span&gt;unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="se"&gt;\&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;--jinja&lt;span class="w"&gt; &lt;/span&gt;--color&lt;span class="w"&gt; &lt;/span&gt;on&lt;span class="w"&gt; &lt;/span&gt;-ngl&lt;span class="w"&gt; &lt;/span&gt;all&lt;span class="w"&gt; &lt;/span&gt;-fa&lt;span class="w"&gt; &lt;/span&gt;on&lt;span class="w"&gt; &lt;/span&gt;-sm&lt;span class="w"&gt; &lt;/span&gt;none&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="se"&gt;\&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;--temp&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.6&lt;span class="w"&gt; &lt;/span&gt;--top-k&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;--top-p&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.95&lt;span class="w"&gt; &lt;/span&gt;--min-p&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;--presence-penalty&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;.5&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="se"&gt;\&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;--no-context-shift
+
+
+&lt;span class="go"&gt;Loading model...&lt;/span&gt;
+
+&lt;span class="go"&gt;▄▄ ▄▄&lt;/span&gt;
+&lt;span class="go"&gt;██ ██&lt;/span&gt;
+&lt;span class="go"&gt;██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄    ▄████ ████▄ ████▄&lt;/span&gt;
+&lt;span class="go"&gt;██ ██ ▄█▀██ ██ ██ ██ ▄█▀██    ██    ██ ██ ██ ██&lt;/span&gt;
+&lt;span class="go"&gt;██ ██ ▀█▄██ ██ ██ ██ ▀█▄██ ██ ▀████ ████▀ ████▀&lt;/span&gt;
+&lt;span class="go"&gt;                                    ██    ██&lt;/span&gt;
+&lt;span class="go"&gt;                                    ▀▀    ▀▀&lt;/span&gt;
+
+&lt;span class="go"&gt;build      : b10068-571d0d540d&lt;/span&gt;
+&lt;span class="go"&gt;model      : unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL&lt;/span&gt;
+&lt;span class="go"&gt;ftype      : Q4_K - Medium&lt;/span&gt;
+&lt;span class="go"&gt;modalities : text, vision, video&lt;/span&gt;
+
+&lt;span class="go"&gt;available commands:&lt;/span&gt;
+&lt;span class="go"&gt;  /exit or Ctrl+C     stop or exit&lt;/span&gt;
+&lt;span class="go"&gt;  /regen              regenerate the last response&lt;/span&gt;
+&lt;span class="go"&gt;  /clear              clear the chat history&lt;/span&gt;
+&lt;span class="go"&gt;  /read &amp;lt;file&amp;gt;        add a text file&lt;/span&gt;
+&lt;span class="go"&gt;  /glob &amp;lt;pattern&amp;gt;     add text files using globbing pattern&lt;/span&gt;
+&lt;span class="go"&gt;  /image &amp;lt;file&amp;gt;       add an image file&lt;/span&gt;
+&lt;span class="go"&gt;  /video &amp;lt;file&amp;gt;       add a video file&lt;/span&gt;
+
+
+
+&lt;span class="go"&gt;&amp;gt; Hello, who are you?&lt;/span&gt;
+
+&lt;span class="go"&gt;[Start thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Here&amp;#39;s a thinking process:&lt;/span&gt;
+
+&lt;span class="go"&gt;1.  **Analyze User Input:**&lt;/span&gt;
+&lt;span class="go"&gt;   - User says: &amp;quot;Hello, who are you?&amp;quot;&lt;/span&gt;
+&lt;span class="go"&gt;   - This is a simple greeting and identity question.&lt;/span&gt;
+
+&lt;span class="go"&gt;2.  **Identify Key Requirements:**&lt;/span&gt;
+&lt;span class="go"&gt;   - Acknowledge the greeting&lt;/span&gt;
+&lt;span class="go"&gt;   - State my identity clearly&lt;/span&gt;
+&lt;span class="go"&gt;   - Keep it concise and friendly&lt;/span&gt;
+&lt;span class="go"&gt;   - Align with my actual identity (Qwen / Tongyi Qianwen, developed by Alibaba Group&amp;#39;s Tongyi Lab)&lt;/span&gt;
+
+&lt;span class="go"&gt;3.  **Formulate Response:**&lt;/span&gt;
+&lt;span class="go"&gt;   - Start with a greeting back&lt;/span&gt;
+&lt;span class="go"&gt;   - State name/identity: I&amp;#39;m Qwen (or Tongyi Qianwen), a large language model developed by Alibaba Group&amp;#39;s Tongyi Lab&lt;/span&gt;
+&lt;span class="go"&gt;   - Offer assistance&lt;/span&gt;
+&lt;span class="go"&gt;   - Keep it natural and concise&lt;/span&gt;
+
+&lt;span class="go"&gt;   Draft: &amp;quot;Hello! I&amp;#39;m Qwen, a large language model developed by Alibaba Group&amp;#39;s Tongyi Lab. How can I assist you today?&amp;quot;&lt;/span&gt;
+
+&lt;span class="go"&gt;4.  **Self-Correction/Verification:**&lt;/span&gt;
+&lt;span class="go"&gt;   - Matches identity guidelines? Yes.&lt;/span&gt;
+&lt;span class="go"&gt;   - Concise and direct? Yes.&lt;/span&gt;
+&lt;span class="go"&gt;   - No extra fluff? Yes.&lt;/span&gt;
+&lt;span class="go"&gt;   - Ready.✅&lt;/span&gt;
+&lt;span class="go"&gt;[End thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Hello! I&amp;#39;m Qwen, a large language model developed by Alibaba Group&amp;#39;s Tongyi Lab. How can I assist you today?&lt;/span&gt;
+
+&lt;span class="go"&gt;[ Prompt: 50.2 t/s | Generation: 122.0 t/s ]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;No error, it wasn't maxing out VRAM, and generation and prompt processing were noticeably faster.  Perhaps the first
+time around it had offloaded some of the model to the CPU so that it had enough
+space on the GPU for the context size I was asking for?&lt;/p&gt;
+
+&lt;p&gt;Still, I wasn't sure how far I could trust those numbers -- the number of tokens
+being emitted was quite small. &lt;sup class="footnote-ref" id="fnref-4"&gt;&lt;a href="#fn-4"&gt;4&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;I wanted a prompt that would make the model generate lots of tokens.  Now, it was
+a thinking model, so asking it a difficult question seemed like a good way to do
+that.&lt;/p&gt;
+
+&lt;p&gt;I decided to use &lt;a href="https://x.com/emollick/status/1765136992176644281"&gt;Ethan Mollick's "Lem test"&lt;/a&gt;:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Compose a poem -- a poem about a haircut! But lofty, tragic, timeless, full of
+  love, treachery, retribution, quiet heroism in the face of certain doom! Six
+  lines, cleverly rhymed, and every word beginning with the letter S!&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;More about that in the &lt;a href="#appendix-the-lem-test"&gt;appendix below&lt;/a&gt;. &lt;sup class="footnote-ref" id="fnref-5"&gt;&lt;a href="#fn-5"&gt;5&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;Unfortunately, when I gave it that prompt, it thought for a while, but crapped out
+during the thinking process, while it was trying to generate rhymes.&lt;/p&gt;
+
+&lt;p&gt;Now, I didn't know what the context length was, either for the prompt or for generation.
+But I could be fairly sure that they were less than 40,960 and 32,768 respectively, given
+that the model did not fit into VRAM when I specified those limits, but did when I asked
+Llama.cpp to auto-fit.&lt;/p&gt;
+
+&lt;p&gt;I couldn't find a quick and easy way of asking &lt;code&gt;llama-cli&lt;/code&gt; what lengths it had fit
+things to, but when I tried running it with the &lt;code&gt;-v&lt;/code&gt; option for verbose logging, I
+got something.  Actually, I got a &lt;em&gt;lot&lt;/em&gt; of something -- thousands of lines of output,
+with incredibly detailed messages about everything Llama.cpp was doing.&lt;/p&gt;
+
+&lt;p&gt;But there were three blocks starting "constructing llama_context".&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;...&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.283 I llama_context: constructing llama_context&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.285 I llama_context: n_seq_max     = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.285 I llama_context: n_ctx         = 262144&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.285 I llama_context: n_ctx_seq     = 262144&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.285 I llama_context: n_batch       = 2048&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.285 I llama_context: n_ubatch      = 512&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.285 I llama_context: causal_attn   = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.286 I llama_context: flash_attn    = enabled&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.286 I llama_context: kv_unified    = false&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.287 I llama_context: freq_base     = 10000000.0&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.287 I llama_context: freq_scale    = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.287 I llama_context: n_rs_seq      = 0&lt;/span&gt;
+&lt;span class="go"&gt;0.00.809.287 I llama_context: n_outputs_max = 1&lt;/span&gt;
+&lt;span class="go"&gt;...&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.515 I llama_context: constructing llama_context&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.517 I llama_context: n_seq_max     = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.517 I llama_context: n_ctx         = 4096&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.517 I llama_context: n_ctx_seq     = 4096&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.517 I llama_context: n_batch       = 2048&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.517 I llama_context: n_ubatch      = 512&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.517 I llama_context: causal_attn   = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.517 I llama_context: flash_attn    = enabled&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.518 I llama_context: kv_unified    = false&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.518 I llama_context: freq_base     = 10000000.0&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.519 I llama_context: freq_scale    = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.519 I llama_context: n_rs_seq      = 0&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.519 I llama_context: n_outputs_max = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.01.029.519 I llama_context: n_ctx_seq (4096) &amp;lt; n_ctx_train (262144) -- the full capacity of the model will not be utilized&lt;/span&gt;
+&lt;span class="go"&gt;...&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.122 I llama_context: constructing llama_context&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.123 I llama_context: n_seq_max     = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.123 I llama_context: n_ctx         = 4096&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.123 I llama_context: n_ctx_seq     = 4096&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.123 I llama_context: n_batch       = 2048&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.123 I llama_context: n_ubatch      = 512&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.123 I llama_context: causal_attn   = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.124 I llama_context: flash_attn    = enabled&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.124 I llama_context: kv_unified    = false&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.126 I llama_context: freq_base     = 10000000.0&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.126 I llama_context: freq_scale    = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.126 I llama_context: n_rs_seq      = 0&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.126 I llama_context: n_outputs_max = 1&lt;/span&gt;
+&lt;span class="go"&gt;0.06.393.127 I llama_context: n_ctx_seq (4096) &amp;lt; n_ctx_train (262144) -- the full capacity of the model will not be utilized&lt;/span&gt;
+&lt;span class="go"&gt;...&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That made the issue reasonably clear.  I assumed that the last message was the
+definitive one, and it was saying that my context length -- both prompt and generation
+combined -- was 4,096 tokens.  I had &lt;code&gt;--no-context-shift&lt;/code&gt; set, so that was a hard
+limit.  And 4k or so tokens fit with the amount of stuff that I would have expected
+to be in the model's context window at the time it crapped out.&lt;/p&gt;
+
+&lt;p&gt;I decided to see what would happen if I tried a smaller quant.&lt;/p&gt;
+
+&lt;h2 id="trying-out-qwen36-35b-a3b-the-second-quant"&gt;Trying out &lt;code&gt;Qwen3.6-35B-A3B&lt;/code&gt; -- the second quant&lt;/h2&gt;
+
+&lt;p&gt;Hugging Face said
+(and &lt;code&gt;nvtop&lt;/code&gt; agreed) that this one, &lt;code&gt;UD-Q4_K_XL&lt;/code&gt;, was about 22.4 GiB in size.  But
+&lt;code&gt;UD-IQ4_NL_XL&lt;/code&gt; was shown on HF as using 19.5 GiB, so I decided to give that one a go next.&lt;/p&gt;
+
+&lt;p&gt;I ran it with the &lt;code&gt;-v&lt;/code&gt; option, and again looked at the last "constructing llama_context" block:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;42.33.956.367 I llama_context: constructing llama_context&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.369 I llama_context: n_seq_max     = 1&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.369 I llama_context: n_ctx         = 93952&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.369 I llama_context: n_ctx_seq     = 93952&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.369 I llama_context: n_batch       = 2048&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.369 I llama_context: n_ubatch      = 512&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.369 I llama_context: causal_attn   = 1&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.370 I llama_context: flash_attn    = enabled&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.370 I llama_context: kv_unified    = false&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.373 I llama_context: freq_base     = 10000000.0&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.373 I llama_context: freq_scale    = 1&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.373 I llama_context: n_rs_seq      = 0&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.373 I llama_context: n_outputs_max = 1&lt;/span&gt;
+&lt;span class="go"&gt;42.33.956.374 I llama_context: n_ctx_seq (93952) &amp;lt; n_ctx_train (262144) -- the full capacity of the model will not be utilized&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;93,952 tokens -- still not the full amount, but not at all bad!  I decided to give
+it a whirl, restarted without &lt;code&gt;-v&lt;/code&gt; to avoid getting swamped with debug info, and:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;&amp;gt; Compose a poem -- a poem about a haircut! But lofty, tragic, timeless, full of love, treachery, retribution, quiet heroism in the face of certain doom! Six lines, cleverly rhymed, and every word beginning with the letter S!&lt;/span&gt;
+
+&lt;span class="go"&gt;[Start thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Thinking Process:&lt;/span&gt;
+
+&lt;span class="go"&gt;1.  **Deconstruct the Request:**&lt;/span&gt;
+&lt;span class="go"&gt;    *   Topic: Haircut.&lt;/span&gt;
+&lt;span class="go"&gt;    *   Tone: Lofty, tragic, timeless, full of love, treachery, retribution, quiet heroism in the face of certain doom.&lt;/span&gt;
+&lt;span class="go"&gt;    *   Length: Six lines.&lt;/span&gt;
+&lt;span class="go"&gt;    *   Rhyme: Cleverly rhymed.&lt;/span&gt;
+&lt;span class="go"&gt;    *   Constraint: Every word must begin with the letter &amp;#39;S&amp;#39;.&lt;/span&gt;
+
+&lt;span class="go"&gt;2.  **Brainstorming Vocabulary (S-words):**&lt;/span&gt;
+&lt;span class="go"&gt;    *   *Nouns:* Shears, scissors, scalp, skin, strand, silk, sorrow, shame, secret, sister, son, star, storm, shadow, silence, sacrifice, splendor, silver, sword, slaughter, severance, sorrow, sigh.&lt;/span&gt;
+&lt;span class="go"&gt;    *   *Verbs:* Sever, slice, shatter, shed, sink, slip, slide, sing, scream, suffer, survive, surrender, slay, snatch, steal, spin, sway, smile, stare, stand, seek, save, seal, send, set, show, shut, sing, sit, sleep, slip, slow, snap, sneak, soar, speak, spend, spill, split, spoil, spread, spring, squeeze, stand, start, stay, steal, stem, stir, stop, store, stretch, strike, string, strip, strive, stroke, strong, study, suffer, suggest, suit, sum, sun, surprise, surround, survey, survive, suspect, sustain, swallow, swear, sweep, sweet, swell, swim, swing, switch, symbol, sympathize, system.&lt;/span&gt;
+&lt;span class="go"&gt;    *   *Adjectives/Adverbs:* Silent, silver, sad, severe, soft, sharp, slick, slim, slow, small, strange, strong, sweet, swift, sure, sudden, supreme, sacred, secret, solemn, sorrowful, splendid, stark, still, stern, straight, true.&lt;/span&gt;
+
+&lt;span class="go"&gt;3.  **Drafting - Attempt 1 (Focusing on Narrative and Tone):**&lt;/span&gt;
+&lt;span class="go"&gt;    *   *I:* Need love, treachery, retribution, heroism.&lt;/span&gt;
+&lt;span class="go"&gt;    *   *I:* Lover betrays? Or self-sacrifice? &amp;quot;Quiet heroism in the face of certain doom&amp;quot; suggests a sacrifice. Maybe the hair is the doom? Or the haircut is the retribution?&lt;/span&gt;
+&lt;span class="go"&gt;    *   *Concept:* A queen/heroine sacrifices her beauty/hair to save someone or fulfill a vow, betrayed by the scissors or the situation.&lt;/span&gt;
+&lt;span class="go"&gt;    *   *Lines:*&lt;/span&gt;
+&lt;span class="go"&gt;        *   Sweet shears slice silver strands... (Too simple).&lt;/span&gt;
+&lt;span class="go"&gt;        *   She saw sharp steel... (Better).&lt;/span&gt;
+&lt;span class="go"&gt;        *   Secret sorrow strikes...&lt;/span&gt;
+&lt;span class="go"&gt;        *   Let&amp;#39;s try rhymes. AABBCC or ABABCC or ABCABC? &amp;quot;Cleverly rhymed&amp;quot; might suggest internal rhyme or a complex scheme, but with 6 lines and all S-words, the rhyme scheme needs to be tight. Maybe AAAA AA? Or AAB BCC?&lt;/span&gt;
+
+&lt;span class="go"&gt;[LLM pondering snipped]&lt;/span&gt;
+
+&lt;span class="go"&gt;        *   Result matches constraints.&lt;/span&gt;
+&lt;span class="go"&gt;        *   Six lines. All S words. Rhyme A B C B C C (Share/Snare, Soul/Sole, Son/Sun/Son).&lt;/span&gt;
+&lt;span class="go"&gt;        *   Share/Snare is exact.&lt;/span&gt;
+&lt;span class="go"&gt;        *   Soul/Sole is exact (in many dialects, or slant in others, but usually accepted as rhyme with Sold/Soul/Sole cluster).&lt;/span&gt;
+&lt;span class="go"&gt;        *   Actually, Soul/Sole can be distinct.&lt;/span&gt;
+&lt;span class="go"&gt;        *   Soul is /soʊl/. Sole is /soʊl/. They are homophones in many accents.&lt;/span&gt;
+&lt;span class="go"&gt;        *   So Soul/Sole is exact rhyme.&lt;/span&gt;
+&lt;span class="go"&gt;        *   Son/Sun is slant.&lt;/span&gt;
+&lt;span class="go"&gt;        *   This is a strong poem.&lt;/span&gt;
+&lt;span class="go"&gt;[End thinking]&lt;/span&gt;
+
+&lt;span class="go"&gt;Sneering shears shred sacred share,&lt;/span&gt;
+&lt;span class="go"&gt;Silent steel sells silver soul;&lt;/span&gt;
+&lt;span class="go"&gt;Sister&amp;#39;s snare spares son;&lt;/span&gt;
+&lt;span class="go"&gt;Sweet sign seals sole;&lt;/span&gt;
+&lt;span class="go"&gt;Still star saves sun;&lt;/span&gt;
+&lt;span class="go"&gt;Secret sign seals son.&lt;/span&gt;
+
+&lt;span class="go"&gt;[ Prompt: 183.3 t/s | Generation: 119.6 t/s ]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;It's hardly Shakespeare, and the rhyming is both odd (ABCBCC) and unadventurous ("son", "sun", "son")
+but for a 35B parameter model with 3B active (of which 1B
+are used up by the embeddings and the output head), it's pretty bloody impressive!
+Every word did indeed start with an "S".&lt;/p&gt;
+
+&lt;p&gt;So, now I had the model running.  I had a context length of 93,952 tokens, was generating
+about 120 tokens/second, and processing the prompt at about 180 tokens/second.&lt;/p&gt;
+
+&lt;p&gt;The question was, could I get the full context length in there?  I knew that the answer was
+yes from previous reading, but it was time to try it out.&lt;/p&gt;
+
+&lt;h2 id="the-ncmoe-flag"&gt;The &lt;code&gt;-ncmoe&lt;/code&gt; flag&lt;/h2&gt;
+
+&lt;p&gt;Llama.cpp has a command-line flag &lt;code&gt;-ncmoe&lt;/code&gt;, or in its long form, &lt;code&gt;--n-cpu-moe&lt;/code&gt;.  As its
+name suggests, it's designed for mixture of experts models, and it works by offloading
+the FFN for a specified number of Transformers layers to the CPU.&lt;/p&gt;
+
+&lt;p&gt;Intuitively it's surprising that that doesn't cause performance to completely crash.
+After all, aren't we running our models on the GPU because it's so much better at
+matrix multiplications than the CPU?&lt;/p&gt;
+
+&lt;p&gt;And it's true, the GPU is best.  But if it's a question of where to use its superiority
+in matmuls, then keeping the attention layers on the GPU and offloading just the FFNs to the CPU is
+the least harmful way to do it.  Obviously you do lose performance, but not as much
+as you would if you offloaded attention.&lt;/p&gt;
+
+&lt;p&gt;I started a binary chop.  From the logs, I could see that the model had
+40 layers:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;0.00.804.467 I print_info: n_layer               = 40&lt;/span&gt;
+&lt;span class="go"&gt;0.00.804.467 I print_info: n_layer_all           = 40&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;so I ran this to offload the first 20 to the CPU:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;llama-cli --log-file /tmp/log --log-colors off -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-IQ4_NL_XL \&lt;/span&gt;
+&lt;span class="go"&gt;    -ncmoe 20 --jinja --color on -ngl all -fa on -sm none \&lt;/span&gt;
+&lt;span class="go"&gt;    --temp 0.6 --top-k 20 --top-p 0.95 --min-p 0 --presence-penalty 1.5&lt;/span&gt;
+&lt;span class="go"&gt;    --no-context-shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That gave me a context length of 262,144 -- the native context length!
+I had 16944MiB used on the GPU, 10075MiB on the CPU, and I got 51.4 tokens per second
+for generation, and 64.4 tokens per second for the prompt.&lt;/p&gt;
+
+&lt;p&gt;Then I tried various other values, but the process got dull quickly.  For each one, I
+was doing this:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Start &lt;code&gt;llama-cli&lt;/code&gt; with the &lt;code&gt;-ncmoe&lt;/code&gt; value I wanted and with &lt;code&gt;-v&lt;/code&gt;.  Use the logs
+to find the context length, and note down the VRAM/RAM usage.&lt;/li&gt;
+&lt;li&gt;Restart it without &lt;code&gt;-v&lt;/code&gt;, paste in my prompt, and wait until it either came back or got stuck
+in a loop trying to find rhymes (which it did maybe one in every four times).  Note
+down tokens per second for the prompt.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;At maybe four minutes for each and an error-prone process, this was ripe for automation.&lt;/p&gt;
+
+&lt;p&gt;Additionally, something about those numbers for the prompt-processing tokens per second
+was niggling me.  They seemed &lt;em&gt;very&lt;/em&gt; slow.  You'd expect an LLM in a generation harness
+like this to process the prompt &lt;em&gt;much&lt;/em&gt; faster than it could generate, but I was getting
+numbers that roughly matched the generation speed.  I figured that my prompt was so short that
+the numbers I was getting were being dominated by overhead.  I needed a longer one.&lt;/p&gt;
+
+&lt;h2 id="the-auto-sweep"&gt;The auto-sweep&lt;/h2&gt;
+
+&lt;p&gt;Llama.cpp's &lt;code&gt;llama-server&lt;/code&gt; command exposes an API that tells you what sequence length
+it's running with, and takes pretty much the same parameters as &lt;code&gt;llama-cli&lt;/code&gt;, so I gave
+Claude Fable 5 the command I'd been running and asked it to write a script to sweep
+over CPU offload layer counts from zero to 40, and to store the numbers I was interested
+in:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;The number of layers offloaded&lt;/li&gt;
+&lt;li&gt;The context length we got&lt;/li&gt;
+&lt;li&gt;The VRAM and system RAM (RSS) usage&lt;/li&gt;
+&lt;li&gt;The size of the prompt we were providing&lt;/li&gt;
+&lt;li&gt;The tokens per second at which the prompt was processed&lt;/li&gt;
+&lt;li&gt;How much was generated&lt;/li&gt;
+&lt;li&gt;Generation tokens/second.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;I also added onto that some code to expand the prompt so that I could get better numbers for
+the tokens per second for that part of the processing.&lt;/p&gt;
+
+&lt;p&gt;Now, &lt;code&gt;llama-cli&lt;/code&gt; uses a chat template by default; the endpoint that Claude had chosen
+for &lt;code&gt;llama-server&lt;/code&gt; does not -- it's a raw completion engine.  This actually worked to my
+advantage.  From the &lt;code&gt;llama-cli&lt;/code&gt;
+logs I found the template it had been using, which was something like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;&amp;#39;&amp;lt;|im_start|&amp;gt;system&lt;/span&gt;
+&lt;span class="go"&gt;You are a helpful assistant&amp;lt;|im_end|&amp;gt;&lt;/span&gt;
+&lt;span class="go"&gt;&amp;lt;|im_start|&amp;gt;user&lt;/span&gt;
+&lt;span class="go"&gt;Hello&amp;lt;|im_end|&amp;gt;&lt;/span&gt;
+&lt;span class="go"&gt;&amp;lt;|im_start|&amp;gt;assistant&lt;/span&gt;
+&lt;span class="go"&gt;Hi there&amp;lt;|im_end|&amp;gt;&lt;/span&gt;
+&lt;span class="go"&gt;&amp;lt;|im_start|&amp;gt;user&lt;/span&gt;
+&lt;span class="go"&gt;How are you?&amp;lt;|im_end|&amp;gt;&lt;/span&gt;
+&lt;span class="go"&gt;&amp;lt;|im_start|&amp;gt;assistant&lt;/span&gt;
+&lt;span class="go"&gt;&amp;lt;think&amp;gt;&lt;/span&gt;
+&lt;span class="go"&gt;&amp;#39;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Because I could easily fake the conversation history, I baked in a template that started with a fake previous interaction where the
+user had provided the first two chapters of Jane Austen's &lt;a href="https://www.gutenberg.org/ebooks/1342"&gt;&lt;em&gt;Pride and Prejudice&lt;/em&gt;&lt;/a&gt;
+and asked the model for its opinion, it said something like "I like that", and then the user asked
+for the Lem test poem.  That bulked things out quite a bit -- as it turned out, to
+a prompt of 2,457 tokens.&lt;/p&gt;
+
+&lt;p&gt;I also made it give up after 6144 tokens so that it wouldn't take forever to run,
+and kicked it off.  &lt;a href="https://github.com/gpjt/measure-llama-speeds/blob/main/measure_ncmoe_speeds.py"&gt;Here's the code&lt;/a&gt;, and you can see the results
+&lt;a href="https://github.com/gpjt/measure-llama-speeds/blob/main/sweep_results/original_vulkan/sweep_results_v1.csv"&gt;here&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;The prompt processing numbers were &lt;em&gt;much&lt;/em&gt; better!  With nothing offloaded, I got
+a context window of 51,200, a prompt processing rate of 2,787.1 tokens/second, and a generation
+rate of 122.4 tokens/second.&lt;/p&gt;
+
+&lt;p&gt;(It was interesting that the context window was smaller than it was when I ran
+&lt;code&gt;llama-cli&lt;/code&gt; without &lt;code&gt;-ncmoe&lt;/code&gt;, but I decided that I didn't want to get into the weeds
+by digging into that &lt;sup class="footnote-ref" id="fnref-6"&gt;&lt;a href="#fn-6"&gt;6&lt;/a&gt;&lt;/sup&gt;.  Perhaps &lt;code&gt;-ncmoe 0&lt;/code&gt; isn't quite the same as running
+without &lt;code&gt;-ncmoe&lt;/code&gt; at all?)&lt;/p&gt;
+
+&lt;p&gt;Anyway, the numbers for other levels of layer-offloading did what you would expect:
+as more layers' FFNs went from the GPU to the CPU, the context window expanded until
+it hit the model's native context length of 262,144 when 12 layers were offloaded.  And the speed
+-- both in prompt processing and generation -- went down.&lt;/p&gt;
+
+&lt;p&gt;I ran it three more times, just to see if there was a lot of noise there, and then
+asked Claude Sonnet to slop up a charting script for me (in the same repo as the above
+if you're interested) -- and I had some results!&lt;/p&gt;
+
+&lt;h2 id="the-results"&gt;The results&lt;/h2&gt;
+
+&lt;p&gt;Just for people who skipped the details: we're running the &lt;code&gt;UD-IQ4_NL_XL&lt;/code&gt; quant of
+&lt;a href="https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF"&gt;&lt;code&gt;unsloth/Qwen3.6-35B-A3B-GGUF&lt;/code&gt;&lt;/a&gt;
+on &lt;code&gt;llama-server&lt;/code&gt;, and seeing how its performance changes as we vary the number of
+layers offloaded from the GPU to the CPU.&lt;/p&gt;
+
+&lt;p&gt;Firstly, how does the context length change?&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/benchmarking-qwen-3-6-35b-moe-rtx-3090/vulkan-context-length-chart.png" alt="Running Llama.cpp on Vulkan: context length vs layers offloaded to CPU" title="Running Llama.cpp on Vulkan: context length vs layers offloaded to CPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;You can see that the model's full built-in context length was reached when we had
+12 layers offloaded.  But how did that impact performance?&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/benchmarking-qwen-3-6-35b-moe-rtx-3090/vulkan-throughput-chart.png" alt="Running Llama.cpp on Vulkan: throughput vs layers offloaded to CPU" title="Running Llama.cpp on Vulkan: throughput vs layers offloaded to CPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;You can see that the prompt throughput drops off fairly smoothly as the number of
+layers offloaded increased.  What is interesting is those spikes in the generation
+tokens/second.  The reason I'd done four runs of this script was because I'd initially
+thought they were noise, but you can see they're pretty consistent.&lt;/p&gt;
+
+&lt;p&gt;Claude Fable 5
+thinks they may be related to the points at which there are full attention layers
+-- the attention system in these Qwen models is complex, with some layers using a faster
+system and others using the full attention that my GPT-2 models always use.
+That's something to investigate another time, I suspect, if ever.&lt;/p&gt;
+
+&lt;p&gt;It's noticeable that with
+12 layers offloaded (the exact number that gave us the full context), the throughput
+is somewhat better than at 11, which makes 12 look pretty much like the sweet spot
+for running this model with this setup!  From the raw numbers, we can see that there
+we had about 66 tokens/second generation, and 607 tokens/second on the prompt.&lt;/p&gt;
+
+&lt;p&gt;Anyway, finally, let's take a look at memory usage -- both VRAM and regular system RAM.
+It looks exactly as you'd expect:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/benchmarking-qwen-3-6-35b-moe-rtx-3090/vulkan-memory-chart.png" alt="Running Llama.cpp on Vulkan: memory vs layers offloaded to CPU" title="Running Llama.cpp on Vulkan: memory vs layers offloaded to CPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;We're using as much VRAM as we can get up to the layer 12 offload point, because
+with fewer than that number of layers offloaded, we're grabbing as much space as
+we can on top of the amount consumed by the parameters, in order to get the longest
+possible context window.  But after that, it drops off smoothly.  And system RAM rises
+smoothly as layers are offloaded into it, as expected.&lt;/p&gt;
+
+&lt;p&gt;So, that was it!&lt;/p&gt;
+
+&lt;p&gt;Or was it?&lt;/p&gt;
+
+&lt;h2 id="cuda"&gt;CUDA&lt;/h2&gt;
+
+&lt;p&gt;As I mentioned back at the start of these lab notes, the version of Llama.cpp that's
+part of the official OS repositories for Arch uses Vulkan, in order to maximise the
+number of platforms it runs on.  And that was the version I'd used.&lt;/p&gt;
+
+&lt;p&gt;The Vulkan version was clearly solid and stable, given
+that I'd been able to run a bunch of benchmarks on it.  But you'd expect CUDA to
+get performance enhancements and the like first, and in general to be more polished.&lt;/p&gt;
+
+&lt;p&gt;So how would it perform comparatively?&lt;/p&gt;
+
+&lt;p&gt;I didn't want to install the AUR version of the CUDA-based Llama.cpp, as it had been
+abandoned previously (though someone appears to have picked it up again now), and bad actors have been taking over abandoned AUR repos and putting
+bad stuff in them.&lt;/p&gt;
+
+&lt;p&gt;So out of an abundance of caution, I decided to compile it from source from the
+&lt;a href="https://github.com/ggml-org/llama.cpp"&gt;official Llama.cpp repo&lt;/a&gt;.
+Their instructions made it almost laughably simple; I cloned it, then ran&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;cmake -B build-cuda -DGGML_CUDA=ON -DGGML_NATIVE=ON&lt;/span&gt;
+&lt;span class="go"&gt;cmake --build build-cuda --config Release -j$(nproc)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Less than ten minutes later, I had a working set of binaries.  I tweaked my
+benchmarking script to use them instead of the system-installed ones, and got
+&lt;a href="https://github.com/gpjt/measure-llama-speeds/blob/main/sweep_results/cuda/sweep_results.csv"&gt;these results&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Charting those, we get this for the context length:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/benchmarking-qwen-3-6-35b-moe-rtx-3090/cuda-context-length-chart.png" alt="Running Llama.cpp on CUDA: context length vs layers offloaded to CPU" title="Running Llama.cpp on CUDA: context length vs layers offloaded to CPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;So with CUDA, we get the full built-in context length with just 10 layers offloaded,
+compared to the 12 we needed with Vulkan.&lt;/p&gt;
+
+&lt;p&gt;And even with nothing offloaded, we got a bigger context window -- 89,600 rather than
+Vulkan's 51,200.&lt;/p&gt;
+
+&lt;p&gt;How about performance?&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/benchmarking-qwen-3-6-35b-moe-rtx-3090/cuda-throughput-chart.png" alt="Running Llama.cpp on CUDA: throughput vs layers offloaded to CPU" title="Running Llama.cpp on CUDA: throughput vs layers offloaded to CPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;With CUDA, we don't get those odd bumps in the generation throughput -- or at least,
+if they're there, they're much smaller.  Perhaps Claude's ponderings that I mentioned earlier were off
+the mark?  Or perhaps they only impact Vulkan? &lt;sup class="footnote-ref" id="fnref-7"&gt;&lt;a href="#fn-7"&gt;7&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;But the big news on this chart is -- as I had suspected would be the case -- CUDA was noticeably
+faster!  With all layers on the GPU, it was getting 139.6 tokens/second generation,
+3360.4 tokens/second on the prompt, as compared to around 122 / 2787 for Vulkan, averaging across
+my four runs on that platform.   And
+with a bigger context window too.&lt;/p&gt;
+
+&lt;p&gt;With ten layers offloaded, CUDA had the full context length of 262,144, and was getting 89.1 / 1153.5,
+while Vulkan managed a context length of 233,984, and throughput of 66 / 702.&lt;/p&gt;
+
+&lt;p&gt;Finally, with 12 layers offloaded, both models had the full context length, CUDA
+had throughput of 84.9 / 1008.1, and Vulkan had 66 / 607.  And that meant that
+we were able to reclaim some VRAM too:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/benchmarking-qwen-3-6-35b-moe-rtx-3090/cuda-memory-chart.png" alt="Running Llama.cpp on CUDA: memory vs layers offloaded to CPU" title="Running Llama.cpp on CUDA: memory vs layers offloaded to CPU" /&gt;&lt;/p&gt;
+
+&lt;p&gt;Advantage: CUDA, I think.&lt;/p&gt;
+
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+
+&lt;p&gt;That was probably just a tad more time and effort than I think my friend expected me
+to put into this when he asked an offhand question on WhatsApp.  But I feel that I've
+learned a lot of useful stuff in this journey, and while there's a lot of detail in
+this post, it didn't actually take up much time to run the experiments.  I have another post on the way that
+involves multiple four-day training runs, so I needed to occupy my time somehow...&lt;/p&gt;
+
+&lt;p&gt;Anyway, I hope it's useful to people out there!  Let me know in the comments if it helped you.&lt;/p&gt;
+
+&lt;p&gt;And now, just to finish off, a bonus section on the prompt I was using to get the
+model to generate lots of stuff.&lt;/p&gt;
+
+&lt;h2 id="appendix-the-lem-test"&gt;Appendix: the Lem test&lt;/h2&gt;
+
+&lt;p&gt;The prompt I was using for these tests was this:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Compose a poem -- a poem about a haircut! But lofty, tragic, timeless, full of love, treachery, retribution, quiet heroism in the face of certain doom! Six lines, cleverly rhymed, and every word beginning with the letter S!&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;What I like about it as a prompt is not just that it's a particularly silly thing
+to ask of an LLM, but it forces models with reasoning enabled to think hard about how
+to keep within all of those constraints.  It's basically a short prompt that makes
+them generate a lot of tokens -- perfect for benchmarking.&lt;/p&gt;
+
+&lt;p&gt;I stole it from Ethan Mollick.  He's well worth following if you're not
+already doing so; here's &lt;a href="https://x.com/emollick"&gt;his X/Twitter profile&lt;/a&gt;, and
+&lt;a href="https://www.oneusefulthing.org/"&gt;his Substack&lt;/a&gt;.  He writes
+a ton of interesting stuff, but I want to focus here on this particular eval.&lt;/p&gt;
+
+&lt;p&gt;In the science fiction short story "The first sally (A), or Trurl's electronic bard" (included in
+the collection &lt;em&gt;The Cyberiad&lt;/em&gt;), Stanisław Lem wrote of two rival engineers.  One of them,
+Trurl, has created an electronic poet, and the other, Klapaucius, gives it what he
+thinks is an impossible task.  From the English translation of this part
+&lt;a href="https://www.goodreads.com/quotes/400182-have-it-compose-a-poem--a-poem-about-a-haircut"&gt;on Goodreads&lt;/a&gt;:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;"Have it compose a poem -- a poem about a haircut! But lofty, tragic, timeless,
+  full of love, treachery, retribution, quiet heroism in the face of certain
+  doom! Six lines, cleverly rhymed, and every word beginning with the letter S!!"&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;The machine ponders briefly, and responds:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Seduced, shaggy Samson snored.&lt;br /&gt;
+  She scissored short. Sorely shorn,&lt;br /&gt;
+  Soon shackled slave, Samson sighed,&lt;br /&gt;
+  Silently scheming,&lt;br /&gt;
+  Sightlessly seeking&lt;br /&gt;
+  Some savage, spectacular suicide.&lt;br /&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;The story is a fun read, definitely recommended!  You can see a bunch of parallels
+between current LLMs in the way Trurl's machine works -- and in its failure modes.&lt;/p&gt;
+
+&lt;p&gt;Mollick decided to use it as a prompt ages ago, and in March 2024, &lt;a href="https://x.com/emollick/status/1765136992176644281"&gt;he managed to get Claude 3 to &lt;em&gt;almost&lt;/em&gt; complete the task&lt;/a&gt;.
+The result wasn't a very good poem, but neither ChatGPT 4 nor the version of Gemini
+at the time were close.  Here's Claude 3's attempt:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Stealthily snipping, shearing silky strands,&lt;br /&gt;
+  Severing soulmate's sacred, sworn soulbands.&lt;br /&gt;
+  Scoundrel's scandalous sins spurred sly scheme,&lt;br /&gt;
+  Spurring scorned sweetheart's spiteful supreme dream.&lt;br /&gt;
+  Shining locks sacrificed, stoically shorn,&lt;br /&gt;
+  Stalwart spirit stays strong, staunchly reborn.&lt;br /&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;You can see that it had two non-S words, "dream" and "reborn" &lt;sup class="footnote-ref" id="fnref-8"&gt;&lt;a href="#fn-8"&gt;8&lt;/a&gt;&lt;/sup&gt;.  But otherwise not
+bad -- it makes sense, the rhymes work, and it ticks the emotional boxes.&lt;/p&gt;
+
+&lt;p&gt;Recent models have become very good; here's Claude Fable 5 from today:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Ah, Trurl's Electronic Bard's finest hour — the impossible commission from The Cyberiad! Here's my own attempt at the feat:&lt;/p&gt;
+  
+  &lt;p&gt;Soft she sang; strong Samson slumbered, serene;&lt;br /&gt;
+  Sly, she snipped seven shining strands, scarcely seen.&lt;br /&gt;
+  Soldiers stormed, seized, scorched Samson's sight;&lt;br /&gt;
+  Shackled, still, sightless — seething sacred spite.&lt;br /&gt;
+  Straining, steadfast, Samson seized stout stanchions, swaying slow —&lt;br /&gt;
+  Stones smashed; seductress, soldiers, Samson: slain. So sagas show.&lt;br /&gt;&lt;/p&gt;
+  
+  &lt;p&gt;Love in the lullaby, treachery in the shears, doom in the darkness, heroism at the pillars, and retribution in the rubble — with every single word dutifully saluting the letter S. The Electronic Bard would, I hope, give a grudging beep of approval.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Now, it recognised the source, so perhaps that helped -- but while I'm no
+connoisseur of poetry, I actually think it's slightly better than Lem's
+version (though as Lem wrote in Polish, that's the work of his translator --
+and translating poetry is obviously a tough task).&lt;/p&gt;
+
+&lt;p&gt;And while both versions
+are based on Samson, given that he was a biblical hero who lost his strength
+after his hair was cut, he's a pretty obvious subject for a tragic poem about
+a haircut, especially if every word has to start with the letter "S" -- so I don't
+think that points to copying.&lt;/p&gt;
+
+&lt;p&gt;ChatGPT 5.6 Sol also does a great job:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Silken Samson sought sweetheart’s soft sanctuary;&lt;br /&gt;
+  Sweetheart, serpent-souled, summoned shears—sanguinary.&lt;br /&gt;
+  Silver strands slid; sacred strength sank, slain;&lt;br /&gt;
+  Silent sorrow sealed sweetheart’s scarlet stain.&lt;br /&gt;
+  Shorn, storm-bound, Samson shielded slaves, steadfast;&lt;br /&gt;
+  Stone sanctums shattered; smiling, Samson sank—surpassed.&lt;br /&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Another Samson-based one; it doesn't say it recognises the source, but I imagine it did.&lt;/p&gt;
+
+&lt;p&gt;Now let's take a look at some samples from this tiny model we've been benchmarking
+-- 35B parameters, 3B active, of which only 2B are doing the actual thinking (rather than
+messing around with embeddings).  Here's the first one I got:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Sneering shears shred sacred share,&lt;br /&gt;
+  Silent steel sells silver soul;&lt;br /&gt;
+  Sister's snare spares son;&lt;br /&gt;
+  Sweet sign seals sole;&lt;br /&gt;
+  Still star saves sun;&lt;br /&gt;
+  Secret sign seals son.&lt;br /&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;I mean, it's not amazing, but it satisfies the S constraint.  Less impressed by
+how well it handles the "cleverly rhymed" part, though -- as I said earlier, its
+scheme is ABCBCC, which is odd rather than clever -- and it doesn't make an awful
+amount of sense.&lt;/p&gt;
+
+&lt;p&gt;I noted down two more while I was playing with this:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Silent shears sever sweet silver strands;&lt;br /&gt;
+  She stands, sacrificing self; submission seals severing's demands.&lt;br /&gt;
+  Shear's snare strikes; swift sentence seals sorrowful sphere.&lt;br /&gt;
+  Shorn sovereign swears silence shields secret spear;&lt;br /&gt;
+  She saves sacred soul; stillness safeguards sterling store.&lt;br /&gt;
+  Spirit soars; sorrow's stroke stops, solace restores.&lt;br /&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;That one's a lot better, I think; there's a hint of a story, and at least it rhymes.&lt;/p&gt;
+
+&lt;p&gt;The next:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Sister's scheme scalp shorn,&lt;br /&gt;
+  Silver shears slice soul sworn,&lt;br /&gt;
+  Sweetheart's steel skull sear,&lt;br /&gt;
+  Silent slitters shear.&lt;br /&gt;
+  Spirit spies sight,&lt;br /&gt;
+  Sorrow swallows slight.&lt;br /&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Again, poetry isn't my thing.  But I think that Claude 3's offering from two years ago
+is better than any of them -- apart from the fact that it couldn't keep the "S"
+constraint.&lt;/p&gt;
+
+&lt;p&gt;Still, it's impressive to see how well such a tiny model -- again, 2B actual thinking
+parameters per token -- can do on what is a pretty challenging task!&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;With some models, there are also extra FFNs that are always loaded that do
+stuff before the routed expert ones.  Again, I'll dig into the details at a later
+point.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;That said, a while back Dan Woods managed to get &lt;a href="https://huggingface.co/Qwen/Qwen3.5-397B-A17B"&gt;Qwen3.5-397B-A17B&lt;/a&gt;
+-- 397B parameters with 17B active -- to &lt;a href="https://github.com/danveloper/flash-moe"&gt;run on a 48 GiB Macbook Pro&lt;/a&gt;
+with some very clever use of the SSD.  It was &lt;em&gt;slow&lt;/em&gt;, though, at around 4 tokens/second.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;And only supports certain sizes for certain kinds of operations.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-4"&gt;
+&lt;p&gt;As was the size of the prompt, but I got to that later.&amp;#160;&lt;a href="#fnref-4" class="footnoteBackLink" title="Jump back to footnote 4 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-5"&gt;
+&lt;p&gt;Yes, my blog posts have started accumulating appendices as well as footnotes.
+I may have a problem.&amp;#160;&lt;a href="#fnref-5" class="footnoteBackLink" title="Jump back to footnote 5 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-6"&gt;
+&lt;p&gt;Some readers might feel that that ship sailed long ago and I was already very
+much into the weeds, and possibly in the middle of the Amazon jungle.  I disagree, but largely
+due to the mixed metaphor.&amp;#160;&lt;a href="#fnref-6" class="footnoteBackLink" title="Jump back to footnote 6 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-7"&gt;
+&lt;p&gt;"Put down that rabbit hole and step slowly away, Giles."&amp;#160;&lt;a href="#fnref-7" class="footnoteBackLink" title="Jump back to footnote 7 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-8"&gt;
+&lt;p&gt;'Hey, Claude 3, how many "S"s are there in "strawberry"?'&amp;#160;&lt;a href="#fnref-8" class="footnoteBackLink" title="Jump back to footnote 8 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/07/benchmarking-qwen-3-6-35b-moe-rtx-3090</guid>
+      <pubDate>Fri, 24 Jul 2026 23:30:00 +0000</pubDate>
+    </item>
     <item>
       <title>Building intuition about LLM parameter counts</title>
       <link>https://www.gilesthomas.com/2026/07/llm-parameter-counts</link>
@@ -5589,256 +6862,6 @@ like the right tool for that.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2026/06/jax-backends-and-devices</guid>
       <pubDate>Fri, 05 Jun 2026 19:30:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Using Safetensors with Flax</title>
-      <link>https://www.gilesthomas.com/2026/06/flax-and-safetensors</link>
-      <description>&lt;p&gt;I'm porting my &lt;a href="/llm-from-scratch"&gt;PyTorch LLM code&lt;/a&gt; to
-&lt;a href="/2026/05/on-first-looking-into-jax"&gt;JAX&lt;/a&gt;, using
-&lt;a href="https://flax.readthedocs.io/en/stable/"&gt;Flax&lt;/a&gt; as the neural network layer.
-For various reasons I wanted to use &lt;a href="https://huggingface.co/docs/safetensors/index"&gt;Safetensors&lt;/a&gt;
-to store checkpoints of the model.  It took a little while to get it working;
-here's the trick I learned.&lt;/p&gt;
-&lt;p&gt;If you look at the Safetensors docs, you'll see that it doesn't mention a JAX implementation --
-indeed, searching for "safetensors jax" at the time I'm writing this gives you a link
-to &lt;a href="https://github.com/alvarobartt/safejax"&gt;this GitHub repo by Alvaro Bartolome&lt;/a&gt; -- which was last updated in
-2023.&lt;/p&gt;
-
-&lt;p&gt;However, if you look more closely at the docs, they &lt;em&gt;do&lt;/em&gt; have a link to the
-&lt;a href="https://huggingface.co/docs/safetensors/api/flax"&gt;Flax API&lt;/a&gt;.  I feel this is somewhat
-misnamed, as it is actually a JAX API.  There's no reference (again, as of the time of
-writing) to Flax in the source -- it's all just JAX code.  And in fact Bartolome's library
-uses it under the hood.&lt;/p&gt;
-
-&lt;p&gt;There is one problem, though.  The API works with simple single-level dictionaries,
-with strings mapping directly to JAX arrays.  For example, the &lt;code&gt;save_file&lt;/code&gt; function has this
-signature:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;save_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-    &lt;span class="n"&gt;tensors&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Dict&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
-    &lt;span class="n"&gt;filename&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Union&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;os&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;PathLike&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
-    &lt;span class="n"&gt;metadata&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Optional&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;Dict&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;]]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;This can cause problems if you're not careful.  If you look at the
-&lt;a href="https://flax.readthedocs.io/en/stable/guides/checkpointing.html"&gt;Flax documentation on checkpointing&lt;/a&gt;,
-it suggests that you use &lt;a href="https://orbax.readthedocs.io/en/latest/index.html"&gt;Orbax&lt;/a&gt; &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;,
-which has its own API and file format, but then goes on to say:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;When interacting with checkpoint libraries (like Orbax), you may prefer to work
-  with Python built-in container types. In this case, you can use the
-  &lt;code&gt;nnx.State.to_pure_dict&lt;/code&gt; and &lt;code&gt;nnx.State.replace_by_pure_dict&lt;/code&gt; API to convert an
-  &lt;code&gt;nnx.State&lt;/code&gt; to and from pure nested dictionaries.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;I initially put two and two together -- that and the dictionary-based API
-for Safetensors -- and got five, and tried feeding one of those "pure" dicts into
-Safetensors.  I got a very confusing error:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;SafetensorError: dtype object is not covered&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;It's worth digging in to why that happens.&lt;/p&gt;
-
-&lt;p&gt;The problem is that although Safetensors is expecting a dict of strings mapping to
-tensors, it doesn't check that that is what it actually gets.  And while the dictionaries
-from &lt;code&gt;nnx.State.to_pure_dict&lt;/code&gt; are "pure", they are also nested (as the docs say!).  Even for the simple
-model I was working with, I got a structure like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="s1"&gt;&amp;#39;output_head&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="s1"&gt;&amp;#39;kernel&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="p"&gt;},&lt;/span&gt;
-    &lt;span class="s1"&gt;&amp;#39;token_embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="s1"&gt;&amp;#39;embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="p"&gt;}&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So, we had strings mapping to dicts, and those dicts mapped from strings to the JAX arrays.
-More complex models would have had deeper dict structures.&lt;/p&gt;
-
-&lt;p&gt;Now, internally inside Safetensors, the Flax/JAX API is a simple wrapper.  It
-iterates over the keys in the dictionary it's been provided with, and tries to convert
-their respective values into NumPy arrays.  It does that by passing them into
-NumPy's &lt;code&gt;asarray&lt;/code&gt; function, which accepts things like lists, tuples, and NumPy arrays,
-and converts them into arrays.  JAX's own &lt;code&gt;Array&lt;/code&gt; class exposes an interface that it
-recognises, so they're converted without trouble.&lt;/p&gt;
-
-&lt;p&gt;Once it's done that, it passes the result
-to a lower-level Rust implementation that actually converts everything to Safetensors
-format.&lt;/p&gt;
-
-&lt;p&gt;But because Safetensors didn't check types, in my case it was iterating over the top level of the
-dict, trying to convert the values to NumPy arrays, and got something like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="s1"&gt;&amp;#39;output_head&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;numpy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="p"&gt;({&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;kernel&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)},&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="nb"&gt;object&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-    &lt;span class="s1"&gt;&amp;#39;token_embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;numpy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="p"&gt;({&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)},&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="nb"&gt;object&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That is -- because it assumed that the values in the top-level dict were JAX &lt;code&gt;Array&lt;/code&gt;s,
-it blindly tried to convert them to NumPy arrays.  But they were dicts (that
-happened to map from strings to arrays) -- and if you ask &lt;code&gt;asarray&lt;/code&gt; to create an array based on
-a random object, it happily does so and wraps that object in a NumPy array, with a &lt;code&gt;dtype&lt;/code&gt;
-of &lt;code&gt;object&lt;/code&gt;.&lt;/p&gt;
-
-&lt;p&gt;When that is then fed into the lower-level Rust code that is trying to write the
-file, it encounters NumPy arrays that have a &lt;code&gt;dtype&lt;/code&gt; it can't handle, &lt;code&gt;object&lt;/code&gt; --
-hence that error:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;SafetensorError: dtype object is not covered&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;It all makes sense when you read through the code, but I was a bit perplexed for a while!&lt;/p&gt;
-
-&lt;p&gt;I think all this might be the reason why Bartolome created his GitHub
-repo.  In the README, he says that:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;There are no plans from HuggingFace to extend safetensors to support anything
-  more than tensors e.g. &lt;code&gt;FrozenDicts&lt;/code&gt;, see their response at
-  &lt;a href="https://github.com/safetensors/safetensors/discussions/138"&gt;huggingface/safetensors/discussions/138&lt;/a&gt;.&lt;/p&gt;
-  
-  &lt;p&gt;So the motivation to create &lt;code&gt;safejax&lt;/code&gt; is to easily provide a way to serialize
-  &lt;code&gt;FrozenDicts&lt;/code&gt; using safetensors as the tensor storage format&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;However, you don't need to use that library to serialise simple Flax models.&lt;/p&gt;
-
-&lt;p&gt;Consider how PyTorch models get serialised to Safetensors; my LLMs have keys with names
-like &lt;code&gt;out_head.weight&lt;/code&gt;, &lt;code&gt;pos_emb.weight&lt;/code&gt;, and &lt;code&gt;trf_blocks.0.att.out_proj.weight&lt;/code&gt;.
-They're "flat" dictionaries mapping strings to PyTorch Tensors, similar to what Safetensors
-wants for these Flax ones, but they use dots to separate different levels, with integers
-for list items and strings for field names.&lt;/p&gt;
-
-&lt;p&gt;Looking at the pure-dict structure I had for my model:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="s1"&gt;&amp;#39;output_head&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="s1"&gt;&amp;#39;kernel&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="p"&gt;},&lt;/span&gt;
-    &lt;span class="s1"&gt;&amp;#39;token_embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="s1"&gt;&amp;#39;embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="p"&gt;}&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...you can see that you could walk the dictionary structure to generate keys like
-&lt;code&gt;output_head.kernel&lt;/code&gt; and &lt;code&gt;token_embedding.embedding&lt;/code&gt;.  That would be easy enough to code
-up.&lt;/p&gt;
-
-&lt;p&gt;But -- as Adithya Dsilva &lt;a href="https://github.com/google/flax/discussions/4900"&gt;points out on GitHub&lt;/a&gt; -- you can get there even faster by using
-&lt;a href="https://flax.readthedocs.io/en/stable/api_reference/flax.nnx/state.html#flax.nnx.to_flat_state"&gt;&lt;code&gt;nnx.to_flat_state&lt;/code&gt;&lt;/a&gt;.
-That returns a (non-dict) structure like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;FlatState&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;
-  &lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;output_head&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;kernel&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="n"&gt;Param&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt; &lt;span class="c1"&gt;# 786,432 (3.1 MB)&lt;/span&gt;
-    &lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([[&lt;/span&gt; &lt;span class="mf"&gt;2.3581974e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;  &lt;span class="mf"&gt;3.0957451e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;3.5088759e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-            &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;4.5880198e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;  &lt;span class="mf"&gt;5.3717274e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;2.6590331e-02&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
-           &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-           &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;9.6302675e-03&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;3.3276502e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;  &lt;span class="mf"&gt;5.7173111e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-            &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;7.9063717e-03&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;  &lt;span class="mf"&gt;2.0532632e-02&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;  &lt;span class="mf"&gt;5.4753982e-02&lt;/span&gt;&lt;span class="p"&gt;]],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="p"&gt;)),&lt;/span&gt;
-  &lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;token_embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;embedding&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="n"&gt;Param&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt; &lt;span class="c1"&gt;# 786,432 (3.1 MB)&lt;/span&gt;
-    &lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;([[&lt;/span&gt; &lt;span class="mf"&gt;0.00273973&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;0.01754938&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;  &lt;span class="mf"&gt;0.04656043&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;0.04276522&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-            &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;0.03986642&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;0.00781331&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
-           &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-           &lt;span class="p"&gt;[&lt;/span&gt; &lt;span class="mf"&gt;0.01421758&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;0.0219186&lt;/span&gt; &lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;0.01701825&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mf"&gt;0.00793659&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-             &lt;span class="mf"&gt;0.00500103&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;  &lt;span class="mf"&gt;0.03839901&lt;/span&gt;&lt;span class="p"&gt;]],&lt;/span&gt; &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;float32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-  &lt;span class="p"&gt;))&lt;/span&gt;
-&lt;span class="p"&gt;])&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;If you iterate over that &lt;code&gt;FlatState&lt;/code&gt;, you get tuples where the first element is that
-tuple of strings, like &lt;code&gt;('output_head', 'kernel')&lt;/code&gt;, and the second is a &lt;code&gt;Param&lt;/code&gt; object wrapping
-the JAX &lt;code&gt;Array&lt;/code&gt;.
-The tuples mirror the dot-separated string format in the PyTorch-style Safetensors files.&lt;/p&gt;
-
-&lt;p&gt;&lt;code&gt;Param&lt;/code&gt; objects also implement an interface that &lt;code&gt;asarray&lt;/code&gt; can understand,
-so you can quickly and easily convert the &lt;code&gt;FlatState&lt;/code&gt; to a regular dict for Safetensors:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;safetensors.flax&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;save_file&lt;/span&gt;
-
-    &lt;span class="o"&gt;...&lt;/span&gt;
-
-    &lt;span class="n"&gt;model_state&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;flat_state&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to_flat_state&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model_state&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;simple_dict&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;tuple_key&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;param&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;flat_state&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="n"&gt;key&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;.&amp;quot;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;join&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;key&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;tuple_key&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;simple_dict&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;param&lt;/span&gt;
-
-    &lt;span class="n"&gt;save_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;simple_dict&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;model.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;(You need to wrap &lt;code&gt;key&lt;/code&gt; in a &lt;code&gt;str&lt;/code&gt; because if you have a &lt;code&gt;nnx.Sequential&lt;/code&gt; in your model, the
-item in the tuple will get an integer index rather than a string).&lt;/p&gt;
-
-&lt;p&gt;You can go the other way pretty easily too; given a model, you can load the saved
-checkpoint into it like this (because &lt;code&gt;from_flat_state&lt;/code&gt; accepts raw JAX &lt;code&gt;Array&lt;/code&gt;s
-in place of explicit &lt;code&gt;Param&lt;/code&gt;s):&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;safetensors.flax&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;
-
-    &lt;span class="o"&gt;...&lt;/span&gt;
-
-    &lt;span class="n"&gt;simple_dict&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;model.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-
-    &lt;span class="n"&gt;dict_flat_state&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;array&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;simple_dict&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
-        &lt;span class="n"&gt;elements&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;split&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;.&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;list_key&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
-        &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;element&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;elements&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="k"&gt;try&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-                &lt;span class="n"&gt;list_key&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;element&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-            &lt;span class="k"&gt;except&lt;/span&gt; &lt;span class="ne"&gt;ValueError&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-                &lt;span class="n"&gt;list_key&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;element&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;dict_flat_state&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="nb"&gt;tuple&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;list_key&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;array&lt;/span&gt;
-
-    &lt;span class="n"&gt;new_flat_state&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;from_flat_state&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dict_flat_state&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;nnx&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;update&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;new_flat_state&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;A little more work than I'd ideally like, but given that it can be tucked away
-in general &lt;code&gt;save_checkpoint&lt;/code&gt;/&lt;code&gt;load_checkpoint&lt;/code&gt; functions, not too big a deal.&lt;/p&gt;
-
-&lt;p&gt;Hope that's of use for other people coming across this problem!&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;I'm beginning to feel a bit swamped with all of these libraries with names
-ending in -ax.  It reminds me of
-&lt;a href="https://asterix.fandom.com/wiki/List_of_Asterix_characters#Villagers_of_the_Indomitable_Village"&gt;the names of the characters in Asterix's village&lt;/a&gt;...&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/06/flax-and-safetensors</guid>
-      <pubDate>Thu, 04 Jun 2026 23:30:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
