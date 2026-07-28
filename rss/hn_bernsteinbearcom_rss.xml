@@ -5,7 +5,513 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Tue, 28 Jul 2026 14:19:08 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 28 Jul 2026 16:45:13 +0000</lastBuildDate>
+    <item>
+      <title>The inliner is yielding benefits for ZJIT</title>
+      <link>https://bernsteinbear.com/blog/zjit-inliner-invokeblock/?utm_source=rss</link>
+      <description>&lt;p&gt;&lt;em&gt;Originally published on &lt;a href="https://railsatscale.com/2026-07-28-the-inliner-is-yielding-benefits/"&gt;Rails At Scale&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;We recently enabled a really cool feature in ZJIT that makes it feel like a
+Real Compiler™: the inliner! We’ll write more about it soon. In this
+post, we’ll talk about one excellent concrete benefit we are already seeing and
+how it optimizes blocks in pretty much every Ruby program.&lt;/p&gt;
+
+&lt;p&gt;I’ll start off with a refresher on how blocks work in the Ruby interpreter,
+then show you how ZJIT understands and optimizes that bytecode, and then show
+you the impact of the inliner.&lt;/p&gt;
+
+&lt;h2 id="ruby-a-refresher"&gt;Ruby: a refresher&lt;/h2&gt;
+
+&lt;p&gt;In the beginning, there were loops.&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;arr&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;sum&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="k"&gt;while&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;arr&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;
+  &lt;span class="n"&gt;sum&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="n"&gt;arr&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+  &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;People used them to navigate and manipulate variable-length structures, like
+arrays and strings. This was fine.&lt;/p&gt;
+
+&lt;p&gt;Then, in the 1970s, a small group of computer scientists at Palo Alto Research
+Center invented a programming language called Smalltalk. One of the core
+features of Smalltalk was that everything was an object and computation was
+done by sending messages to objects.&lt;/p&gt;
+
+&lt;p&gt;This meant that iteration wouldn’t do at all. Instead, we would have to send
+the &lt;code class="language-plaintext highlighter-rouge"&gt;do:&lt;/code&gt; message to the array object and pass it a block object.&lt;/p&gt;
+
+&lt;div class="language-smalltalk highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="ss"&gt;#(&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt; &lt;span class="m"&gt;2&lt;/span&gt; &lt;span class="m"&gt;3&lt;/span&gt;&lt;span class="ss"&gt;)&lt;/span&gt; &lt;span class="nf"&gt;do:&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="nv"&gt;a&lt;/span&gt; &lt;span class="p"&gt;|&lt;/span&gt; &lt;span class="nv"&gt;sum&lt;/span&gt; &lt;span class="o"&gt;:=&lt;/span&gt; &lt;span class="nv"&gt;sum&lt;/span&gt; &lt;span class="nf"&gt;+&lt;/span&gt; &lt;span class="nv"&gt;a&lt;/span&gt;&lt;span class="p"&gt;].&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Then, in the 1990s, Matz, inspired by Smalltalk and Perl, created Ruby. We
+still have “normal” loops but we also have a very Smalltalk-y way of doing it,
+too:&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;arr&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="n"&gt;sum&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="n"&gt;arr&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+  &lt;span class="n"&gt;sum&lt;/span&gt; &lt;span class="o"&gt;+=&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;When this program gets compiled to Ruby bytecode, it ends up looking like a
+mostly normal method call to &lt;code class="language-plaintext highlighter-rouge"&gt;each&lt;/code&gt; except that we pass a special kind of
+argument to it: a block argument.&lt;/p&gt;
+
+&lt;p&gt;To see how this works inside CRuby, we’re going to look at a listing of YARV
+bytecode—CRuby bytecode. For more on YARV, I recommend Kevin Newton’s
+excellent &lt;a href="https://kddnewton.com/2022/11/30/advent-of-yarv-part-0.html"&gt;Advent of
+YARV&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Ignore most of the bytecode dump below except for the instruction at &lt;code class="language-plaintext highlighter-rouge"&gt;0009&lt;/code&gt;,
+the &lt;code class="language-plaintext highlighter-rouge"&gt;send&lt;/code&gt; instruction. We are &lt;em&gt;send&lt;/em&gt;-ing (see? a message!) &lt;code class="language-plaintext highlighter-rouge"&gt;each&lt;/code&gt; with the
+block argument &lt;code class="language-plaintext highlighter-rouge"&gt;block in &amp;lt;main&amp;gt;&lt;/code&gt; (passed a different way than “normal”
+arguments, hence the &lt;code class="language-plaintext highlighter-rouge"&gt;argc:0&lt;/code&gt;).&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ ruby --dump=insns /tmp/arrayeach.rb
+== disasm: #&amp;lt;ISeq:&amp;lt;main&amp;gt;@/tmp/arrayeach.rb:1 (1,0)-(5,3)&amp;gt;
+local table (...)
+[ 2] arr@0      [ 1] sum@1
+0000 duparray                   [1, 2, 3]                 (   1)[Li]
+0002 setlocal_WC_0              arr@0
+0004 putobject_INT2FIX_0_                                 (   2)[Li]
+0005 setlocal_WC_0              sum@1
+0007 getlocal_WC_0              arr@0                     (   3)[Li]
+0009 send                       &amp;lt;calldata!mid:each, argc:0&amp;gt;, block in &amp;lt;main&amp;gt;
+0012 leave
+...continued below...
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This &lt;code class="language-plaintext highlighter-rouge"&gt;block in &amp;lt;main&amp;gt;&lt;/code&gt; from the bytecode listing above is the generated name of
+the &lt;em&gt;instruction sequence&lt;/em&gt; (bytecode) corresponding to the block we passed to
+&lt;code class="language-plaintext highlighter-rouge"&gt;each&lt;/code&gt;. Its code, shown below, is the next thing in the bytecode dump. You can
+see the usage of local variables &lt;code class="language-plaintext highlighter-rouge"&gt;sum&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; via &lt;code class="language-plaintext highlighter-rouge"&gt;getlocal&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;setlocal&lt;/code&gt;
+variants and also &lt;code class="language-plaintext highlighter-rouge"&gt;opt_plus&lt;/code&gt;, which represents addition (&lt;code class="language-plaintext highlighter-rouge"&gt;+&lt;/code&gt;). Again, the
+details are not terribly important:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;...continued from above...
+== disasm: #&amp;lt;ISeq:block in &amp;lt;main&amp;gt;@/tmp/arrayeach.rb:3 (3,9)-(5,3)&amp;gt;
+local table (...)
+[ 1] a@0&amp;lt;AmbiguousArg&amp;gt;
+0000 getlocal_WC_1              sum@1                     (   4)[LiBc]
+0002 getlocal_WC_0              a@0
+0004 opt_plus                   &amp;lt;calldata!mid:+, argc:1, ARGS_SIMPLE&amp;gt;[CcCr]
+0006 dup
+0007 setlocal_WC_1              sum@1
+0009 leave                                                (   5)[Br]
+$
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;To make this work, &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt; has an &lt;code class="language-plaintext highlighter-rouge"&gt;each&lt;/code&gt; method. This &lt;code class="language-plaintext highlighter-rouge"&gt;each&lt;/code&gt; method takes in
+its optional block argument and calls it once for every element in the array.&lt;/p&gt;
+
+&lt;p&gt;As with most of the core data structures, &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt;’s methods tend to be written
+in C and &lt;code class="language-plaintext highlighter-rouge"&gt;each&lt;/code&gt; is no different. Here is its nice and short definition with
+comments added by me:&lt;/p&gt;
+
+&lt;div class="language-c highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;VALUE&lt;/span&gt;
+&lt;span class="nf"&gt;rb_ary_each&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="n"&gt;ary&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="kt"&gt;long&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="c1"&gt;// Some debug-mode-only checks&lt;/span&gt;
+    &lt;span class="n"&gt;ary_verify&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ary&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+    &lt;span class="c1"&gt;// If we didn't pass a block in, return an enumerator object&lt;/span&gt;
+    &lt;span class="n"&gt;RETURN_SIZED_ENUMERATOR&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ary&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;ary_enum_length&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+    &lt;span class="c1"&gt;// We passed a block in, so call it for every element&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;RARRAY_LEN&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ary&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;++&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+        &lt;span class="n"&gt;rb_yield&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;RARRAY_AREF&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ary&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;ary&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;You can’t really see the block parameter to the C code because it’s passed in a
+special location on the Ruby VM’s own stack called the &lt;em&gt;block handler&lt;/em&gt;. All you
+need to know is that &lt;code class="language-plaintext highlighter-rouge"&gt;rb_yield&lt;/code&gt; knows where to find that and how to call it.&lt;/p&gt;
+
+&lt;p&gt;There’s just one more thing, which is… hang on, weren’t we building a JIT to
+optimize Ruby code? How are we going to optimize this C code?&lt;/p&gt;
+
+&lt;h2 id="jits-a-refresher"&gt;JITs: a refresher&lt;/h2&gt;
+
+&lt;p&gt;Rewriting code from C to Ruby means that the JIT compiler gets a chance to
+introspect the run-time behavior and code. This means that, over time, as the
+compiler and the runtime system grow together, more and more code might get
+rewritten in Ruby. This started happening a couple of years ago with YJIT.&lt;/p&gt;
+
+&lt;p&gt;YJIT precipitated some interesting changes to Ruby VM internals. For example,
+in 2022, &lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt; being written in C started to hurt: it was an opaque blob
+that the JIT couldn’t reason about. So Kokubun submitted &lt;a href="https://github.com/ruby/ruby/pull/6687"&gt;a
+PR&lt;/a&gt; to rewrite it in Ruby. After some
+back and forth, in 2024, Kokubun landed &lt;a href="https://github.com/ruby/ruby/pull/11955"&gt;a different
+PR&lt;/a&gt; that everyone was happy with.&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;Array&lt;/span&gt;
+  &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="c1"&gt;# :nodoc:&lt;/span&gt;
+    &lt;span class="no"&gt;Primitive&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;attr!&lt;/span&gt; &lt;span class="ss"&gt;:inline_block&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="ss"&gt;:c_trace&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="ss"&gt;:without_interrupts&lt;/span&gt;
+
+    &lt;span class="k"&gt;unless&lt;/span&gt; &lt;span class="k"&gt;defined?&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;yield&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+      &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="no"&gt;Primitive&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;cexpr!&lt;/span&gt; &lt;span class="s1"&gt;'SIZED_ENUMERATOR(self, 0, 0, ary_enum_length)'&lt;/span&gt;
+    &lt;span class="k"&gt;end&lt;/span&gt;
+    &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
+    &lt;span class="k"&gt;until&lt;/span&gt; &lt;span class="no"&gt;Primitive&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;rb_jit_ary_at_end&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+      &lt;span class="k"&gt;yield&lt;/span&gt; &lt;span class="no"&gt;Primitive&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;rb_jit_ary_at&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+      &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="no"&gt;Primitive&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;rb_jit_fixnum_inc&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;end&lt;/span&gt;
+    &lt;span class="nb"&gt;self&lt;/span&gt;
+  &lt;span class="k"&gt;end&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Ah, finally. A version that JITs can reason about.&lt;/p&gt;
+
+&lt;p&gt;I keep saying “reason about” and what that means concretely here is a) that
+it’s written in a format that the JIT can ingest and optimize: Ruby, and b) mostly a
+brief rehashing of the key lessons in the venerable Smalltalk (!) paper
+&lt;a href="https://dl.acm.org/doi/pdf/10.1145/800017.800542"&gt;Efficient Implementation of the Smalltalk-80
+System&lt;/a&gt; (PDF):&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Though systems may offer very dynamic behavior, people don’t frequently make
+use of wild features all over the place
+    &lt;ul&gt;
+      &lt;li&gt;Most people pass fewer than 4 types of objects through a given method&lt;/li&gt;
+      &lt;li&gt;As a corollary, even if there are many classes in a system, code locality
+is super important, and we can take advantage of that&lt;/li&gt;
+      &lt;li&gt;Also, most people do not define, re-define, and otherwise continuously
+modify method definitions&lt;/li&gt;
+    &lt;/ul&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;(And if you don’t believe me that the lessons still apply, check out the
+excellent paper &lt;a href="https://dl.acm.org/doi/pdf/10.1145/3563834.3567538"&gt;Who You Gonna
+Call&lt;/a&gt; (PDF) by Sophie
+Kaleba, Octave Larose, Richard Jones, and Stefan Marr.)&lt;/p&gt;
+
+&lt;p&gt;So JITs like to watch what types of objects flow through methods before
+compiling them. And JITs like to, since they know the types of objects, cache
+method lookups and specialize method invocations on those objects.&lt;/p&gt;
+
+&lt;p&gt;For example, take a look at this code:&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;next_capacity&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;x&lt;/code&gt; could be anything. There is no way of knowing its type by looking at the
+code. This means that the &lt;code class="language-plaintext highlighter-rouge"&gt;length&lt;/code&gt; method could be anything. Furthermore, there
+is no way of knowing what the return type of &lt;code class="language-plaintext highlighter-rouge"&gt;x.length&lt;/code&gt; is, so we can’t
+specialize the method lookups or invocations of &lt;code class="language-plaintext highlighter-rouge"&gt;*&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;+&lt;/code&gt; either.&lt;/p&gt;
+
+&lt;p&gt;But! Per our lessons above, likely only a few types flow through this code. Say
+the JIT’s profiler notices that &lt;code class="language-plaintext highlighter-rouge"&gt;x&lt;/code&gt; has historically been an &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt;. Then we
+might reasonably assume that it will continue to be an &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt;, so when we
+compile the method, we add a run-time type check: if the type is no longer an
+&lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt;, jump back into the interpreter.&lt;/p&gt;
+
+&lt;p&gt;Let’s see what optimized code ZJIT can construct by combining profiling
+information with the above bytecode. ZJIT operates on its own &lt;em&gt;high-level
+intermediate representation&lt;/em&gt; called, uncreatively, HIR. In the following HIR
+snippet, we can see this very run-time type check (“guard”) for the &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt;
+class:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;fn next_capacity@file.rb:8:
+...
+bb3(v9:BasicObject, v10:BasicObject):  # v9 is self and v10 is x
+  PatchPoint NoSingletonClass(Array@0xdecaf1)
+  PatchPoint MethodRedefined(Array@0xdecaf2, length@0xdecaf3, cme:0xdecaf4)
+  v35:ArrayExact = GuardType v10, ArrayExact recompile
+  v36:CInt64 = ArrayLength v35
+  v37:Fixnum = BoxFixnum v36
+  # ...
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;(with real pointers replaced by fake ones for readability)&lt;/p&gt;
+
+&lt;p&gt;Because classes are, among other things, collections of methods, this type
+information tells us what the call target of &lt;code class="language-plaintext highlighter-rouge"&gt;x.length&lt;/code&gt; is: it’s
+&lt;code class="language-plaintext highlighter-rouge"&gt;Array#length&lt;/code&gt;! We have a special fast code snippet to read an array’s length
+so we do that instead of a method call.&lt;/p&gt;
+
+&lt;p&gt;And in case the methods ever get changed out from underneath us, we leave
+behind these markers called &lt;code class="language-plaintext highlighter-rouge"&gt;PatchPoint&lt;/code&gt; that invalidate the code.&lt;/p&gt;
+
+&lt;p&gt;Finally, because we know that the result of &lt;code class="language-plaintext highlighter-rouge"&gt;Array#length&lt;/code&gt; is always a small
+integer (&lt;code class="language-plaintext highlighter-rouge"&gt;Fixnum&lt;/code&gt;), we can special case the method lookups for &lt;code class="language-plaintext highlighter-rouge"&gt;*&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;+&lt;/code&gt; as
+well.&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;fn next_capacity@file.rb:8:
+...
+bb3(v9:BasicObject, v10:BasicObject):  # v9 is self and v10 is x
+  PatchPoint NoSingletonClass(Array@0xdecaf)
+  PatchPoint MethodRedefined(Array@0xdecaf, length@0xdecaf, cme:0xdecaf)
+  v35:ArrayExact = GuardType v10, ArrayExact recompile
+  v36:CInt64 = ArrayLength v35
+  v37:Fixnum = BoxFixnum v36
+  v18:Fixnum[2] = Const Value(2)
+  PatchPoint MethodRedefined(Integer@0xdecaf, *@0xdecaf, cme:0xdecaf)
+  v41:Fixnum = FixnumMult v37, v18
+  v23:Fixnum[1] = Const Value(1)
+  PatchPoint MethodRedefined(Integer@0xdecaf, +@0xdecaf, cme:0xdecaf)
+  v45:Fixnum = FixnumAdd v41, v23
+  CheckInterrupts
+  Return v45
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;There you have it. This is how JITs work: observe, assume, specialize. So why
+am I telling you all this? How does this circle back to blocks?&lt;/p&gt;
+
+&lt;p&gt;Well, blocks work not quite the same way, but similarly. Instead of having an
+object that we call a method on, we just have the target &lt;em&gt;instruction
+sequence&lt;/em&gt;&lt;sup id="fnref:procs-and-such" role="doc-noteref"&gt;&lt;a href="#fn:procs-and-such" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;. But if we observe that the block argument, in its
+special location, has been consistently one object, we can specialize the call
+to it.&lt;/p&gt;
+
+&lt;p&gt;This is more or less fine for some cases of code. For example, in the following
+code snippet, we only have one caller to &lt;code class="language-plaintext highlighter-rouge"&gt;custom_iterator&lt;/code&gt;, so its profiled
+block will be &lt;em&gt;monomorphic&lt;/em&gt; (one observed shape).&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;custom_iterator&lt;/span&gt;
+  &lt;span class="k"&gt;yield&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+  &lt;span class="k"&gt;yield&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="k"&gt;yield&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+
+&lt;span class="n"&gt;custom_iterator&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+  &lt;span class="nb"&gt;puts&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This reinforces what we know and love about the Smalltalk-80 paper: code
+locality wins! Yes!&lt;/p&gt;
+
+&lt;p&gt;But unfortunately this falls apart when we start thinking about all of the
+core library methods (and potentially the methods and classes you have
+stashed away in the grab-bag &lt;code class="language-plaintext highlighter-rouge"&gt;utils.rb&lt;/code&gt; in your application). Those methods are
+probably &lt;em&gt;megamorphic&lt;/em&gt; (many many observed shapes). They probably see all sorts
+of stuff because they are general-purpose utilities that everybody needs, all
+the time.&lt;/p&gt;
+
+&lt;p&gt;One such example in the Ruby core library is the venerable &lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt;
+that we saw earlier. Because there are a million different call sites to
+&lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt; across your application and each probably passes a totally
+different block, we’re in an unhappy situation. How can we possibly optimize
+for so many different blocks? What happened to our code locality? How do we fix
+this?&lt;/p&gt;
+
+&lt;h2 id="the-code-locality-is-in-another-tower"&gt;The code locality is in another tower&lt;/h2&gt;
+
+&lt;p&gt;It’s okay. Code locality still rules. Look at all the various callers of
+&lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt;. They all pass a different, but constant&lt;sup id="fnref:not-always-constant" role="doc-noteref"&gt;&lt;a href="#fn:not-always-constant" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt;,
+block at the call-site:&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;method_a&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;some_array&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="n"&gt;some_array&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+    &lt;span class="nb"&gt;puts&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;
+  &lt;span class="k"&gt;end&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;method_b&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;some_array&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="n"&gt;some_array&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+    &lt;span class="nb"&gt;puts&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;
+  &lt;span class="k"&gt;end&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;method_c&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;some_array&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="n"&gt;some_array&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+    &lt;span class="nb"&gt;puts&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;
+  &lt;span class="k"&gt;end&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;So the code locality that we need in &lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt; to optimize the code is one
+level up at the caller. If we can use that &lt;em&gt;call context&lt;/em&gt;, we can specialize
+the code.&lt;/p&gt;
+
+&lt;p&gt;YJIT accomplishes this by &lt;em&gt;splitting&lt;/em&gt;, which is a very natural transformation
+for basic block versioning and tracing. Such compilers are good at following
+code paths as they would be executed and putting together context across method
+calls. However, YJIT’s heuristic for splitting blocks is based on
+manual annotations: it will only kick in for certain Ruby library functions
+specially annotated with &lt;code class="language-plaintext highlighter-rouge"&gt;Primitive.attr! :inline_block&lt;/code&gt; (and the name is a bit
+of a misnomer).&lt;/p&gt;
+
+&lt;p&gt;The team that builds ZJIT, a method JIT, decided not to add splitting
+facilities. We could split methods (and blocks), but we have an easier time
+reasoning about larger code units than YJIT does because we optimize an entire
+method at once. So instead, ZJIT chooses to get call context by &lt;em&gt;inlining&lt;/em&gt;.&lt;/p&gt;
+
+&lt;h2 id="inlining"&gt;Inlining&lt;/h2&gt;
+
+&lt;p&gt;Method inlining refers to copying the body of the callee into the caller. In
+the above example, it means copying the body of &lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt; into each of
+&lt;code class="language-plaintext highlighter-rouge"&gt;method_a&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;method_b&lt;/code&gt;, and &lt;code class="language-plaintext highlighter-rouge"&gt;method_c&lt;/code&gt;. I don’t mean the Ruby code and I don’t
+mean the bytecode: I mean the HIR. ZJIT does this by building the HIR of the
+callee (&lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt;) into the existing HIR of the caller (&lt;code class="language-plaintext highlighter-rouge"&gt;method_a&lt;/code&gt;, …).&lt;/p&gt;
+
+&lt;p&gt;The illustrious &lt;a href="/authors/kevin-menard/"&gt;Kevin Menard&lt;/a&gt; wrote ZJIT’s inliner and
+he’ll write a post about all the details soon. It’s pretty interesting stuff.&lt;/p&gt;
+
+&lt;p&gt;For now, we can take a look at the (lightly edited) result of &lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt;
+being inlined into &lt;code class="language-plaintext highlighter-rouge"&gt;method_a&lt;/code&gt;. The details don’t matter, but there are two
+things I want to call out:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;What used to be a dynamic &lt;code class="language-plaintext highlighter-rouge"&gt;invokeblock&lt;/code&gt; is now what we call
+&lt;code class="language-plaintext highlighter-rouge"&gt;InvokeBlockIseqDirect&lt;/code&gt; because we know from the call context what block
+&lt;code class="language-plaintext highlighter-rouge"&gt;method_a&lt;/code&gt; is passing to &lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt;.&lt;/li&gt;
+  &lt;li&gt;What used to be a method call is now a loop: the condition check is in
+&lt;code class="language-plaintext highlighter-rouge"&gt;bb10&lt;/code&gt;, the body is in &lt;code class="language-plaintext highlighter-rouge"&gt;bb9&lt;/code&gt;, and the stuff after the loop is &lt;code class="language-plaintext highlighter-rouge"&gt;bb13&lt;/code&gt;/&lt;code class="language-plaintext highlighter-rouge"&gt;bb4&lt;/code&gt;.
+If you’re interested, try to find the iteration variable and where it gets
+incremented. See the footnote&lt;sup id="fnref:iteration-variable" role="doc-noteref"&gt;&lt;a href="#fn:iteration-variable" class="footnote" rel="footnote"&gt;3&lt;/a&gt;&lt;/sup&gt; for the answer.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;This is a massive improvement over the previous very generic operations.&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;fn method_a@/tmp/arrayeach.rb:2:
+# ...
+bb3(v9:BasicObject, v10:BasicObject):
+  # ...
+  v55:Fixnum[0] = Const Value(0)
+  Jump bb10(v25, v55)
+bb10(v68:ArrayExact, v69:Fixnum):
+  v73:CInt64 = ArrayLength v68
+  v74:Fixnum = BoxFixnum v73
+  v75:BoolExact = FixnumGe v69, v74
+  v77:CBool = Test v75
+  CondBranch v77, bb13(), bb9(v68, v69)
+bb13():
+  CheckInterrupts
+  Jump bb4(v68)
+bb9(v90:ArrayExact, v91:Fixnum):
+  v96:CInt64 = UnboxFixnum v91
+  v97:BasicObject = ArrayAref v90, v96
+  v99:CPtr = GetEP 0
+  v100:CInt64 = LoadField v99, :VM_ENV_DATA_INDEX_SPECVAL@-0x8
+  v101:CInt64[-4] = Const CInt64(-4)
+  v102:CInt64 = IntAnd v100, v101
+  v103:BasicObject = InvokeBlockIseqDirect (0x16f3d5968), v102, v97
+  v107:Fixnum[1] = Const Value(1)
+  v108:Fixnum = FixnumAdd v91, v107
+  PatchPoint NoEPEscape(each)
+  Jump bb10(v90, v108)
+bb4(v114:BasicObject):
+  PopInlineFrame
+  PatchPoint NoEPEscape(method_a)
+  CheckInterrupts
+  Return v114
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;You may notice that there is still one call in the loop: the call to the block
+(&lt;code class="language-plaintext highlighter-rouge"&gt;InvokeBlockIseqDirect&lt;/code&gt;). That’s next on our list to tackle. We are optimistic
+that we will soon also be able to inline block calls. Then the whole thing will
+&lt;em&gt;really&lt;/em&gt; be just a loop!&lt;/p&gt;
+
+&lt;p&gt;The code that enables us to reason about which block got passed into the
+inlined callee (&lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt;) only landed &lt;a href="https://github.com/ruby/ruby/commit/c35fbd6fb27a13842299597d46b49a10f018c5b0"&gt;a couple of days
+ago&lt;/a&gt;
+(July 10, 2026), written by &lt;a href="https://github.com/luke-gruber"&gt;Luke Gruber&lt;/a&gt;. This
+was one of Luke’s first changes to ZJIT.&lt;/p&gt;
+
+&lt;h2 id="so-what-does-performance-look-like"&gt;So what does performance look like?&lt;/h2&gt;
+
+&lt;p&gt;Well, for starters, the microbenchmarks that we use as “performance unit tests”
+for specific aspects of Ruby went wild. Some benchmarks that were using
+block-based looping got &lt;em&gt;much&lt;/em&gt; faster; they were previously bounded by ZJIT’s
+block invocation performance.&lt;/p&gt;
+
+&lt;p&gt;Take a look at the &lt;code class="language-plaintext highlighter-rouge"&gt;cfunc_itself&lt;/code&gt; benchmark, which tests that we can fold away
+the call to Ruby’s built-in &lt;code class="language-plaintext highlighter-rouge"&gt;itself&lt;/code&gt; method. ZJIT ends up optimizing the
+&lt;code class="language-plaintext highlighter-rouge"&gt;times&lt;/code&gt; method to invoke the &lt;code class="language-plaintext highlighter-rouge"&gt;do&lt;/code&gt; block directly, and the &lt;code class="language-plaintext highlighter-rouge"&gt;do&lt;/code&gt; block gets
+optimized to nothing but a guard on the self’s class to make sure it hasn’t
+changed.&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;run_benchmark&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;500&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt;
+  &lt;span class="mi"&gt;500000&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;times&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+    &lt;span class="n"&gt;itself&lt;/span&gt;
+  &lt;span class="k"&gt;end&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Because we had previously optimized the body away, the result of the direct
+block invocation is a massive speedup:&lt;/p&gt;
+
+&lt;figure style="margin: 0 auto; max-width: 80%;"&gt;
+  &lt;img src="/assets/img/inliner_invokeblock_cfunc_itself_benchmark.png" /&gt;
+  &lt;figcaption&gt;The yellow line represents ZJIT speedup over the interpreter. Higher is better. 35x!&lt;/figcaption&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;Other benchmarks also kind of stop making sense because of the amount of
+inlining. Our bmethod benchmark, which benchmarked how fast we can call methods
+defined with &lt;code class="language-plaintext highlighter-rouge"&gt;define_method&lt;/code&gt;, also stopped measuring anything of use. We’re
+going to have to rework the benchmark to be more fair…&lt;/p&gt;
+
+&lt;figure style="margin: 0 auto; max-width: 80%;"&gt;
+  &lt;img src="/assets/img/inliner_invokeblock_send_bmethod_benchmark.png" /&gt;
+  &lt;figcaption&gt;The yellow line represents ZJIT speedup over the interpreter. Higher is better. 139x!&lt;/figcaption&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;As expected, larger Rails benchmarks don’t see a ton of change; they exercise a
+diffuse set of features so optimizing any one feature bumps the big benchmarks
+only a little bit.&lt;/p&gt;
+
+&lt;p&gt;I am excited to see what happens when we can fully turn &lt;code class="language-plaintext highlighter-rouge"&gt;each&lt;/code&gt; and friends into
+call-less loops!&lt;/p&gt;
+
+&lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
+
+&lt;p&gt;Code locality rules. The inliner helps inject more of it and reason across
+method calls. ZJIT, a little over one year old, is growing up! :’)&lt;/p&gt;
+
+&lt;p&gt;We’re still tuning the inliner knobs. Some of the code in this post required
+tweaking &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-inline-threshold&lt;/code&gt; to convince the compiler to inline
+&lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt; into &lt;code class="language-plaintext highlighter-rouge"&gt;method_a&lt;/code&gt; because of &lt;code class="language-plaintext highlighter-rouge"&gt;Array#each&lt;/code&gt;’s size. It will take some
+time for the ZJIT developers to figure out reasonable defaults.&lt;/p&gt;
+
+&lt;p&gt;Try out our HIR explorer at &lt;a href="https://tryzjit.fly.dev/"&gt;tryzjit.fly.dev&lt;/a&gt;. Try
+out ZJIT in your application by adding the &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit&lt;/code&gt; flag to a Ruby over 4.0.
+Thanks for reading and see you next time.&lt;/p&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:procs-and-such" role="doc-endnote"&gt;
+      &lt;p&gt;Mostly. I am glossing over &lt;code class="language-plaintext highlighter-rouge"&gt;nil&lt;/code&gt;, procs, ifuncs, etc. But
+the common path is by and away iseq blocks. &lt;a href="#fnref:procs-and-such" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+    &lt;li id="fn:not-always-constant" role="doc-endnote"&gt;
+      &lt;p&gt;It’s not always the case that these methods are called
+with a constant block iseq. Sometimes they are called with the &lt;code class="language-plaintext highlighter-rouge"&gt;&amp;amp;:symbol&lt;/code&gt;
+form, for example. Or with the &lt;code class="language-plaintext highlighter-rouge"&gt;&amp;amp;some_block_variable&lt;/code&gt; form. In that case,
+we can use an inline cache to (with a guard) make it constant once more.
+But we have not implemented that yet, because it is rarer. &lt;a href="#fnref:not-always-constant" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+    &lt;li id="fn:iteration-variable" role="doc-endnote"&gt;
+      &lt;p&gt;The iteration variable is &lt;code class="language-plaintext highlighter-rouge"&gt;v91&lt;/code&gt;! You can see it get used
+as an array index when it gets unboxed as &lt;code class="language-plaintext highlighter-rouge"&gt;v96&lt;/code&gt; and passed to &lt;code class="language-plaintext highlighter-rouge"&gt;ArrayAref&lt;/code&gt;.
+You can also see it get incremented with &lt;code class="language-plaintext highlighter-rouge"&gt;FixnumAdd&lt;/code&gt; and the constant &lt;code class="language-plaintext highlighter-rouge"&gt;1&lt;/code&gt;.
+In &lt;code class="language-plaintext highlighter-rouge"&gt;bb10&lt;/code&gt; it has a different name, &lt;code class="language-plaintext highlighter-rouge"&gt;v69&lt;/code&gt;, which gets checked against the
+array length. &lt;a href="#fnref:iteration-variable" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/zjit-inliner-invokeblock/</guid>
+      <pubDate>Tue, 28 Jul 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Travel notes: PLDI Boulder</title>
       <link>https://bernsteinbear.com/blog/travel-notes-pldi-boulder/?utm_source=rss</link>
@@ -3678,199 +4184,6 @@ deleted it in favor of their new Sea of Nodes based IR called TurboFan. &lt;a h
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/toy-tbaa/</guid>
       <pubDate>Mon, 16 Feb 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>A multi-entry CFG design conundrum</title>
-      <link>https://bernsteinbear.com/blog/multiple-entry/?utm_source=rss</link>
-      <description>&lt;h2 id="background-and-bytecode-design"&gt;Background and bytecode design&lt;/h2&gt;
-
-&lt;p&gt;The ZJIT compiler compiles Ruby bytecode (YARV) to machine code. It starts by
-transforming the stack machine bytecode into a high-level graph-based
-intermediate representation called HIR.&lt;/p&gt;
-
-&lt;p&gt;We use a more or less typical&lt;sup id="fnref:ebb" role="doc-noteref"&gt;&lt;a href="#fn:ebb" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt; control-flow graph (CFG) in HIR. We have a
-compilation unit, &lt;code class="language-plaintext highlighter-rouge"&gt;Function&lt;/code&gt;, which has multiple basic blocks, &lt;code class="language-plaintext highlighter-rouge"&gt;Block&lt;/code&gt;. Each
-block contains multiple instructions, &lt;code class="language-plaintext highlighter-rouge"&gt;Insn&lt;/code&gt;. HIR is always in SSA form, and we
-use the variant of SSA with block parameters instead of phi nodes.&lt;/p&gt;
-
-&lt;p&gt;Where it gets weird, though, is our handling of multiple entrypoints. See, YARV
-handles default positional parameters (but &lt;em&gt;not&lt;/em&gt; default keyword parameters) by
-embedding the code to compute the defaults inside the callee bytecode. Then
-callers are responsible for figuring out what offset in the bytecode they
-should start running the callee, depending on the amount of arguments the
-caller provides.&lt;sup id="fnref:keywords" role="doc-noteref"&gt;&lt;a href="#fn:keywords" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;In the following example, we have a function that takes two optional positional
-parameters &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt;. If neither is provided, we start at offset &lt;code class="language-plaintext highlighter-rouge"&gt;0000&lt;/code&gt;. If
-just &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; is provided, we start at offset &lt;code class="language-plaintext highlighter-rouge"&gt;0005&lt;/code&gt;. If both are provided, we can
-start at offset &lt;code class="language-plaintext highlighter-rouge"&gt;0010&lt;/code&gt;.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ ruby --dump=insns -e 'def foo(a=compute_a, b=compute_b) = a + b'
-...
-== disasm: #&amp;lt;ISeq:foo@-e:1 (1,0)-(1,41)&amp;gt;
-local table (size: 2, argc: 0 [opts: 2, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
-[ 2] a@0&amp;lt;Opt=0&amp;gt; [ 1] b@1&amp;lt;Opt=5&amp;gt;
-0000 putself                                                          (   1)
-0001 opt_send_without_block   &amp;lt;calldata!mid:compute_a, argc:0, FCALL|VCALL|ARGS_SIMPLE&amp;gt;
-0003 setlocal_WC_0            a@0
-0005 putself
-0006 opt_send_without_block   &amp;lt;calldata!mid:compute_b, argc:0, FCALL|VCALL|ARGS_SIMPLE&amp;gt;
-0008 setlocal_WC_0            b@1
-0010 getlocal_WC_0            a@0[Ca]
-0012 getlocal_WC_0            b@1
-0014 opt_plus                 &amp;lt;calldata!mid:+, argc:1, ARGS_SIMPLE&amp;gt;[CcCr]
-0016 leave                    [Re]
-$
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;(See the jump table debug output: &lt;code class="language-plaintext highlighter-rouge"&gt;[ 2] a@0&amp;lt;Opt=0&amp;gt; [ 1] b@1&amp;lt;Opt=5&amp;gt;&lt;/code&gt;)&lt;/p&gt;
-
-&lt;p&gt;Unlike in Python, where default arguments are evaluated &lt;em&gt;at function creation
-time&lt;/em&gt;, Ruby computes the default values &lt;em&gt;at function call time&lt;/em&gt;. This includes
-arbitrary function calls, raising exceptions, doing long I/O, or whatever your
-heart desires. For this reason, embedding the default code inside the callee
-makes a lot of sense; we have a full call frame already set up, so any
-optimizations (!), side-exits, exception handling machinery, profiling, etc
-doesn’t need special treatment.&lt;/p&gt;
-
-&lt;p&gt;Since the caller knows what arguments it is passing, and often to what
-function, we can efficiently support this in the JIT. We just need to know what
-offset in the compiled callee to call into. The interpreter can also call into
-the compiled function, which just has a stub to do dispatch to the appropriate
-entry block.&lt;/p&gt;
-
-&lt;p&gt;This has led us to design the HIR to support &lt;em&gt;multiple function entrypoints&lt;/em&gt;.
-Instead of having just a single entry block, as most control-flow graphs do,
-each of our functions now has an array of function entries: one for the
-interpreter, at least one for the JIT, and more for default parameter handling.
-Each of these entry blocks is separately callable from the outside world.&lt;/p&gt;
-
-&lt;p&gt;Here is what the (slightly cleaned up) HIR looks like for the above example:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;Optimized HIR:
-fn foo@tmp/branchnil.rb:4:
-bb0():
-  EntryPoint interpreter
-  v1:BasicObject = LoadSelf
-  v2:BasicObject = GetLocal :a, l0, SP@5
-  v3:BasicObject = GetLocal :b, l0, SP@4
-  v4:CPtr = LoadPC
-  v5:CPtr[CPtr(0x16d27e908)] = Const CPtr(0x16d282120)
-  v6:CBool = IsBitEqual v4, v5
-  IfTrue v6, bb2(v1, v2, v3)
-  v8:CPtr[CPtr(0x16d27e908)] = Const CPtr(0x16d282120)
-  v9:CBool = IsBitEqual v4, v8
-  IfTrue v9, bb4(v1, v2, v3)
-  Jump bb6(v1, v2, v3)
-bb1(v13:BasicObject):
-  EntryPoint JIT(0)
-  v14:NilClass = Const Value(nil)
-  v15:NilClass = Const Value(nil)
-  Jump bb2(v13, v14, v15)
-bb2(v27:BasicObject, v28:BasicObject, v29:BasicObject):
-  v65:HeapObject[...] = GuardType v27, HeapObject[class_exact*:Object@VALUE(0x1043aed00)]
-  v66:BasicObject = SendWithoutBlockDirect v65, :compute_a (0x16d282148)
-  Jump bb4(v27, v66, v29)
-bb3(v18:BasicObject, v19:BasicObject):
-  EntryPoint JIT(1)
-  v20:NilClass = Const Value(nil)
-  Jump bb4(v18, v19, v20)
-bb4(v38:BasicObject, v39:BasicObject, v40:BasicObject):
-  v69:HeapObject[...] = GuardType v38, HeapObject[class_exact*:Object@VALUE(0x1043aed00)]
-  v70:BasicObject = SendWithoutBlockDirect v69, :compute_b (0x16d282148)
-  Jump bb6(v38, v39, v70)
-bb5(v23:BasicObject, v24:BasicObject, v25:BasicObject):
-  EntryPoint JIT(2)
-  Jump bb6(v23, v24, v25)
-bb6(v49:BasicObject, v50:BasicObject, v51:BasicObject):
-  v73:Fixnum = GuardType v50, Fixnum
-  v74:Fixnum = GuardType v51, Fixnum
-  v75:Fixnum = FixnumAdd v73, v74
-  CheckInterrupts
-  Return v75
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;If you’re not a fan of text HIR, here is an embedded clickable visualization of
-HIR thanks to our former intern &lt;a href="https://aidenfoxivey.com/"&gt;Aiden&lt;/a&gt; porting
-Firefox’s &lt;a href="https://github.com/mozilla-spidermonkey/iongraph"&gt;Iongraph&lt;/a&gt;:&lt;/p&gt;
-
-&lt;iframe width="100%" height="400" src="/assets/zjit-multi-entry-iongraph.html"&gt;&lt;/iframe&gt;
-
-&lt;p&gt;(You might have to scroll sideways and down and zoom around. Or you can &lt;a href="/assets/zjit-multi-entry-iongraph.html"&gt;open it
-in its own window&lt;/a&gt;.)&lt;/p&gt;
-
-&lt;p&gt;Each entry block also comes with block parameters which mirror the function’s
-parameters. These get passed in (roughly) the System V ABI registers.&lt;/p&gt;
-
-&lt;p&gt;This is kind of gross. We have to handle these blocks specially in reverse
-post-order (RPO) graph traversal. And, recently, I ran into an even worse case
-when trying to implement the Cooper-style “engineered” dominator algorithm: if
-we walk backwards in block dominators, the walk is not guaranteed to converge.
-All non-entry blocks are dominated by all entry blocks, which are only
-dominated by themselves. There is no one “start block”. So what is there to do?&lt;/p&gt;
-
-&lt;h2 id="the-design-conundrum"&gt;The design conundrum&lt;/h2&gt;
-
-&lt;p&gt;&lt;strong&gt;Approach 1&lt;/strong&gt; is to keep everything as-is, but handle entry blocks specially
-in the dominator algorithm too. I’m not exactly sure what would be needed, but
-it seems possible. Most of the existing block infra could be left alone, but
-it’s not clear how much this would “spread” within the compiler. What else in
-the future might need to be handled specially?&lt;/p&gt;
-
-&lt;p&gt;&lt;strong&gt;Approach 2&lt;/strong&gt; is to synthesize a super-entry block and make it a predecessor
-of every interpreter and JIT entry block. Inside this approach there are two
-ways to do it: one (&lt;strong&gt;2.a&lt;/strong&gt;) is to fake it and report some non-existent block.
-Another (&lt;strong&gt;2.b&lt;/strong&gt;) is to actually make a block and a new instruction that is a
-quasi-jump instruction. In this approach, we would either need to synthesize
-fake block arguments for the JIT entry block parameters or add some kind of new
-&lt;code class="language-plaintext highlighter-rouge"&gt;LoadArg&amp;lt;i&amp;gt;&lt;/code&gt; instruction that reads the argument &lt;em&gt;i&lt;/em&gt; passed in.&lt;/p&gt;
-
-&lt;p&gt;(suggested by Iain Ireland, as seen in the IBM COBOL compiler)&lt;/p&gt;
-
-&lt;p&gt;&lt;strong&gt;Approach 3&lt;/strong&gt; is to duplicate the entire CFG per entrypoint. This would return
-us to having one entry block per CFG at the expense of code duplication. It
-handles the problem pretty cleanly but then &lt;em&gt;forces&lt;/em&gt; code duplication. I think
-I want the duplication to be opt-in instead of having it be the only way we
-support multiple entrypoints. What if it increases memory too much? The
-specialization probably would make the generated code faster, though.&lt;/p&gt;
-
-&lt;p&gt;(suggested by Ben Titzer)&lt;/p&gt;
-
-&lt;p&gt;None of these approaches feel great to me. The probable candidate is &lt;strong&gt;2.b&lt;/strong&gt;
-where we have &lt;code class="language-plaintext highlighter-rouge"&gt;LoadArg&lt;/code&gt; instructions. That gives us flexibility to also later
-add full specialization without forcing it.&lt;/p&gt;
-
-&lt;p&gt;Cameron Zwarich also notes that this this is an analogue to the common problem
-people have when implementing the reverse: postdominators. This is because
-often functions have multiple return IR instructions. He notes the usual
-solution is to transform them into branches to a single return instruction.&lt;/p&gt;
-
-&lt;p&gt;Do you have this problem? What does your compiler do?&lt;/p&gt;
-
-&lt;h2 id="update-a-conclusion"&gt;Update: a conclusion&lt;/h2&gt;
-
-&lt;p&gt;We have decided to go with &lt;a href="https://github.com/ruby/ruby/pull/16200"&gt;the superblock
-approach&lt;/a&gt;.&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:ebb" role="doc-endnote"&gt;
-      &lt;p&gt;We use extended basic blocks (EBBs), but this doesn’t matter for this
-post. It makes dominators and predecessors slightly more complicated (now
-you have dominating &lt;em&gt;instructions&lt;/em&gt;), but that’s about it as far as I can
-tell. We’ll see how they fare in the face of more complicated analysis
-later. &lt;a href="#fnref:ebb" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-    &lt;li id="fn:keywords" role="doc-endnote"&gt;
-      &lt;p&gt;Keyword parameters have some mix of caller/callee presence checks
-in the callee because they are passed in un-ordered. The caller handles
-simple constant defaults whereas the callee handles anything that may
-raise. Check out &lt;a href="https://kddnewton.com/2022/12/17/advent-of-yarv-part-17"&gt;Kevin Newton’s awesome overview&lt;/a&gt;. &lt;a href="#fnref:keywords" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/multiple-entry/</guid>
-      <pubDate>Thu, 22 Jan 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
