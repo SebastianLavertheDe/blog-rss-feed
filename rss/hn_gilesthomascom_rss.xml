@@ -5,11 +5,468 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Wed, 29 Jul 2026 12:05:58 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 29 Jul 2026 15:11:29 +0000</lastBuildDate>
+    <item>
+      <title>Why do OpenAI's GPT-2 weights beat mine?</title>
+      <link>https://www.gilesthomas.com/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro</link>
+      <description>&lt;p&gt;When I finished my project training an &lt;a href="/llm-from-scratch"&gt;LLM from scratch&lt;/a&gt;, I was
+left with a minor mystery.  Why were my models worse at instruction-following than the original OpenAI
+GPT-2 small weights?&lt;/p&gt;
+
+&lt;p&gt;I had an evaluation that I was running,
+based on the instruction fine-tuning code in chapter 7 of
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
+The process was to train a model on samples from the &lt;a href="https://crfm.stanford.edu/2023/03/13/alpaca.html"&gt;Alpaca&lt;/a&gt;
+instruction-following dataset until validation loss started rising, to use that instruction fine-tuned model to generate
+completions to a held-back test set, and then to use an LLM to compare the
+results from various different models.  The details are &lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests"&gt;here&lt;/a&gt;;
+let's call it the IFT eval.&lt;/p&gt;
+
+&lt;p&gt;OpenAI's original weights for GPT-2 small consistently beat my own
+models, even when mine got better results than theirs on a more technical
+evaluation, where I just measured the cross entropy loss for each model on a
+held-back set of test sequences.  This surprised me; I would have expected
+a reasonably close correlation between the two evals -- that better test loss would imply
+better instruction-following.&lt;/p&gt;
+
+&lt;p&gt;I have a couple of thoughts about why this might be, and given that I recently
+set up &lt;a href="/2026/07/poppy-the-training-box-1-the-beginnings"&gt;&lt;code&gt;poppy&lt;/code&gt;, my dedicated LLM training box&lt;/a&gt;
+I decided to inaugurate her with an experiment to test one of them; further
+experiments will come in time -- though I don't think this will be a focus for the blog.  More
+of a running theme, with occasional posts until either I solve the mystery, or
+give up in despair...&lt;/p&gt;
+
+&lt;p&gt;In this post I'll give a bit more detail about the nature of the problem, and
+list some of the things I've been thinking might be the cause.  In the next post, I'll give the results
+of the first experiment.&lt;/p&gt;
+&lt;h2 id="more-on-the-mystery"&gt;More on the mystery&lt;/h2&gt;
+
+&lt;p&gt;Let's take a look at the results from my most recent runs of the IFT eval.  I've
+highlighted the OpenAI models in bold, and the table is sorted by the test loss -- that
+more technical evaluation that I mentioned earlier, where lower is better.&lt;/p&gt;
+
+&lt;p&gt;How well the model did
+with the IFT eval is in the last three columns.  The "IFT epochs" column shows
+how many epochs of training the model needed before its
+validation loss started rising, the score is the average mark out of 100 that (in this case)
+GPT 5.5 gives the model's answers to the IFT test set, and the rank is the position the
+model holds in terms of that average score.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;IFT epochs&lt;/th&gt;
+  &lt;th&gt;IFT score&lt;/th&gt;
+  &lt;th&gt;IFT rank&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;OpenAI weights: medium&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;3.231442&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;2&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;41.62&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;1&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.418784&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;19.25&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.420089&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;14.66&lt;/td&gt;
+  &lt;td&gt;11&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;3.476802&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;12.94&lt;/td&gt;
+  &lt;td&gt;15&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;OpenAI weights: small&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;3.499677&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;2&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;26.73&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;2&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.538161&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;17.79&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;10.29&lt;/td&gt;
+  &lt;td&gt;16&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;3.673623&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;20.71&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.683835&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;15.11&lt;/td&gt;
+  &lt;td&gt;9&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.74&lt;/td&gt;
+  &lt;td&gt;10&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.724507&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.25&lt;/td&gt;
+  &lt;td&gt;14&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.729900&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.50&lt;/td&gt;
+  &lt;td&gt;12&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;3.771478&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;16.03&lt;/td&gt;
+  &lt;td&gt;8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;3.943522&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;13.73&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;4.134991&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;16.70&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;4.166892&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;18.68&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;For the IFT eval, the OpenAI weights are the best.  The "medium" model comes first, and the "small"
+one comes second -- and there's a noticeable gap between "small" and
+the score for my best model for that eval, "Cloud FineWeb, 8x A100 40 GiB": 26.73 vs 20.71.  That difference
+was consistent across multiple runs of the eval -- the relative rankings of my own
+models varied more.&lt;/p&gt;
+
+&lt;p&gt;It's not surprising that the "medium" model does better -- it's
+more than double the size of the others -- but the small model consistently beating mine was odd
+given that I had models with lower test loss.&lt;/p&gt;
+
+&lt;p&gt;Another thing that stands out is the number of epochs that the models were trained for.
+Remember, I trained them until the validation loss started rising -- that is, until the model
+started overfitting.  You can see that the OpenAI weights hit that after two epochs of
+training, whereas my models ranged between three and seven.&lt;/p&gt;
+
+&lt;h2 id="the-loss-landscape"&gt;The loss landscape&lt;/h2&gt;
+
+&lt;p&gt;My starting hypothesis was that the OpenAI weights were starting off from a better
+position in the IFT loss landscape than mine.  The loss landscape for the task the various
+models were originally pre-trained for -- "predict the next token for this sequence of
+text that was pulled from the web" -- is different to the loss landscape for the IFT task,
+which is something more like "predict the next token in a useful response to this request".
+Let's dig into that a bit.&lt;/p&gt;
+
+&lt;p&gt;The core idea behind the normal LLM training paradigm is that we can get a useful
+starting point for a model by pre-training -- training on a whole load of cheaply-available stuff from the web --
+and only then have to use our much more expensive task-specific datasets for fine-tuning.
+I've been training my models on approximately 3.2 billion tokens of the &lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb"&gt;fineweb&lt;/a&gt;
+dataset, which was generated from scrapes of the web, and then deduplicated and tidied up
+a bit.&lt;/p&gt;
+
+&lt;p&gt;If I had instead trained them on 3.2 billion tokens of instruction-following samples --
+essentially, pre-packaged Q&amp;amp;A sessions between a human and an assistant -- then they
+would almost certainly be much better than the models I have at instruction-following,
+for the same cost in compute used to do the training run.&lt;/p&gt;
+
+&lt;p&gt;But the cost of generating those 3.2 billion tokens would be incredibly high.
+Imagine hiring people to do it: the GPT-2 tokeniser averages about 0.75 words per token,
+and while I don't know how much you'd need to pay people to write 2.4 billion words, I
+suspect it would be rather a lot.  Even generating that much synthetic data from
+a larger LLM (as the Alpaca dataset was) would not be cheap -- I make it US$144,000 using GPT 5.6 Sol as of mid-2026.&lt;/p&gt;
+
+&lt;p&gt;Even worse, the LLM we trained on that kind of data would be "brittle" -- if you wanted
+it to solve an even slightly different task (for example, Alpaca is single-shot question
+and answer, so imagine if you wanted it to handle multi-turn conversations like a chatbot),
+it would be hard to train it to do that.&lt;/p&gt;
+
+&lt;p&gt;So: the idea is that if we pre-train a base LLM on less-structured -- but, importantly, still
+"real" -- data like scraped web pages, we'll get a general-purpose base LLM relatively cheaply.
+It will have discovered basic stuff like the structure of language, and hopefully some general
+knowledge (eg. maybe that the capital of France is Paris).  Once we have that, we can fine-tune
+it for specific uses.&lt;/p&gt;
+
+&lt;p&gt;Now, both the initial pre-training and -- in this IFT test -- the fine-tuning phase of building our model
+are done in essentially the same way: trying to minimise the cross entropy loss of the model's predictions against a
+dataset. &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;  What has changed between them is the targets we're trying to train the model to
+predict.  In the pre-training phase, we're trying to get it to predict web scrape data,
+in the fine-tuning, we're trying to predict responses to queries.&lt;/p&gt;
+
+&lt;p&gt;Putting that idea into slightly more mathematical language (albeit loosely enough that
+any real mathematicians reading this will probably scream with horror), if we're saying that
+a pre-trained model is useful as a base for instruction fine-tuning, what we have is
+an assumption that the loss landscape for the original pre-training phase is reasonably
+similar to the loss landscape for the fine-tuning.  We are hoping that a place that is
+nice and low on the pre-training landscape is reasonably close (in parameter space) to
+a place that is low on the fine-tuning landscape.&lt;/p&gt;
+
+&lt;p&gt;That's all very abstract; let's try to visualise it.  If we imagine the loss landscape for a model
+with two parameters, that's reasonably easy.   The two parameters make up
+two dimensions -- let's say left and right for one, forward and back for the other -- and
+the loss at any given point is the vertical dimension.  It's an uneven surface, a bit like a rolling
+landscape, with hills and mountains at points where the parameters have very high loss,
+and valleys and clefts where the loss is lower.&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;In reality, of course, we have &lt;em&gt;somewhat&lt;/em&gt; more than two parameters.  With the 163,009,536
+  parameters in my GPT-2-small-style models, the loss landscape is not a surface but
+  a 163,009,536-dimensional hypersurface &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt; in 163,009,537-dimensional space.  Good
+  luck visualising that.&lt;/p&gt;
+  
+  &lt;p&gt;While taking intuitions from levels of dimensionality that we can actually imagine
+  over to insanely high-dimensional spaces like that is often risky -- weird stuff starts
+  happening as the number of dimensions goes up -- for what we're specifically looking at here, it's
+  safe.  The landscape image works for intuition.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;So, we have one landscape like that for our pre-training phase.  When we start fine-tuning,
+the loss landscape changes to a different one.  What we're hoping is that the landscape
+is reasonably similar; that the low point that we wound up at in the pre-training landscape
+is close to a low point in the new fine-tuning landscape when that is swapped in. &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;The good news is that we know that this process of doing a pre-train then a fine-tune works.
+Most modern AI is trained using it as a foundation (though there's lots of extra stuff on top).
+And indeed, you'd intuitively expect it to work -- it would be kind of weird if there was
+no correlation at all between the "understand language" loss landscape and the "answer questions"
+one.&lt;/p&gt;
+
+&lt;p&gt;But this does mean that we can -- at least in a somewhat hand-wavey way -- characterise
+the manner in which the OpenAI weights are "better" than mine in terms of the loss landscape.&lt;/p&gt;
+
+&lt;p&gt;Both the OpenAI weights and mine have landed in places that were good from the pre-training viewpoint;
+that's what the "Test loss" results in the table above mean.  GPT-2 medium is doing better than any of
+my models -- given that it's about twice the size, it should -- and GPT-2 small is doing better
+than most of them.&lt;/p&gt;
+
+&lt;p&gt;But the places in the pre-train loss landscape where the OpenAI models landed were clearly better-matched to
+good places in the fine-tuning loss landscape than my own models' places were.  The fact that
+they took fewer epochs to start overfitting intuitively points in that direction -- after all,
+if you're closer to somewhere, then it takes less time to get there -- but the fact that they
+scored better after fine-tuning makes it pretty clear.&lt;/p&gt;
+
+&lt;p&gt;But something else that occurs to me as I write this is that the results on the test set
+also point to a superiority in the OpenAI weights -- one that hadn't occurred to me
+in the past.&lt;/p&gt;
+
+&lt;h2 id="openai-weights-better-than-we-thought"&gt;OpenAI weights: better than we thought!&lt;/h2&gt;
+
+&lt;p&gt;Let's think about what that test set is.  In order to get data that was
+pre-processed and ready to work with, I downloaded all of the 10 billion token
+version of FineWeb, and split it into 99% training and 1% validation and test.  I
+tokenised each sample in each of those splits, and then concatenated them together into
+a single sequence for each, separating the samples with &lt;code&gt;&amp;lt;|endoftext|&amp;gt;&lt;/code&gt; tokens.  My training script
+took the train split, broke it up into 1024-token sequences, assembled them into batches,
+and ran through 3.2B token's worth.&lt;/p&gt;
+
+&lt;p&gt;The loss test takes 19,660,800 tokens starting at position 50,000,000 in the validation/test
+split, and runs them through in batches of six, working out the average loss.&lt;/p&gt;
+
+&lt;p&gt;Now, the GPT-2 weights were trained on something that I &lt;em&gt;believe&lt;/em&gt; was constructed
+similarly -- get a load of text consisting of a bunch of documents from the web, tokenise them
+all and tack them together separated with &lt;code&gt;&amp;lt;|endoftext|&amp;gt;&lt;/code&gt;s, and then use that.&lt;/p&gt;
+
+&lt;p&gt;But, importantly, it was a &lt;em&gt;different&lt;/em&gt; dataset.  Annoyingly, we don't have access to OpenAI's
+"WebText" dataset, but I think it's reasonably safe to say that even if it is similar to what
+I came up with, it will be less similar to the sequences used for the loss test than
+my own training set is.&lt;/p&gt;
+
+&lt;p&gt;Given that the loss test for the OpenAI small weights came out with a better
+result than any of the models I trained in PyTorch, and was only narrowly beaten
+by the ones I trained with JAX (even then, I think, because the JAX models got lucky
+with their random weight initialisation before they started training), then I think we can say that
+the OpenAI weights are already considerably better than my own ones.
+They were already at a good place in their own loss landscape, but it happened to also
+be in a good place in my test set's.&lt;/p&gt;
+
+&lt;p&gt;An alternative analogy: if you imagine a group of 15 trail runners having a race on a route in a forest,
+where all but one of them regularly run on different routes in the same forest, but the
+odd one out is running there for the first time, if the newcomer gets a very
+close fourth place, then it's not unreasonable to think that they're probably the best runner
+of all of them. &lt;sup class="footnote-ref" id="fnref-4"&gt;&lt;a href="#fn-4"&gt;4&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;Finally -- I've been talking about the models as if they were all the same size (apart from
+the OpenAI medium weights), but there's one extra important
+difference with OpenAI's: they use weight tying, while mine don't.  That means that
+their small model is significantly &lt;em&gt;smaller&lt;/em&gt; than mine are -- closer to 124M parameters &lt;sup class="footnote-ref" id="fnref-5"&gt;&lt;a href="#fn-5"&gt;5&lt;/a&gt;&lt;/sup&gt; than the
+163M that mine have.
+Weight tying made a lot of sense back in 2019, when VRAM was even harder to come by
+than it is now, but when I &lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;looked into it&lt;/a&gt;,
+it made loss much worse.&lt;/p&gt;
+
+&lt;p&gt;Carrying on with the trail runner metaphor, the OpenAI small weights not only don't know
+the forest well -- they're also (&lt;em&gt;scratches head looking for a good analogy&lt;/em&gt;) physically
+weaker.  Their performance is even more impressive.&lt;/p&gt;
+
+&lt;p&gt;So: OpenAI weights good, mine (relatively) bad.  Their smaller model, being tested for loss on a
+less-familiar-looking test set, does better -- or at least only a tiny bit worse than --
+my larger ones.  And when instruction fine-tuned, it converges on a better-performing
+result, and does it faster.&lt;/p&gt;
+
+&lt;p&gt;What could the difference be?&lt;/p&gt;
+
+&lt;h2 id="probably-not-dropout"&gt;Probably not dropout...?&lt;/h2&gt;
+
+&lt;p&gt;One thing that occurred to me while I was pondering this was dropout.  If, when training,
+we randomly ignore 10% of the activations, perhaps we get a more generalisable model?
+Most of what I've read recently about dropout has focused on how
+it helps to avoid memorisation in multi-epoch training runs, but when I first read about it
+&lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;I felt that the generalisation argument was also strong&lt;/a&gt;.
+If true, that might explain the lower number of epochs needed for instruction fine-tuning, and
+maybe even the performance.&lt;/p&gt;
+
+&lt;p&gt;Luckily, though, I'd accidentally done an experiment that suggested that this wasn't the difference.  As one
+of my JAX training runs, I'd trained one with dropout, and as you can see if you look back
+at the results table above, it was one of the worst performers in the IFT
+test.&lt;/p&gt;
+
+&lt;p&gt;One result is not a proof, but the fact that this one was bad compared to the others
+meant that I felt it was solid enough to ignore dropout as a possibility, at least initially.&lt;/p&gt;
+
+&lt;h2 id="data-quality"&gt;Data quality?&lt;/h2&gt;
+
+&lt;p&gt;Again, it's kind of annoying that WebText was never published.  All we know about it
+is from &lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the paper&lt;/a&gt;,
+where they say:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[W]e created a new web scrape which emphasizes
+  document quality. To do this we only scraped web pages
+  which have been curated/filtered by humans. Manually
+  filtering a full web scrape would be exceptionally expensive
+  so as a starting point, we scraped all outbound links from
+  Reddit, a social media platform, which received at least 3
+  karma. This can be thought of as a heuristic indicator for
+  whether other users found the link interesting, educational,
+  or just funny.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;How does this compare with FineWeb in terms of quality?  Without seeing the results,
+we really can't say.  FineWeb is more of a general web-scraping corpus, without the
+"filtering" provided by those Reddit upvotes.  On the other hand, we're talking about
+Reddit here, and all kinds of awful junk gets upvoted, so I'm not confident that it's
+&lt;em&gt;that&lt;/em&gt; strong a quality signal.  And FineWeb has been curated to some degree.&lt;/p&gt;
+
+&lt;p&gt;That said, I had previously noticed that the models I had trained on the
+&lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu"&gt;FineWeb-Edu dataset&lt;/a&gt; ("the most educational web pages"
+from FineWeb) punched above their weight in the IFT test.  They got pretty poor
+loss on the test set, but didn't do too badly in IFT.&lt;/p&gt;
+
+&lt;p&gt;In retrospect, it's actually not that surprising that they did badly on the test loss eval;
+they were trained on a curated dataset of "good" stuff, and then were being evaluated
+against whatever less-curated stuff appears in the test set -- which you'll remember came
+from FineWeb.  If you train a model
+on Jane Austen and then evaluate against &lt;a href="https://www.chucktingle.com/"&gt;Chuck Tingle&lt;/a&gt;, then
+you're not going to get amazing results.&lt;/p&gt;
+
+&lt;p&gt;But then, there's the excellent performance of the OpenAI weights on that
+same FineWeb test set.  Even if WebText was higher quality than FineWeb, that clearly wasn't the
+whole story.&lt;/p&gt;
+
+&lt;p&gt;So data quality felt like it &lt;em&gt;might&lt;/em&gt; be part of it -- but it wasn't where I wanted
+to start.&lt;/p&gt;
+
+&lt;h2 id="overtraining"&gt;Overtraining?&lt;/h2&gt;
+
+&lt;p&gt;This, finally, is where I landed for a first experiment.  I'd been training my models on 20 tokens per parameter -- the Chinchilla-optimal
+number.  But that heuristic dates to 2022, and GPT-2 was trained in 2019.  While
+we don't know for sure, from what I've managed to dig up it looks like it
+was probably trained on much more data -- and probably over multiple epochs too.&lt;/p&gt;
+
+&lt;p&gt;Training on more tokens than the Chinchilla number is called overtraining (not to be confused with overfitting).  So,
+in my next post: what happens if we overtrain the model?  Will we get the
+loss down?  And if so, will we start approaching GPT-2 small's results on the IFT
+eval?&lt;/p&gt;
+
+&lt;p&gt;Stay tuned :-)&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;Modern production LLMs tend to use reinforcement learning as a big part of the fine-tuning
+phase, and that works quite differently.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;When I started reading up on this, I was hoping that it would be a manifold,
+largely because I like the word.  And it is!  A hypersurface is a specific kind
+of manifold.  :-D&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;If you like fantasy, there are some neat parallels there; the different overlaid
+worlds the characters move between in Philip Pullman's &lt;em&gt;His Dark Materials&lt;/em&gt; series
+(aka &lt;em&gt;The Golden Compass&lt;/em&gt;), China Miéville's &lt;em&gt;Un Lun Dun&lt;/em&gt;, V. E. Schwab's &lt;em&gt;Shades of Magic&lt;/em&gt;,
+and Charlie Stross's &lt;em&gt;The Merchant Princes&lt;/em&gt; series come to mind.
+Even the Upside Down in &lt;em&gt;Stranger Things&lt;/em&gt; works, though then you have to decide
+which of your loss landscapes is the evil one, and that muddies the analogy annoyingly.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-4"&gt;
+&lt;p&gt;Sharp-eyed readers might have noticed that there are 16 models in the table above.
+I'm excluding the OpenAI medium weights.  If you want to extend the analogy, that model
+is an Olympic runner who happens to have stopped by for the race...&amp;#160;&lt;a href="#fnref-4" class="footnoteBackLink" title="Jump back to footnote 4 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-5"&gt;
+&lt;p&gt;The paper says 117M, but the released weights are larger.  I can successfully
+load them into my code with a model config that has 124,439,808 parameters.&amp;#160;&lt;a href="#fnref-5" class="footnoteBackLink" title="Jump back to footnote 5 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro</guid>
+      <pubDate>Wed, 29 Jul 2026 15:30:00 +0000</pubDate>
+    </item>
     <item>
       <title>Benchmarking Qwen 3.6 35B MoE (3B active) on an RTX 3090</title>
       <link>https://www.gilesthomas.com/2026/07/benchmarking-qwen-3-6-35b-moe-rtx-3090</link>
-      <description>&lt;p&gt;I mentioned I'd got a second RTX 3090 on a group chat, and a friend said:&lt;/p&gt;
+      <description>&lt;p&gt;I mentioned I'd got a new RTX 3090 on a group chat, and a friend said:&lt;/p&gt;
 
 &lt;blockquote&gt;
   &lt;p&gt;I know this is not really your thing... but let me know how quickly it runs
@@ -64,7 +521,7 @@ he says this about throughput:&lt;/p&gt;
 &lt;p&gt;That's worse than the CUDA-with-offload results above, though I did limit my testing
 to a 2,457-token prompt, with 6,144 tokens generated.  The RTX 5090 has 32 GiB VRAM
 &lt;em&gt;and&lt;/em&gt; fast Nvidia processing -- I imagine things would be a lot better there.  Downside:
-it costs more than three times what you pay for a 3090 (and double the Arc B70 Pro).&lt;/p&gt;
+it costs more than three times what you pay for a second-hand 3090 (and double the Arc B70 Pro).&lt;/p&gt;
 
 &lt;p&gt;Anyway, in the rest of this post, I'll give more details of the benchmark, including charts showing the performance
 at different numbers of offloaded layers, and comparisons of the Vulkan vs CUDA versions
@@ -6662,210 +7119,6 @@ to definitely be on some specific device, make sure that you nail it down there 
 </description>
       <guid isPermaLink="true">/2026/06/jax-commitment-issues</guid>
       <pubDate>Mon, 15 Jun 2026 21:30:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>JAX backends and devices</title>
-      <link>https://www.gilesthomas.com/2026/06/jax-backends-and-devices</link>
-      <description>&lt;p&gt;There's nothing like writing your own code with a framework to clarify how things
-fit together!  Continuing with my port of my &lt;a href="/llm-from-scratch"&gt;PyTorch LLM code&lt;/a&gt; to
-&lt;a href="https://docs.jax.dev/"&gt;JAX&lt;/a&gt;, I wanted to load up a large dataset:
-the 10,248,871,837 16-bit unsigned integers in the &lt;code&gt;train&lt;/code&gt; split of
-&lt;a href="https://huggingface.co/datasets/gpjt/fineweb-gpt2-tokens"&gt;&lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt;&lt;/a&gt;.
-That's just over 19GiB of data.&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;safetensors.flax&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;
-&lt;span class="o"&gt;...&lt;/span&gt;
-&lt;span class="n"&gt;full_dataset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dataset_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;When I ran that, I got a CUDA out-of-memory error:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;jax.errors.JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 19.09GiB.&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That makes sense!  The allocation it was trying to do is exactly the size of
-the data I was trying to load.  I have an RTX 3090 with 24 GiB, but some is already used up by
-the OS, various apps, and a model that the code creates earlier on.&lt;/p&gt;
-
-&lt;p&gt;But in PyTorch land, I was used to things being loaded into RAM by default, and only
-moved over to the GPU when I asked it to do that.  JAX was clearly loading to the GPU
-by default.  How could I stop it from doing that for this case?  The load into the GPU
-was happening inside Safetensors, in code I couldn't directly control.&lt;/p&gt;
-
-&lt;p&gt;Understanding how to do it helped me understand a little bit more about JAX.&lt;/p&gt;
-&lt;p&gt;JAX has a function that looks relevant: &lt;code&gt;jax.devices&lt;/code&gt;.
-Without reading the docs, let's try running it.  In my virtualenv, with the &lt;code&gt;jax[cuda13]&lt;/code&gt;
-package installed, I get this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;jax&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;CudaDevice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;id&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That seems a bit weird!  I do indeed have a CUDA device, but I also have a CPU, obviously.
-Why isn't it showing up?&lt;/p&gt;
-
-&lt;p&gt;Running the same code in another virtualenv, with just &lt;code&gt;jax&lt;/code&gt; installed -- no CUDA -- gets this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;jax&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;span class="n"&gt;An&lt;/span&gt; &lt;span class="n"&gt;NVIDIA&lt;/span&gt; &lt;span class="n"&gt;GPU&lt;/span&gt; &lt;span class="n"&gt;may&lt;/span&gt; &lt;span class="n"&gt;be&lt;/span&gt; &lt;span class="n"&gt;present&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;this&lt;/span&gt; &lt;span class="n"&gt;machine&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;but&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="n"&gt;CUDA&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;enabled&lt;/span&gt; &lt;span class="n"&gt;jaxlib&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="n"&gt;installed&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt; &lt;span class="n"&gt;Falling&lt;/span&gt; &lt;span class="n"&gt;back&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;cpu&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
-
-&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;all_devices&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;CpuDevice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;id&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;OK, so it &lt;em&gt;did&lt;/em&gt; recognise it this time.  Feels like it might be time to RTFM.&lt;/p&gt;
-
-&lt;p&gt;The &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.devices.html"&gt;&lt;code&gt;jax.devices&lt;/code&gt; docs&lt;/a&gt; explain things
-a bit:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;&lt;code&gt;jax.devices(&lt;/code&gt;&lt;em&gt;&lt;code&gt;backend=None&lt;/code&gt;&lt;/em&gt;&lt;code&gt;)&lt;/code&gt;&lt;/p&gt;
-  
-  &lt;p&gt;Returns a list of all devices for a given backend.&lt;/p&gt;
-  
-  &lt;p&gt;...&lt;/p&gt;
-  
-  &lt;p&gt;If &lt;code&gt;backend&lt;/code&gt; is &lt;code&gt;None&lt;/code&gt;, returns all the devices from the default backend. The
-  default backend is generally &lt;code&gt;'gpu'&lt;/code&gt; or &lt;code&gt;'tpu'&lt;/code&gt; if available, otherwise &lt;code&gt;'cpu'&lt;/code&gt;.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;OK.  So JAX has multiple backends -- named that because they're classes of backend hardware that XLA
-(the compiler behind the JIT) targets.  There is a default one, which is essentially
-going to be the "best" one available given the hardware configuration and the parts of
-JAX that are installed.&lt;/p&gt;
-
-&lt;p&gt;When I had the CUDA version installed, it made the &lt;code&gt;gpu&lt;/code&gt; backend
-default, but when I didn't, it defaulted to &lt;code&gt;cpu&lt;/code&gt; (and warned me).  And because it
-only shows the devices on the default backend, when that was &lt;code&gt;gpu&lt;/code&gt;, I didn't see the CPU.&lt;/p&gt;
-
-&lt;p&gt;However, you can specify which backend you want to use with that &lt;code&gt;backend&lt;/code&gt; parameter, so let's go back to the
-virtualenv with CUDA:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;In&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Out&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;CpuDevice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;id&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Great!  So is there some way to list which backends are available?
-&lt;a href="https://github.com/jax-ml/jax/issues/6459"&gt;Apparently not&lt;/a&gt; -- the recommended
-way appears to be to try loading devices for the different possibilities, and
-catch &lt;code&gt;RuntimeErrors&lt;/code&gt; to see which ones aren't available.  Yuck.&lt;/p&gt;
-
-&lt;p&gt;But maybe that's not such a big deal.  In PyTorch-land I was very much used to putting
-code like this near the start of my code:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cuda&amp;quot;&lt;/span&gt; &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;cuda&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_available&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;else&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...then moving models to the device:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...and then moving data to the model's device as needed:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nb"&gt;next&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parameters&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;
-&lt;span class="o"&gt;...&lt;/span&gt;
-&lt;span class="n"&gt;inputs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;What I actually wanted was essentially what JAX does -- have everything on the fastest
-device available at all times -- but with specific exceptions.  In particular, the one
-that started off this investigation: how would I put this huge array of training
-data on the CPU's RAM rather than the GPU's VRAM?&lt;/p&gt;
-
-&lt;p&gt;I had a bit of a false start when I spotted that the &lt;code&gt;load_file&lt;/code&gt; function in the
-&lt;a href="https://huggingface.co/docs/safetensors/api/flax"&gt;Safetensors FLAX API&lt;/a&gt; has a &lt;code&gt;backend&lt;/code&gt;
-parameter, but that appears to be more to do with how it loads up the file -- a backend
-in a different sense.  And anyway, &lt;em&gt;backend&lt;/em&gt; is not the right concept in JAX-land, as
-the backend means just something generic like &lt;code&gt;gpu&lt;/code&gt; -- for what we're trying to do, we want
-to load it onto a specific &lt;em&gt;device&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;After some digging around, I discovered that JAX has a concept of a &lt;em&gt;default device&lt;/em&gt;,
-which is the one used when it doesn't have any
-indication of where to put something.  It makes sense that this will be on the default
-backend -- indeed, it looks like it's essentially "the first device in the list that
-&lt;code&gt;jax.devices&lt;/code&gt; returns for the default backend".&lt;/p&gt;
-
-&lt;p&gt;There is a &lt;code&gt;jax_default_device&lt;/code&gt; config option which
-you can use to set it; you'd &lt;a href="https://docs.jax.dev/en/latest/config_options.html"&gt;normally use&lt;/a&gt; &lt;code&gt;jax.config.update&lt;/code&gt; or an environment
-variable to change it.&lt;/p&gt;
-
-&lt;p&gt;But what if you only want to change it temporarily?  I found &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.default_device.html"&gt;this documentation for
-&lt;code&gt;jax.default_device&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;The docs are more than a little confusing:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;&lt;code&gt;jax.default_device =&lt;/code&gt;&lt;em&gt;&lt;code&gt;&amp;lt;jax._src.config.State object&amp;gt;&lt;/code&gt;&lt;/em&gt;&lt;/p&gt;
-  
-  &lt;p&gt;Context manager for &lt;code&gt;jax_default_device&lt;/code&gt; config option.&lt;/p&gt;
-  
-  &lt;p&gt;Configure the default device for JAX operations. Set to a Device object (e.g.
-  &lt;code&gt;jax.devices("cpu")[0]&lt;/code&gt;) to use that Device as the default device for JAX
-  operations and jit’d function calls (there is no effect on multi-device
-  computations, e.g. pmapped function calls). Set to None to use the system
-  default device.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;That &lt;code&gt;=&lt;/code&gt; near the start tripped me up, as I missed the words "Context manager" just
-below, and the odd &lt;code&gt;State&lt;/code&gt; type, and tried this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-&lt;span class="n"&gt;full_dataset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dataset_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;I still got the CUDA OOM, though, so I reread the docs, spotted the "context manager" bit,
-swore violently, and tried this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]):&lt;/span&gt;
-    &lt;span class="n"&gt;full_dataset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;load_file&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dataset_dir&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train.safetensors&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...which works.  It looks like the equals sign in the docs is being used to mean something
-very different to what you'd normally use it for, and they decided not to actually
-document the signature of the context manager.  Heigh ho.  I guess
-&lt;a href="https://www.reddit.com/r/ProgrammerHumor/comments/gv6yhy/documentation_hell/"&gt;documentation is hard&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Still, at least now I have a solution.  And as I said earlier, doc grumbles aside,
-the shape of the code might wind up being a little less fiddly than PyTorch.  The
-default location of things I create is the fastest hardware I have, which is what I want.
-And for the rare exceptions when I don't want to use that, there is a reasonably
-simple (now that I know it) way to say where I want things to go.&lt;/p&gt;
-
-&lt;p&gt;I'll call that a win :-)   The only thing I'll need to remember is that when, in
-my training loop, I want to use subsets of that in-RAM tensor, I'll need to move them
-to the GPU.  &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.device_put.html"&gt;&lt;code&gt;jax.device_put&lt;/code&gt;&lt;/a&gt; looks
-like the right tool for that.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">/2026/06/jax-backends-and-devices</guid>
-      <pubDate>Fri, 05 Jun 2026 19:30:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
