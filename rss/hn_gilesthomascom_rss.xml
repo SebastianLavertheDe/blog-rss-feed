@@ -5,7 +5,393 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Thu, 30 Jul 2026 17:40:43 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 30 Jul 2026 19:39:45 +0000</lastBuildDate>
+    <item>
+      <title>Why do OpenAI's GPT-2 weights beat mine?  Part two: the bugfix</title>
+      <link>https://www.gilesthomas.com/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix</link>
+      <description>&lt;p&gt;I'm digging into why my GPT-2 style models score worse on an instruction-following eval than OpenAI's original weights;
+I gave the details in &lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro"&gt;this post&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;While I was writing up the results of my first experiment into possible causes,
+I ran the post past ChatGPT -- I always use an "editorial board" of AIs to check my
+posts for flow, style, and any technical errors (though all writing is always mine).
+It took a look at the eval code that I was running, and highlighted a bug.&lt;/p&gt;
+
+&lt;p&gt;Luckily, it doesn't change the important results -- OpenAI's models continue to be
+better than mine at instruction-following. But it was
+enough to change the baseline numbers, re-ordering how well my own models did.
+So I fixed it and regenerated the baseline
+so that future experiments are based on solid ground.&lt;/p&gt;
+&lt;h2 id="the-bug"&gt;The bug&lt;/h2&gt;
+
+&lt;p&gt;The eval takes a model, and trains it over multiple epochs on a split of a subset of the Alpaca
+instruction-following dataset.  At the end of each epoch, it evaluates
+the resulting model against a held-back validation split; if the eval loss starts
+rising, it bails out.  Finally, it runs a test split of the dataset through the resulting
+model, and saves the result.&lt;/p&gt;
+
+&lt;p&gt;Once I've run it for a bunch of different models, I use an LLM-as-a-judge script
+to get GPT 5.5 to score results -- for each question-answering result, it sees all
+of the responses for all of the models &lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;in the same prompt&lt;/a&gt;, shuffled in order each time,
+to try to make it judge models against each other as consistently as possible.&lt;/p&gt;
+
+&lt;p&gt;Now, the idea was that the generation of the test split answers would use the model from the epoch prior
+to the rising-loss one.  So I had code like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;epoch&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;100&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;train&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+        &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;input_batch&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;target_batch&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;tqdm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loader&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;desc&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Epoch &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;epoch&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+            &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;zero_grad&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+            &lt;span class="n"&gt;loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calc_loss_batch&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                &lt;span class="n"&gt;input_batch&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;target_batch&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;device&lt;/span&gt;
+            &lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+            &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+        &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eval&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+        &lt;span class="n"&gt;val_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calc_loss_loader&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;val_loader&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;eval_iter&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;last_val_loss&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt; &lt;span class="ow"&gt;or&lt;/span&gt; &lt;span class="n"&gt;last_val_loss&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;val_loss&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;last_val_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;val_loss&lt;/span&gt;
+            &lt;span class="n"&gt;last_params&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;state_dict&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+            &lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Val loss still decreasing, continuing&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Val loss rising, bailing out&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="k"&gt;break&lt;/span&gt;
+
+    &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load_state_dict&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;last_params&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Each time the validation loss went down, I wanted to store the model's parameters
+in &lt;code&gt;last_params&lt;/code&gt; so that they could be restored later in that last line.&lt;/p&gt;
+
+&lt;p&gt;If you look closely, the error is pretty obvious.  &lt;code&gt;model.state_dict()&lt;/code&gt; does not return
+a copy of the model's parameters -- it produces a dictionary containing references
+to the parameters inside the model.  So although I was trying to stash away the parameters
+in &lt;code&gt;last_params&lt;/code&gt; each time loss went down, so that we had a copy of the ones that
+were live in the epoch prior to the rising-loss one, what I was actually doing was
+just pointlessly saving a reference to the "live" params.  The call to
+&lt;code&gt;model.load_state_dict(last_params)&lt;/code&gt; was essentially a no-op.&lt;/p&gt;
+
+&lt;p&gt;The solution was simple enough:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;copy&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;deepcopy&lt;/span&gt;
+&lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="n"&gt;last_params&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;deepcopy&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;state_dict&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That was enough to make the code do what it was meant to do.&lt;/p&gt;
+
+&lt;p&gt;While I was there, I also noticed that the evaluation code was only using the first
+five batches in my eval dataset.  This code was originally adapted from an eval
+in "&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
+where the eval was run much more frequently and had to be super-fast.  Because
+my own code ran it more rarely, it made more sense to use all of it.
+Given that I was going to completely re-run
+the script to generate the test responses, I figured that I might as well fix that
+at the same time.&lt;/p&gt;
+
+&lt;h2 id="a-new-baseline"&gt;A new baseline&lt;/h2&gt;
+
+&lt;p&gt;I re-ran the fixed script on all of the models I'm comparing, and ran that past
+the GPT 5.5 judge; here's what I got:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;Old IFT epochs&lt;/th&gt;
+  &lt;th&gt;Old IFT score&lt;/th&gt;
+  &lt;th&gt;Old IFT rank&lt;/th&gt;
+  &lt;th&gt;New IFT epochs&lt;/th&gt;
+  &lt;th&gt;New IFT score&lt;/th&gt;
+  &lt;th&gt;New IFT rank&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
+  &lt;td&gt;3.231442&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;41.62&lt;/td&gt;
+  &lt;td&gt;1&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;42.41&lt;/td&gt;
+  &lt;td&gt;1&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.418784&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;19.25&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;18.12&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.420089&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;3&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;14.66&lt;/td&gt;
+  &lt;td&gt;11&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;5&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;20.72&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;3.476802&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;4&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;12.94&lt;/td&gt;
+  &lt;td&gt;15&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;7&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;16.98&lt;/td&gt;
+  &lt;td&gt;8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
+  &lt;td&gt;3.499677&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;26.73&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;26.11&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.538161&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;17.79&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.68&lt;/td&gt;
+  &lt;td&gt;11&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;10.29&lt;/td&gt;
+  &lt;td&gt;16&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;9.81&lt;/td&gt;
+  &lt;td&gt;15&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;3.673623&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;7&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;20.71&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;6&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;19.45&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.683835&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;15.11&lt;/td&gt;
+  &lt;td&gt;9&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;13.39&lt;/td&gt;
+  &lt;td&gt;12&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.74&lt;/td&gt;
+  &lt;td&gt;10&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.64&lt;/td&gt;
+  &lt;td&gt;9&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.724507&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.25&lt;/td&gt;
+  &lt;td&gt;14&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;11.30&lt;/td&gt;
+  &lt;td&gt;14&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.729900&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.50&lt;/td&gt;
+  &lt;td&gt;12&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.84&lt;/td&gt;
+  &lt;td&gt;10&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;3.771478&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;16.03&lt;/td&gt;
+  &lt;td&gt;8&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;11.82&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;3.943522&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;13.73&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;8.93&lt;/td&gt;
+  &lt;td&gt;16&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;4.134991&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;16.70&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.10&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;4.166892&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;18.68&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.28&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;Let's dig into those numbers.&lt;/p&gt;
+
+&lt;h2 id="training-epochs"&gt;Training epochs&lt;/h2&gt;
+
+&lt;p&gt;Let's look into the number of training epochs first; I've highlighted the models for which it changed.&lt;/p&gt;
+
+&lt;p&gt;For the "Cloud FineWeb, 8x A100 40 GiB" model, I think that was a result of the change
+to the number of validation samples.&lt;/p&gt;
+
+&lt;p&gt;For the two JAX models, it's a bit more of a mystery.  There may be some part of the
+same "more eval data" variation there, but I have a suspicion that there's something
+more, related to dropout.&lt;/p&gt;
+
+&lt;p&gt;My methodology to date has been that the IFT training runs
+should use the same dropout setting as the original base model training run (I'll
+come back to this in a later post).   However, due to differences between the JAX
+training script and the evaluation code (which is PyTorch), matching the dropout
+rate when evaluating those models is a bit fiddly and error-prone.&lt;/p&gt;
+
+&lt;p&gt;I am 100% sure that
+I got it right this time around -- I've checked and double-checked the specific commands
+I ran.
+But I think -- from what I remember doing -- that
+I might have messed it up the previous time.
+That's not certain, though -- just a suspicion based on half-memories
+of some commands I ran several weeks ago, which never wound up in my &lt;code&gt;.bash_history&lt;/code&gt;
+(too many terminals open at once).&lt;/p&gt;
+
+&lt;h2 id="the-ranking"&gt;The ranking&lt;/h2&gt;
+
+&lt;p&gt;For the IFT scores, remember that they're not strongly comparable between runs.
+Let's imagine that the LLM judge is given the following answers to the question "Who was the author of &lt;em&gt;Pride and Prejudice&lt;/em&gt;?"&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;"Jane Austen"&lt;/li&gt;
+&lt;li&gt;"The author of 'Pride and Prejudice' was Jane Austen"&lt;/li&gt;
+&lt;li&gt;"The author of 'Pride and Prejudice' was Sarah Palin"&lt;/li&gt;
+&lt;li&gt;"The author of 'Pride and Prejudice' was 'Pride and Prejudice'"&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;In some cases it might treat the first two as being 100/100, in others it
+might give the second 95/100 for being too wordy.  Likewise, in some cases it might
+rank the last two as 0/100 for being wrong, in others it might give the "Sarah Palin"
+one 5/100 for at least being the name of a person rather than complete nonsense.&lt;/p&gt;
+
+&lt;p&gt;Now, we always ask the LLM to judge all of the models' answers for a given question in
+one go, so at least we can be sure that it will be consistent for a given prompt about
+a given question.  But what we can't keep consistent is which way it leans between
+different runs, or different questions within the same run.  Sometimes it might be
+feeling "generous" and give the Sarah Palin answer a bit of grace, other times
+it might be harsher.&lt;/p&gt;
+
+&lt;p&gt;So there's a significant amount of noise there; my rule of thumb is that a variation of
+a point or two is within that noise, so OpenAI medium going from 41.62 to 42.41 is
+pretty much meaningless, and likewise "JAX, with MHA bias, no dropout"'s move from
+19.25 to 18.12.&lt;/p&gt;
+
+&lt;p&gt;So what's important is the relative ranking -- which is first, which is second,
+and so on.  Naturally, you have to allow for the fact that -- for example -- if one
+model goes from position 11 to position 3, like "JAX, no MHA bias, no dropout"
+did, then the previous number 3 will have to become number 4, 4 will
+become 5, and so on.  You can see that happening in the results table.  Obviously,
+as other models rise and fall, that has further knock-on effects.&lt;/p&gt;
+
+&lt;p&gt;Anyway, with all of those caveats, the good news is that my original mystery remains.
+The OpenAI models were still doing noticeably better than my own ones.  GPT-2 medium
+continued to lead the pack (unsurprisingly, given that it's a bigger model), and
+GPT-2 small was still in second place.  If that had changed, it would have made
+a rather disappointing end to this series: "mystery explained, it was a bug in the
+eval :-("&lt;/p&gt;
+
+&lt;p&gt;But now let's look at my models.&lt;/p&gt;
+
+&lt;p&gt;Firstly, it looked like the "no MHA bias" models might have benefited
+from the extra training -- or from having their dropout settings corrected.  They rose from
+positions 11 and 15 to 3 and 8 respectively -- a huge swing for "JAX, no MHA bias, no dropout",
+and a solid improvement for "JAX, no MHA bias, with dropout".&lt;/p&gt;
+
+&lt;p&gt;Most of the other changes in relative rankings can be explained by those two models
+having been promoted, but there are some other changes.  In particular, three models
+dropped significantly in score (and, as a result, ranking):&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;"Cloud FineWeb, 8x B200 160 GiB"&lt;/li&gt;
+&lt;li&gt;"Local FineWeb train"&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;My suspicion -- a very weakly-held hypothesis, but an interesting one -- is that those models had previously been &lt;em&gt;benefiting&lt;/em&gt; from the bug.&lt;/p&gt;
+
+&lt;p&gt;Remember that the signal we're using to stop training is that the validation loss
+starts rising.  We're using that as a proxy for overfitting, which in turn we're using as
+a proxy for "this model has had as much training
+on this data as it needs for the eval".&lt;/p&gt;
+
+&lt;p&gt;But there's no guarantee that the connection is there.  Perhaps the models weren't
+overfitting and if we'd waited for another epoch or two, the validation loss might have
+started falling again.  Or maybe some amount of overfitting would be beneficial for this
+eval?&lt;/p&gt;
+
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+
+&lt;p&gt;There's probably a near-infinite amount of digging in that I could potentially do here.
+But I think it's best to stop.  The bugfix was important because it meant that the
+eval was now doing what I thought it was doing.&lt;/p&gt;
+
+&lt;p&gt;Importantly, it doesn't change the puzzling
+fact that my models were worse at this eval than OpenAI's, which is what I'm trying to untangle.
+And it means that I can now lean more confidently on the baseline numbers.&lt;/p&gt;
+
+&lt;p&gt;So now it's time to actually start changing things to see if I can close the gap!&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix</guid>
+      <pubDate>Thu, 30 Jul 2026 19:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Why do OpenAI's GPT-2 weights beat mine?</title>
       <link>https://www.gilesthomas.com/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro</link>
@@ -37,8 +423,8 @@ of a running theme, with occasional posts until either I solve the mystery, or
 give up in despair...&lt;/p&gt;
 
 &lt;p&gt;In this post I'll give a bit more detail about the nature of the problem, and
-list some of the things I've been thinking might be the cause.  In the next post, I'll give the results
-of the first experiment.&lt;/p&gt;
+list some of the things I've been thinking might be the cause.  In later posts,
+I'll dig into some of them.&lt;/p&gt;
 &lt;h2 id="more-on-the-mystery"&gt;More on the mystery&lt;/h2&gt;
 
 &lt;p&gt;Let's take a look at the results from my most recent runs of the IFT eval.  I've
@@ -417,12 +803,14 @@ number.  But that heuristic dates to 2022, and GPT-2 was trained in 2019.  While
 we don't know for sure, from what I've managed to dig up it looks like it
 was probably trained on much more data -- and probably over multiple epochs too.&lt;/p&gt;
 
-&lt;p&gt;Training on more tokens than the Chinchilla number is called overtraining (not to be confused with overfitting).  So,
-in my next post: what happens if we overtrain the model?  Will we get the
+&lt;p&gt;Training on more tokens than the Chinchilla number is called overtraining (not to be confused with overfitting).  So:
+what happens if we overtrain the model?  Will we get the
 loss down?  And if so, will we start approaching GPT-2 small's results on the IFT
 eval?&lt;/p&gt;
 
 &lt;p&gt;Stay tuned :-)&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
 
 &lt;div class="footnotes"&gt;
 &lt;hr /&gt;
@@ -6970,155 +7358,6 @@ toasty Lisbon summer.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2026/06/10g-ethernet-switching-to-broadcom-sfp-plus</guid>
       <pubDate>Tue, 16 Jun 2026 18:45:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>JAX: commitment issues</title>
-      <link>https://www.gilesthomas.com/2026/06/jax-commitment-issues</link>
-      <description>&lt;p&gt;Imagine you have JAX code like this, and run it on a machine with CUDA set up:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="n"&gt;key&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;42&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-
-    &lt;span class="n"&gt;cpu0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;devices&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cpu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-    &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;default_device&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cpu0&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-        &lt;span class="n"&gt;array&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-            &lt;span class="n"&gt;key&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-            &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;530640&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;6&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1024&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-            &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;50_000&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-            &lt;span class="n"&gt;dtype&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;numpy&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;uint16&lt;/span&gt;
-        &lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;block_until_ready&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-    &lt;span class="n"&gt;item&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
-    &lt;span class="n"&gt;item&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;block_until_ready&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;We're creating a big array, blocking until it's ready (JAX is asynchronous, so
-this makes sure that it's actually finished creating it), then getting
-the first item, and as a belt-and-braces thing making sure that that is ready too.
-How long do you think those last two lines -- a simple retrieval of a 6 x 1024 array
-from a larger one -- will take?  Some tiny fraction of a second would seem
-reasonable.&lt;/p&gt;
-
-&lt;p&gt;But running it on my machine just now, the answer is a bit of a surprise: just over 5 seconds.  And if you try to
-get &lt;code&gt;array[1]&lt;/code&gt; immediately afterwards, it still takes about 1.2s.  Further lookups into
-&lt;code&gt;array&lt;/code&gt; consistently take more than a second -- so while the larger
-initial number might be something to do with setup -- maybe internal stuff being JITted -- that's clearly not the whole story.
-Something is making these seemingly-simple array lookups take much longer than you'd
-expect them to.&lt;/p&gt;
-
-&lt;p&gt;Let's dig into that.&lt;/p&gt;
-&lt;h3 id="a-bit-of-background"&gt;A bit of background&lt;/h3&gt;
-
-&lt;p&gt;First things first, why would you want to do that slightly strange dance with the
-&lt;code&gt;jax.default_device&lt;/code&gt; context manager in the first place, rather than telling &lt;code&gt;randint&lt;/code&gt; what
-device you want to use (eg. with &lt;code&gt;out_sharding&lt;/code&gt;)?&lt;/p&gt;
-
-&lt;p&gt;I'm writing some LLM training
-code, and want to load my training dataset.  I don't want to load it into the VRAM
-on the GPU -- that would be a waste of valuable GPU resources -- so I need it in
-the CPU-side memory.  I'm using Safetensors, which will
-&lt;a href="/2026/06/jax-backends-and-devices"&gt;load stuff onto the system's default device&lt;/a&gt;.
-So I need to override that temporarily to make sure that the dataset is loaded onto
-the device where I want it.&lt;/p&gt;
-
-&lt;p&gt;I initially discovered this problem when I tried to iterate over the resulting array in my training
-loop; the code above is a simplified version of that -- a minimal repro of the issue.
-And it's a serious one!  If each iteration has an overhead of 1.2s just to get 6,144 tokens
-ready for the model, JAX will max out at about 5,000 tokens per second
-of training speed &lt;em&gt;just due to that overhead&lt;/em&gt; -- a real forward and backward pass plus
-an optimiser step will obviously make things even slower.  For comparison, my PyTorch training loop managed almost 20,000 tokens/second
-on the same hardware: all steps from getting the training data, putting it on the GPU,
-and doing the actual training.&lt;/p&gt;
-
-&lt;h3 id="debugging"&gt;Debugging&lt;/h3&gt;
-
-&lt;p&gt;So, let's look at that code again.  We've created
-our variable &lt;code&gt;array&lt;/code&gt; on the CPU explicitly, and indeed if you print &lt;code&gt;array.device&lt;/code&gt;,
-it says &lt;code&gt;CpuDevice(id=0)&lt;/code&gt;.  But if you print the device of the &lt;code&gt;item&lt;/code&gt;, you get
-&lt;code&gt;CudaDevice(id=0)&lt;/code&gt;.  What's worse, if you watch &lt;code&gt;nvtop&lt;/code&gt; while the code is running,
-as soon as it hits the lookup into the array, it starts using the GPU -- for each one,
-there's a spike in GPU usage.&lt;/p&gt;
-
-&lt;p&gt;So, what gives?  We asked JAX to put the array on the CPU, but now it's doing
-GPU work, and putting the items there.&lt;/p&gt;
-
-&lt;p&gt;The problem is that when you create an array using the &lt;code&gt;default_device&lt;/code&gt; context manager,
-it is placed on the specified device, but it's not &lt;a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.committed.html"&gt;committed&lt;/a&gt; to it.
-If an array is not committed to its device, then JAX will feel free to move it
-around to others.&lt;/p&gt;
-
-&lt;p&gt;In order to commit an array to a device, you need to use &lt;code&gt;jax.device_put&lt;/code&gt; explicitly
-stating which device you want it on.  Running
-the same code, but with this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;array&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;jax&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;device_put&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;array&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;cpu0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...immediately before the lookup into the array changes the numbers drastically;
-the first lookup takes about 0.95s on my machine, the second 0.0002s, and then
-subsequent ones less than 0.0001s.&lt;/p&gt;
-
-&lt;h3 id="some-more-detailed-tests"&gt;Some more detailed tests&lt;/h3&gt;
-
-&lt;p&gt;I decided to exercise this in depth, and wrote &lt;a href="https://github.com/gpjt/jax-gpt2-from-scratch/blob/3d28bf64c87e92a62dceac26f32eaa2248ece12c/array_speed_test.py"&gt;this script&lt;/a&gt;.
-If you run it without the &lt;code&gt;--commit&lt;/code&gt; command line flag, it will create the array,
-then iterate over the first ten items, measuring how long it takes to get each one.
-Running it just now:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Getting the zeroth item from the array took about 5.4s.&lt;/li&gt;
-&lt;li&gt;Each subsequent one consistently took about 1.2s&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;With the &lt;code&gt;--commit&lt;/code&gt; flag, it uses &lt;code&gt;device_put&lt;/code&gt; to explicitly commit the array to the
-CPU.  Running that:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Getting the zeroth item from the array took about 0.95s&lt;/li&gt;
-&lt;li&gt;Each subsequent one took less than 0.0002s.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;Now, that didn't quite cover my use case -- what if, I wondered, the slow operation
-was putting things onto the GPU?  The script also has a &lt;code&gt;--put_items_to_gpu&lt;/code&gt; flag to
-do that -- after getting each item, it uses &lt;code&gt;device_put&lt;/code&gt;.  With that flag:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Getting the zeroth item from the array took about 0.86s, and putting it on the GPU took 0.02s.&lt;/li&gt;
-&lt;li&gt;Subsequent items had "get" times similar to the previous run,
-and "put" times of about 0.0006s.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;So, there's still a small startup penalty -- perhaps JAX is having to JIT some of
-its internal stuff -- but a perfectly decent speed after that.  Commitment works!&lt;/p&gt;
-
-&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
-
-&lt;p&gt;I'm still building my mental model of how JAX works, and working out exactly what
-is going on here is proving a bit tricky.  The split between a committed and an
-uncommitted array seems clear; the former is tied to a device, while JAX will move
-the latter around as needed.&lt;/p&gt;
-
-&lt;p&gt;It also makes a certain amount of sense that it would want to move the items to the GPU;
-it is, after all, the default device.  But I'm less clear on why that was so slow, compared
-to the manual process of getting the item then putting it there.&lt;/p&gt;
-
-&lt;p&gt;Hypothesis: the array is on the CPU's RAM, but not committed there.  We ask for an item
-from that array, and maybe JAX wants that to be on the default device, the GPU.  So it moves the entire
-"parent" array there, extracts that item, and then returns that.  Then next time around
-when we ask for the next item, it does the same thing again.&lt;/p&gt;
-
-&lt;p&gt;Plausible?  Maybe, but it does sound a bit pathological!&lt;/p&gt;
-
-&lt;p&gt;Anyway, at the end of the day, I have a solid new heuristic of my own: if you want something
-to definitely be on some specific device, make sure that you nail it down there with
-&lt;code&gt;device_put&lt;/code&gt;.  And then you won't have commitment issues like these.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">/2026/06/jax-commitment-issues</guid>
-      <pubDate>Mon, 15 Jun 2026 21:30:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
