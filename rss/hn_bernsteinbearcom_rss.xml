@@ -5,7 +5,652 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 07 Aug 2026 21:44:48 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 07 Aug 2026 22:42:12 +0000</lastBuildDate>
+    <item>
+      <title>A quick look at zero-knowledge proofs</title>
+      <link>https://bernsteinbear.com/blog/zkp/?utm_source=rss</link>
+      <description>&lt;p&gt;&lt;em&gt;NB: This isn’t about crypto. I don’t care about crypto.&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="https://www.chrisgregory.me/"&gt;Chris&lt;/a&gt; messaged me the other week asking
+if I wanted to implement zero-knowledge proofs. I initially was not interested,
+but then he said:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;What if I told you there’s a version of them that has nothing to do with
+cryptocurrencies? What if I told you it involves graph theory? What if I told
+you there’s a 30 line implementation?&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Now &lt;em&gt;that&lt;/em&gt; was interesting.&lt;/p&gt;
+
+&lt;p&gt;The idea of a zero-knowledge proof (ZKP) is that there are two parties: the
+prover and the verifier. The prover asserts that it has a solution to a
+(generally NP-complete) problem. The prover can convince the verifier of this
+without sharing the actual solution to the problem.&lt;/p&gt;
+
+&lt;p&gt;The canonical example is 3-coloring a graph. That is, the prover asserts that,
+for a given (shared) graph, it has a valid 3-coloring. It wants to convince the
+verifier of this without revealing the actual color assignment.&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;As a quick recap, graph coloring is the problem where given a graph,
+we find a way to assign each node a color such that no two adjacent nodes
+have the same color. 3-coloring is coloring with at most 3 colors.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;!--
+graph {
+    0 -- 1;
+    1 -- 2;
+    2 -- 3;
+    3 -- 4;
+    4 -- 0;
+    0 -- 2;
+}
+--&gt;
+&lt;object&gt;
+&lt;svg width="127pt" height="332pt" viewBox="0.00 0.00 127.00 332.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"&gt;
+&lt;g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 328)"&gt;
+&lt;title&gt;%0&lt;/title&gt;
+&lt;polygon fill="#ffffff" stroke="transparent" points="-4,4 -4,-328 123,-328 123,4 -4,4" /&gt;
+&lt;!-- 0 --&gt;
+&lt;g id="node1" class="node"&gt;
+&lt;title&gt;0&lt;/title&gt;
+&lt;ellipse fill="none" stroke="#000000" cx="82" cy="-306" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="82" y="-301.8" font-family="Times,serif" font-size="14.00" fill="#000000"&gt;0&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 1 --&gt;
+&lt;g id="node2" class="node"&gt;
+&lt;title&gt;1&lt;/title&gt;
+&lt;ellipse fill="none" stroke="#000000" cx="27" cy="-234" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="27" y="-229.8" font-family="Times,serif" font-size="14.00" fill="#000000"&gt;1&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 0&amp;#45;&amp;#45;1 --&gt;
+&lt;g id="edge1" class="edge"&gt;
+&lt;title&gt;0&amp;#45;&amp;#45;1&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M69.5196,-289.6621C60.5186,-277.8788 48.4207,-262.0416 39.431,-250.2733" /&gt;
+&lt;/g&gt;
+&lt;!-- 2 --&gt;
+&lt;g id="node3" class="node"&gt;
+&lt;title&gt;2&lt;/title&gt;
+&lt;ellipse fill="none" stroke="#000000" cx="65" cy="-162" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="65" y="-157.8" font-family="Times,serif" font-size="14.00" fill="#000000"&gt;2&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 0&amp;#45;&amp;#45;2 --&gt;
+&lt;g id="edge6" class="edge"&gt;
+&lt;title&gt;0&amp;#45;&amp;#45;2&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M79.8813,-288.0535C76.6237,-260.4592 70.4191,-207.9026 67.1454,-180.1727" /&gt;
+&lt;/g&gt;
+&lt;!-- 1&amp;#45;&amp;#45;2 --&gt;
+&lt;g id="edge2" class="edge"&gt;
+&lt;title&gt;1&amp;#45;&amp;#45;2&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M36.0055,-216.937C41.9752,-205.626 49.7851,-190.8282 55.7952,-179.4407" /&gt;
+&lt;/g&gt;
+&lt;!-- 3 --&gt;
+&lt;g id="node4" class="node"&gt;
+&lt;title&gt;3&lt;/title&gt;
+&lt;ellipse fill="none" stroke="#000000" cx="65" cy="-90" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="65" y="-85.8" font-family="Times,serif" font-size="14.00" fill="#000000"&gt;3&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 2&amp;#45;&amp;#45;3 --&gt;
+&lt;g id="edge3" class="edge"&gt;
+&lt;title&gt;2&amp;#45;&amp;#45;3&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M65,-143.8314C65,-133 65,-119.2876 65,-108.4133" /&gt;
+&lt;/g&gt;
+&lt;!-- 4 --&gt;
+&lt;g id="node5" class="node"&gt;
+&lt;title&gt;4&lt;/title&gt;
+&lt;ellipse fill="none" stroke="#000000" cx="92" cy="-18" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="92" y="-13.8" font-family="Times,serif" font-size="14.00" fill="#000000"&gt;4&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 3&amp;#45;&amp;#45;4 --&gt;
+&lt;g id="edge4" class="edge"&gt;
+&lt;title&gt;3&amp;#45;&amp;#45;4&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M71.6742,-72.2022C75.8593,-61.0419 81.2321,-46.7143 85.4026,-35.593" /&gt;
+&lt;/g&gt;
+&lt;!-- 4&amp;#45;&amp;#45;0 --&gt;
+&lt;g id="edge5" class="edge"&gt;
+&lt;title&gt;4&amp;#45;&amp;#45;0&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M95.7474,-35.9069C97.7466,-46.3759 99.9966,-59.8759 101,-72 104.9591,-119.8364 104.5886,-132.1343 101,-180 98.0891,-218.8263 90.2002,-263.8211 85.5539,-288.1513" /&gt;
+&lt;/g&gt;
+&lt;/g&gt;
+&lt;/svg&gt;
+&lt;/object&gt;
+
+&lt;!--
+graph {
+    0 [style=filled; color=navy; fontcolor=white];
+    1 [style=filled; color=darkgreen; fontcolor=white];
+    2 [style=filled; color=crimson; fontcolor=white];
+    3 [style=filled; color=navy; fontcolor=white];
+    4 [style=filled; color=darkgreen; fontcolor=white];
+    0 -- 1;
+    1 -- 2;
+    2 -- 3;
+    3 -- 4;
+    4 -- 0;
+    0 -- 2;
+}
+--&gt;
+&lt;object&gt;
+&lt;svg width="127pt" height="332pt" viewBox="0.00 0.00 127.00 332.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"&gt;
+&lt;g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 328)"&gt;
+&lt;title&gt;%0&lt;/title&gt;
+&lt;polygon fill="#ffffff" stroke="transparent" points="-4,4 -4,-328 123,-328 123,4 -4,4" /&gt;
+&lt;!-- 0 --&gt;
+&lt;g id="node1" class="node"&gt;
+&lt;title&gt;0&lt;/title&gt;
+&lt;ellipse fill="#000080" stroke="#000080" cx="82" cy="-306" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="82" y="-301.8" font-family="Times,serif" font-size="14.00" fill="#ffffff"&gt;0&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 1 --&gt;
+&lt;g id="node2" class="node"&gt;
+&lt;title&gt;1&lt;/title&gt;
+&lt;ellipse fill="#006400" stroke="#006400" cx="27" cy="-234" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="27" y="-229.8" font-family="Times,serif" font-size="14.00" fill="#ffffff"&gt;1&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 0&amp;#45;&amp;#45;1 --&gt;
+&lt;g id="edge1" class="edge"&gt;
+&lt;title&gt;0&amp;#45;&amp;#45;1&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M69.5196,-289.6621C60.5186,-277.8788 48.4207,-262.0416 39.431,-250.2733" /&gt;
+&lt;/g&gt;
+&lt;!-- 2 --&gt;
+&lt;g id="node3" class="node"&gt;
+&lt;title&gt;2&lt;/title&gt;
+&lt;ellipse fill="#dc143c" stroke="#dc143c" cx="65" cy="-162" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="65" y="-157.8" font-family="Times,serif" font-size="14.00" fill="#ffffff"&gt;2&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 0&amp;#45;&amp;#45;2 --&gt;
+&lt;g id="edge6" class="edge"&gt;
+&lt;title&gt;0&amp;#45;&amp;#45;2&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M79.8813,-288.0535C76.6237,-260.4592 70.4191,-207.9026 67.1454,-180.1727" /&gt;
+&lt;/g&gt;
+&lt;!-- 1&amp;#45;&amp;#45;2 --&gt;
+&lt;g id="edge2" class="edge"&gt;
+&lt;title&gt;1&amp;#45;&amp;#45;2&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M36.0055,-216.937C41.9752,-205.626 49.7851,-190.8282 55.7952,-179.4407" /&gt;
+&lt;/g&gt;
+&lt;!-- 3 --&gt;
+&lt;g id="node4" class="node"&gt;
+&lt;title&gt;3&lt;/title&gt;
+&lt;ellipse fill="#000080" stroke="#000080" cx="65" cy="-90" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="65" y="-85.8" font-family="Times,serif" font-size="14.00" fill="#ffffff"&gt;3&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 2&amp;#45;&amp;#45;3 --&gt;
+&lt;g id="edge3" class="edge"&gt;
+&lt;title&gt;2&amp;#45;&amp;#45;3&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M65,-143.8314C65,-133 65,-119.2876 65,-108.4133" /&gt;
+&lt;/g&gt;
+&lt;!-- 4 --&gt;
+&lt;g id="node5" class="node"&gt;
+&lt;title&gt;4&lt;/title&gt;
+&lt;ellipse fill="#006400" stroke="#006400" cx="92" cy="-18" rx="27" ry="18" /&gt;
+&lt;text text-anchor="middle" x="92" y="-13.8" font-family="Times,serif" font-size="14.00" fill="#ffffff"&gt;4&lt;/text&gt;
+&lt;/g&gt;
+&lt;!-- 3&amp;#45;&amp;#45;4 --&gt;
+&lt;g id="edge4" class="edge"&gt;
+&lt;title&gt;3&amp;#45;&amp;#45;4&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M71.6742,-72.2022C75.8593,-61.0419 81.2321,-46.7143 85.4026,-35.593" /&gt;
+&lt;/g&gt;
+&lt;!-- 4&amp;#45;&amp;#45;0 --&gt;
+&lt;g id="edge5" class="edge"&gt;
+&lt;title&gt;4&amp;#45;&amp;#45;0&lt;/title&gt;
+&lt;path fill="none" stroke="#000000" d="M95.7474,-35.9069C97.7466,-46.3759 99.9966,-59.8759 101,-72 104.9591,-119.8364 104.5886,-132.1343 101,-180 98.0891,-218.8263 90.2002,-263.8211 85.5539,-288.1513" /&gt;
+&lt;/g&gt;
+&lt;/g&gt;
+&lt;/svg&gt;
+&lt;/object&gt;
+
+&lt;p&gt;How do you do this? Assorted blog posts and fancy-looking demonstrations were
+interesting but did not help us understand much.&lt;/p&gt;
+
+&lt;p&gt;Chris and I went around in circles for a bit until we decided to take a look at
+&lt;a href="https://dl.acm.org/doi/pdf/10.1145/116825.116852"&gt;one of the original papers&lt;/a&gt;
+(PDF) by Goldreich, Micali, and Widgerson. We only really read page 23 (labeled
+page 713 in the PDF) but that was enough to get things going.&lt;/p&gt;
+
+&lt;h2 id="the-papers-protocol"&gt;The paper’s protocol&lt;/h2&gt;
+
+&lt;p&gt;Protocol 4 from the paper describes an interactive 3-color proof session
+between the prover (P, with numbered steps) and the verifier (V, with numbered
+steps), reproduced here:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;&lt;em&gt;common input&lt;/em&gt; A graph &lt;code class="language-plaintext highlighter-rouge"&gt;G(V, E)&lt;/code&gt; (&lt;code class="language-plaintext highlighter-rouge"&gt;n = |V|&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;m = |E|&lt;/code&gt;).&lt;/p&gt;
+
+  &lt;p&gt;The following four steps are executed &lt;code class="language-plaintext highlighter-rouge"&gt;m²&lt;/code&gt; times, each time using independent
+coin tosses.&lt;/p&gt;
+
+  &lt;p&gt;(P1) The prover chooses at random an assignment of three colors to the
+three independent sets induced by &lt;code class="language-plaintext highlighter-rouge"&gt;φ&lt;/code&gt;, colors the graph using this 3-coloring,
+and places these colors in &lt;code class="language-plaintext highlighter-rouge"&gt;n&lt;/code&gt; locked boxes each bearing the number of the
+corresponding vertex. More specifically, the prover chooses a permutation
+&lt;code class="language-plaintext highlighter-rouge"&gt;π ∈R S₃&lt;/code&gt;, places &lt;code class="language-plaintext highlighter-rouge"&gt;π(φ(i))&lt;/code&gt; in a box marked &lt;code class="language-plaintext highlighter-rouge"&gt;i&lt;/code&gt; (∀ &lt;code class="language-plaintext highlighter-rouge"&gt;i ∈ V&lt;/code&gt;), locks all boxes
+and sends them (without the keys) to the verifier.&lt;/p&gt;
+
+  &lt;p&gt;(V1) The verifier chooses at random an edge &lt;code class="language-plaintext highlighter-rouge"&gt;e ∈R E&lt;/code&gt; and sends it to the
+prover. (Intuitively, the verifier asks to examine the colors of the endpoints
+of &lt;code class="language-plaintext highlighter-rouge"&gt;e ∈ E&lt;/code&gt;.)&lt;/p&gt;
+
+  &lt;p&gt;(P2) If &lt;code class="language-plaintext highlighter-rouge"&gt;e = (u, v) ∈ E&lt;/code&gt;, then the prover reveals the colors of &lt;code class="language-plaintext highlighter-rouge"&gt;u&lt;/code&gt; and
+&lt;code class="language-plaintext highlighter-rouge"&gt;v&lt;/code&gt; by sending the verifier the keys to boxes &lt;code class="language-plaintext highlighter-rouge"&gt;u&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;v&lt;/code&gt;. Otherwise, the
+prover does nothing.&lt;/p&gt;
+
+  &lt;p&gt;(V2) The verifier opens boxes &lt;code class="language-plaintext highlighter-rouge"&gt;u&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;v&lt;/code&gt; using the keys received and
+checks whether they contain two different elements of &lt;code class="language-plaintext highlighter-rouge"&gt;{1, 2, 3}&lt;/code&gt;. If the keys
+do not match the boxes, or the contents violate the condition then the
+verifier &lt;em&gt;rejects&lt;/em&gt; and stops. Otherwise, the verifier continues to the next
+iteration.&lt;/p&gt;
+
+  &lt;p&gt;If the verifier has completed all &lt;code class="language-plaintext highlighter-rouge"&gt;m²&lt;/code&gt; iterations then it &lt;em&gt;accepts&lt;/em&gt;.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;We’ll come back to the number of iterations. For now let’s try to just do &lt;em&gt;one&lt;/em&gt;
+iteration. For each step, I’ll annotate the code with “Only prover” or “Only
+verifier” so that it’s clear who can see what data.&lt;/p&gt;
+
+&lt;h2 id="one-iteration"&gt;One iteration&lt;/h2&gt;
+
+&lt;p&gt;We’ll start by sketching out what it means to have a graph. For the example
+graphviz graph above, we have the following edge list data structure:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# Shared between prover, verifier
+&lt;/span&gt;&lt;span class="n"&gt;edges&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Each tuple in the list represents a connection between two numbered nodes.
+Fancy stuff. Because it’s an undirected graph, &lt;code class="language-plaintext highlighter-rouge"&gt;(0, 1)&lt;/code&gt; means the same as &lt;code class="language-plaintext highlighter-rouge"&gt;(1,
+0)&lt;/code&gt; so we don’t have to include both. We can also color it:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# Only prover
+&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s"&gt;"navy"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s"&gt;"darkgreen"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s"&gt;"crimson"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s"&gt;"navy"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s"&gt;"darkgreen"&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Each key is a node number and each value is a color.&lt;/p&gt;
+
+&lt;p&gt;Though finding a 3-coloring of a graph is slow, verifying one is fast—linear
+in the number of edges. Let’s verify that we have a valid sample coloring:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# For the reader
+# Check each edge to make sure no edge has the same color on each node
+&lt;/span&gt;&lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="nb"&gt;all&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;edges&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# Check that the total number of colors used is 3
+&lt;/span&gt;&lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;set&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;values&lt;/span&gt;&lt;span class="p"&gt;()))&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;=&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;We’ll now go through the paper’s steps one by one, writing some code to
+accompany each step.&lt;/p&gt;
+
+&lt;h3 id="tips-and-tricks"&gt;Tips and tricks&lt;/h3&gt;
+
+&lt;p&gt;If you are building alongside the blog post, I recommend using &lt;code class="language-plaintext highlighter-rouge"&gt;random.seed(0)&lt;/code&gt;
+so your randomness doesn’t change between runs of your program. I also
+recommend setting the environment variable &lt;code class="language-plaintext highlighter-rouge"&gt;PYTHONHASHSEED&lt;/code&gt; to &lt;code class="language-plaintext highlighter-rouge"&gt;0&lt;/code&gt; if you are
+using &lt;code class="language-plaintext highlighter-rouge"&gt;hash&lt;/code&gt; for the same stability reasons.&lt;/p&gt;
+
+&lt;h3 id="step-p1"&gt;Step P1&lt;/h3&gt;
+
+&lt;p&gt;The first thing we need to do is permute the coloring we have. That is, we
+should swap around the color values while maintaining the 3-color property.&lt;/p&gt;
+
+&lt;p&gt;Thankfully, this is easier than it might sound: the names of colors are
+meaningless to the 3-coloring; they need only be different along the edges. So
+if we do a bijective (A maps to one B, and B came from one A) mapping from old
+to new name, this will hold.&lt;/p&gt;
+
+&lt;p&gt;I came up with this function that shuffles the colors, lines them up
+side-by-side, makes a table, and then uses that to make a new coloring:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;random&lt;/span&gt;
+
+&lt;span class="c1"&gt;# Only prover
+&lt;/span&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;permute_three_coloring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;all_colors&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nb"&gt;list&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;set&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;values&lt;/span&gt;&lt;span class="p"&gt;()))&lt;/span&gt;
+    &lt;span class="n"&gt;new_colors&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sample&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;all_colors&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;all_colors&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+    &lt;span class="n"&gt;permutation&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;old&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;old&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;zip&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;all_colors&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;new_colors&lt;/span&gt;&lt;span class="p"&gt;)}&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;permutation&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;color&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;color&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;()}&lt;/span&gt;
+&lt;span class="c1"&gt;# For example,
+# {0: "crimson", 1: "navy", 2: "darkgreen", 3: "crimson", 4: "navy"}
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Then we have to place the colors in “locked boxes”. One way to proverbially
+lock a box is to apply a one-way function to it: for example, a hash function.
+If we hash each color and then pass only the hashes to the verifier, the
+verifier cannot open them.&lt;/p&gt;
+
+&lt;p&gt;This example uses the Python standard library hash function for brevity but it
+might be better to use a cryptographic hash function like &lt;code class="language-plaintext highlighter-rouge"&gt;hashlib.sha256&lt;/code&gt;:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# Only prover. Wrong!
+&lt;/span&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;hash_coloring_wrong&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;color&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;color&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;()}&lt;/span&gt;
+&lt;span class="c1"&gt;# For example:
+# {0: -6789624683659967261, 1: 7846608853949633950, 2: 6009240650600289446,
+#  3: -6789624683659967261, 4: 7846608853949633950}
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;There’s just one problem with handing these locked boxes to the verifier: two
+boxes locked with the same colors will have the same hashes. The verifier would
+know the coloring. Even if the exact colors are now hidden, it’s really the
+structure of the coloring for which we want to give up zero knowledge.&lt;/p&gt;
+
+&lt;p&gt;To get around this, we can add what’s called a &lt;em&gt;nonce&lt;/em&gt; to each node and its
+coloring. That is, each node gets a little bit of random data packed into the
+hash so that different nodes’ &lt;code class="language-plaintext highlighter-rouge"&gt;"darkgreen"&lt;/code&gt; hash values look different.&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# Only prover
+&lt;/span&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;nonce&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randrange&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;100&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;box_coloring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;color&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;nonce&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;color&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;()}&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;hash_values&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;k&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;k&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;()}&lt;/span&gt;
+
+&lt;span class="n"&gt;permuted_coloring&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;permute_three_coloring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;coloring&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# For example:
+# {0: "crimson", 1: "navy", 2: "darkgreen", 3: "crimson", 4: "navy"}
+&lt;/span&gt;&lt;span class="n"&gt;boxed_coloring&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;box_coloring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;permuted_coloring&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# For example:
+# {0: ("crimson", 33), 1: ("navy", 65), 2: ("darkgreen", 62),
+#  3: ("crimson", 51), 4: ("navy", 38)}
+&lt;/span&gt;&lt;span class="n"&gt;hashed_coloring&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;hash_values&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;boxed_coloring&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# For example:
+# {0: -2275004828450249492, 1: 2227921633151400991, 2: -5024343381376265886,
+#  3: -5381005702768533635, 4: 1164729608819214729}
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Again, you probably don’t want to use the standard library random number
+generator for your nonces. You should consider something like
+&lt;code class="language-plaintext highlighter-rouge"&gt;secrets.token_hex()&lt;/code&gt; from the &lt;code class="language-plaintext highlighter-rouge"&gt;secrets&lt;/code&gt; module (Python 3.6+). Maybe even
+consider using the &lt;code class="language-plaintext highlighter-rouge"&gt;hmac&lt;/code&gt; module.&lt;/p&gt;
+
+&lt;p&gt;Finally, we can send the &lt;code class="language-plaintext highlighter-rouge"&gt;hashed_coloring&lt;/code&gt; to the verifier and begin step V1.&lt;/p&gt;
+
+&lt;h3 id="step-v1"&gt;Step V1&lt;/h3&gt;
+
+&lt;p&gt;Since the verifier knows the graph (but not its colors), it can pick an
+arbitrary edge to inspect. It wants to verify that the arbitrary edge it picked
+satisfies the 3-color conditions. It sends off a request for an arbitrary edge
+&lt;code class="language-plaintext highlighter-rouge"&gt;e&lt;/code&gt;:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# Only verifier
+&lt;/span&gt;&lt;span class="n"&gt;e&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;choice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;edges&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;revealed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;prover_please_reveal_colors&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;e&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This is implicitly relying on some global state (the prover knowing what
+“session” is active with the verifier). If you have multiple verifiers or
+concurrent sessions or something, you may need to thread through some context
+identifier in the communication.&lt;/p&gt;
+
+&lt;h3 id="step-p2"&gt;Step P2&lt;/h3&gt;
+
+&lt;p&gt;The prover, having received this request, sends over the colors and nonces for
+each of the nodes in the edge.&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# Only prover
+&lt;/span&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;prover_please_reveal_colors&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;edge&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;edge&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;boxed_coloring&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;u&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;boxed_coloring&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;]}&lt;/span&gt;
+&lt;span class="c1"&gt;# For example:
+# {3: ('crimson', 51), 4: ('navy', 38)}
+&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;You may be suspicious at this point because we’re leaking some information
+about the coloring.&lt;/p&gt;
+
+&lt;p&gt;Note that it’s ok for the prover to reveal the color for one edge, because 1)
+the colors have been shuffled once per round and 2) we’re going to apply our
+box locking protocol &lt;em&gt;each time we reveal an edge&lt;/em&gt; (also once per round), so
+the verifier accumulates no information about our colors between iterations.&lt;/p&gt;
+
+&lt;h3 id="step-v2"&gt;Step V2&lt;/h3&gt;
+
+&lt;p&gt;The verifier can check that the color+nonce hashes to the hash value given for
+each node in step P1. This ensures that the prover is not changing colors
+around mid-round. This relies on the verifier and the prover using the same
+hash function (and the same hash seed if using &lt;code class="language-plaintext highlighter-rouge"&gt;hash&lt;/code&gt;).&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;# Only verifier
+&lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;color&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;nonce&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;revealed&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="n"&gt;hashed_coloring&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;node&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="nb"&gt;hash&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;color&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;nonce&lt;/span&gt;&lt;span class="p"&gt;)),&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s"&gt;"Hash mismatch!"&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The verifier can then inspect that the two color values are different. This
+gives a small amount of credence (&lt;code class="language-plaintext highlighter-rouge"&gt;1/|E|&lt;/code&gt; because you know something about one
+edge now) that the graph is 3-colored appropriately because the prover had no
+way of knowing which edge the verifier would want to inspect.&lt;/p&gt;
+
+&lt;p&gt;If either of these two conditions doesn’t check out, the verifier &lt;em&gt;rejects&lt;/em&gt;.&lt;/p&gt;
+
+&lt;h2 id="probabilities"&gt;Probabilities&lt;/h2&gt;
+
+&lt;p&gt;You have to do at least a couple of rounds of this for the verifier to believe
+the prover about the 3-coloring.&lt;/p&gt;
+
+&lt;p&gt;The paper goes on to assert that “the probability that the verifier will
+accept (i.e., complete all the &lt;code class="language-plaintext highlighter-rouge"&gt;m²&lt;/code&gt; rounds without detecting that “something is
+wrong”) is bounded above by &lt;code class="language-plaintext highlighter-rouge"&gt;(1 - m⁻¹)^(m²)&lt;/code&gt;” (where &lt;code class="language-plaintext highlighter-rouge"&gt;m = |E|&lt;/code&gt;). Which is
+pretty good. For a large graph (say, 1000 edges), this falls off reasonably
+quickly:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;m&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;1000&lt;/span&gt;
+&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4600&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="k"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"(1 - m⁻¹)^round = "&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="n"&gt;m&lt;/span&gt;&lt;span class="o"&gt;**-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;**&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;At 4600 rounds, you’re at 1% possibility of “cheating”. At 10,000 rounds,
+you’re at 0.0045% possibility of “cheating”. At &lt;code class="language-plaintext highlighter-rouge"&gt;m² = 1,000,000&lt;/code&gt; rounds, it’s
+&lt;em&gt;very low&lt;/em&gt;.&lt;/p&gt;
+
+&lt;h2 id="a-networked-demo"&gt;A networked demo&lt;/h2&gt;
+
+&lt;p&gt;Writing Python code that runs in a single process with comments denoting
+“prover” and “verifier” is not very satisfying. It does not preclude accidental
+data leaking in the slightest. It would be much more satisfying if there was
+some sort of barrier, like a process barrier or a network barrier, between the
+prover and the verifier.&lt;/p&gt;
+
+&lt;p&gt;For this reason, Chris and I have prepared a server (prover) and client
+(verifier) demo. You can click “Run Round” to run a round (and show the
+permuted colors). You can visit &lt;a href="https://zkp-3color-demo.fly.dev/docs"&gt;the docs
+page&lt;/a&gt; to see the API docs and build a
+client yourself!&lt;/p&gt;
+
+&lt;div id="output"&gt;
+    &lt;button id="round"&gt;Run Round&lt;/button&gt;
+    &lt;noscript&gt;&lt;p&gt;JavaScript is required to run this demo.&lt;/p&gt;&lt;/noscript&gt;
+    &lt;p&gt;&lt;i&gt;(If you don't see a graph right below this message, please wait a
+    moment for the server to wake up.)&lt;/i&gt;&lt;/p&gt;
+    &lt;div id="demoGraph"&gt;&lt;/div&gt;
+    &lt;ol reversed="" style="max-height: 100px; overflow-y: auto;"&gt;&lt;/ol&gt;
+&lt;/div&gt;
+
+&lt;script type="module"&gt;
+import * as Viz from "/assets/js/graphviz.js";
+
+const BASE_URL = 'https://zkp-3color-demo.fly.dev';
+
+async function requestGraph() {
+    const responseText = await fetch(`${BASE_URL}/graph`);
+    return responseText.json();
+}
+
+var sha256;
+if (typeof window === 'undefined') {
+    const { createHash } = require('node:crypto');
+    sha256 = async function(content) {
+        return createHash('sha256').update(content).digest('hex');
+    }
+} else {
+    sha256 = async function(message) {
+        const msgBuffer = new TextEncoder().encode(message);
+        const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b =&gt; b.toString(16).padStart(2, '0')).join('');
+    }
+}
+
+async function requestBoxedEdges() {
+    const responseText = await fetch(`${BASE_URL}/boxes`);
+    return responseText.json();
+}
+
+async function requestUnboxedEdge(roundId, edgeIndex) {
+    const responseText = await fetch(`${BASE_URL}/edge?round_id=${roundId}&amp;edge_index=${edgeIndex}`);
+    const response = await responseText.json();
+    if (typeof response !== 'object' || Array.isArray(response)) {
+        throw new Error('Invalid response format');
+    }
+    return response;
+}
+
+async function round(edges) {
+    const boxedEdges = await requestBoxedEdges();
+    const hashes = boxedEdges.boxes;
+    const roundId = boxedEdges.round_id;
+
+    const randomIndex = Math.floor(Math.random() * edges.length);
+    const response = await requestUnboxedEdge(roundId, randomIndex);
+    const openedBoxes = response.openings;
+    const edge = edges[randomIndex];
+    const edge0 = `${edge[0]}`;
+    const edge1 = `${edge[1]}`;
+    if (!openedBoxes.hasOwnProperty(edge0) || !openedBoxes.hasOwnProperty(edge1)) {
+        throw new Error('Response does not contain expected edge keys');
+    }
+    const {color: color0, nonce: nonce0} = openedBoxes[edge0];
+    const {color: color1, nonce: nonce1} = openedBoxes[edge1];
+    const hash0 = await sha256(`${color0}-${nonce0}`);
+    const hash1 = await sha256(`${color1}-${nonce1}`);
+    if (hash0 !== hashes[edge0] || hash1 !== hashes[edge1]) {
+        throw new Error('Hash mismatch for edge colors');
+    }
+    if (color0 === color1) {
+        throw new Error('Adjacent vertices have the same color');
+    }
+    const result = {};
+    result[`node${edge0}`] = color0;
+    result[`node${edge1}`] = color1;
+    console.log(result);
+    return result;
+}
+
+(async function() {
+    const viz = await Viz.instance();
+    const outputGraph = document.querySelector('#demoGraph');
+    const graph = await requestGraph();
+    const edges = graph.edges;
+    // Graphviz numbers nodes node1, node2, ... in layout order, so give each
+    // one an explicit id matching its vertex name.
+    const nodes = [...new Set(edges.flat())];
+    const dotString = `graph {
+        ${nodes.map(node =&gt; `${node} [id="demo-node${node}"]`).join('; ')};
+        ${edges.map(edge =&gt; `${edge[0]} -- ${edge[1]}`).join('; ')}
+    }`;
+    const svgElement = viz.renderSVGElement(dotString);
+    outputGraph.appendChild(svgElement);
+
+    const outputList = document.querySelector('#output ol');
+    const roundButton = document.querySelector('#round');
+
+    function paint(nodeId, color) {
+        const node = document.querySelector(`#demo-${nodeId}`);
+        node.querySelector('ellipse').style.fill = color ?? 'none';
+        node.querySelector('text').style.fill = color ? 'white' : 'black';
+    }
+
+    function logRound(msg) {
+        const item = document.createElement('li');
+        item.textContent = msg;
+        outputList.prepend(item);
+    }
+
+    function clearColors() {
+        for (const node of nodes) {
+            paint(`node${node}`, null);
+        }
+    }
+
+    let i = 0;
+    roundButton.addEventListener('click', async () =&gt; {
+        clearColors();
+        try {
+            const edgeColors = await round(edges);
+            for (const [node, color] of Object.entries(edgeColors)) {
+                paint(node, color);
+            }
+            const probability = 1 - Math.pow(1 - 1 / edges.length, i + 1);
+            const msg = `Success. Confident ${(probability * 100).toFixed(2)}%`;
+            logRound(msg);
+            console.log(`Round ${i + 1}:`, msg);
+        } catch (error) {
+            const msg = `Failure - ${error.message}`;
+            logRound(msg);
+            console.error(`Round ${i + 1}:`, msg);
+            throw error;
+        }
+        i += 1;
+    });
+})();
+&lt;/script&gt;
+
+&lt;h2 id="encoding-other-np-complete-problems"&gt;Encoding other NP-complete problems&lt;/h2&gt;
+
+&lt;p&gt;At this point, we’ve shown how you can use a zero-knowledge interactive proof
+to verify that someone has a valid 3-coloring of a graph without learning &lt;em&gt;any&lt;/em&gt;
+information about the 3-coloring. So what? Is there anything else we can prove
+with zero knowledge? Is the interactive proof of 3-coloring just a contrived
+party trick without real applications?&lt;/p&gt;
+
+&lt;p&gt;Well…&lt;/p&gt;
+
+&lt;h3 id="sudoku"&gt;Sudoku&lt;/h3&gt;
+
+&lt;p&gt;Sudoku puzzles are another example of a problem that’s hard to solve and easy
+to verify. It is algorithmically hard to fill in 81 squares to satisfy the
+constraints of all rows, columns, and boxes containing the digits 1-9, but the
+verifier is extremely quick.&lt;/p&gt;
+
+&lt;p&gt;Let’s say we wanted to prove we’ve finished a Sudoku, but we don’t want to give
+up a morsel of information about the solution. We can execute an interactive
+proof very analogous to 3-coloring! Instead of shuffling colors, we shuffle
+digits. Instead of revealing edges, we reveal rows, columns, and boxes.&lt;/p&gt;
+
+&lt;p&gt;Next time your fellow bus rider leans over asking to see your Sudoku solution,
+just ask them to go through 90,000 easy steps first!&lt;/p&gt;
+
+&lt;h3 id="reduction"&gt;Reduction&lt;/h3&gt;
+
+&lt;p&gt;Let’s say we have a hard problem and we’ve computed a solution it, but we don’t
+have an obvious algorithm on hand to execute an interactive proof for it.
+Thanks to the authors of the paper above, we know that if the problem is
+NP-complete there’s an interactive proof for it!&lt;/p&gt;
+
+&lt;p&gt;We use the power of a polynomial time reduction. We (somehow) convert our
+solution to a graph and its 3-coloring, then just follow the steps and code
+above! The “somehow” is the tricky part, but much research exists on converting
+between different NP-complete problems.&lt;/p&gt;
+
+&lt;p&gt;For example, you may want to create a zero-knowledge proof that you know the
+prime factors for a very large composite number. Unfortunately, for only double
+digit numbers your graph is thousands of nodes, so reducing to 3-coloring has
+its limits in practice and you’re better off with more sophisticated proof
+techniques than a reduction to 3-coloring.&lt;/p&gt;
+
+&lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
+
+&lt;p&gt;After doing a bit of research, we decided that the most common real world use
+cases of zero-knowledge proofs (age verification, crypto, etc) aren’t
+particularly interesting to us. We enjoyed the graphs and theory of computation
+and networked computing though. We hope you had fun playing around with
+interactive proofs too.&lt;/p&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/zkp/</guid>
+      <pubDate>Fri, 07 Aug 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>The inliner is yielding benefits for ZJIT</title>
       <link>https://bernsteinbear.com/blog/zjit-inliner-invokeblock/?utm_source=rss</link>
@@ -3779,427 +4424,6 @@ interpreter? &lt;a href="#fnref:equivalence" class="reversefootnote" role="doc-
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/toy-fuzzer/</guid>
       <pubDate>Wed, 25 Feb 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Type-based alias analysis in the Toy Optimizer</title>
-      <link>https://bernsteinbear.com/blog/toy-tbaa/?utm_source=rss</link>
-      <description>&lt;p&gt;&lt;em&gt;Another entry in the &lt;a href="https://pypy.org/categories/toy-optimizer.html"&gt;Toy Optimizer series&lt;/a&gt;&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;Last time, we did &lt;a href="/blog/toy-load-store/"&gt;load-store forwarding&lt;/a&gt; in the context
-of our Toy Optimizer. We managed to cache the results of both reads from and
-writes to the heap—at compile-time!&lt;/p&gt;
-
-&lt;p&gt;We were careful to mind object aliasing: we separated our heap information into
-alias classes based on what offset the reads/writes referenced. This way, if we
-didn’t know if object &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt; aliased, we could at least know that
-different offsets would never alias (assuming our objects don’t overlap and
-memory accesses are on word-sized slots). This is a coarse-grained heuristic.&lt;/p&gt;
-
-&lt;p&gt;Fortunately, we often have much more information available at compile-time than
-just the offset, so we should use it. I mentioned in a footnote that we could
-use type information, for example, to improve our alias analysis. We’ll add
-a lightweight form of &lt;a href="/assets/img/tbaa.pdf"&gt;type-based alias analysis (TBAA)&lt;/a&gt;
-(PDF) in this post.&lt;/p&gt;
-
-&lt;h2 id="representing-types"&gt;Representing types&lt;/h2&gt;
-
-&lt;p&gt;We return once again to Fil Pizlo land, specifically &lt;a href="https://gist.github.com/pizlonator/cf1e72b8600b1437dda8153ea3fdb963"&gt;How I implement SSA
-form&lt;/a&gt;.
-We’re going to be using the hierarchical heap effect representation from the
-post in our implementation, but you can use your own type representation if you
-have one already.&lt;/p&gt;
-
-&lt;p&gt;This representation divides the heap into disjoint regions by type. Consider,
-for example, that &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt; objects and &lt;code class="language-plaintext highlighter-rouge"&gt;String&lt;/code&gt; objects do not overlap. A
-&lt;code class="language-plaintext highlighter-rouge"&gt;LinkedList&lt;/code&gt; pointer is never going to alias an &lt;code class="language-plaintext highlighter-rouge"&gt;Integer&lt;/code&gt; pointer. They can
-therefore be reasoned about separately.&lt;/p&gt;
-
-&lt;p&gt;But sometimes you don’t have perfect type information available. If you have in
-your language an &lt;code class="language-plaintext highlighter-rouge"&gt;Object&lt;/code&gt; base class of all objects, then the &lt;code class="language-plaintext highlighter-rouge"&gt;Object&lt;/code&gt; heap
-overlaps with, say, the &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt; heap. So you need some way to represent that
-too—just having an enum doesn’t work cleanly.&lt;/p&gt;
-
-&lt;p&gt;Here is an example simplified type hierarchy:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;Any
-  Object
-    Array
-    String
-  Other
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Where &lt;code class="language-plaintext highlighter-rouge"&gt;Other&lt;/code&gt; might represent different parts of the runtime’s data structures,
-and could be further segmented into &lt;code class="language-plaintext highlighter-rouge"&gt;GC&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;Thread&lt;/code&gt;, etc. For example, V8’s old
-Hydrogen IR has &lt;a href="https://github.com/tekknolagi/v8/blob/f030838700a83cde6992cb8ebcb3facc6a8fc1f1/src/crankshaft/hydrogen-store-elimination.cc#L20"&gt;some heap locations&lt;/a&gt; like ArrayElements, ArrayLengths,
-StringLengths, and InobjectFields.&lt;/p&gt;
-
-&lt;p&gt;Fil’s idea is that we can represent each node in that hierarchy with a tuple of
-integers &lt;code class="language-plaintext highlighter-rouge"&gt;[start, end)&lt;/code&gt; (inclusive, exclusive) that represent the pre- and
-post-order traversals of the tree. Or, if tree traversals are not engraved into
-your bones, they represent the range of all the nested objects within them.&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;Any [0, 3)
-  Object [0, 2)
-    Array [0, 1)
-    String [1, 2)
-  Other [2, 3)
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Then the “does this write interfere with this read” check—the aliasing
-check—is a range overlap query.&lt;/p&gt;
-
-&lt;p&gt;Here’s a perhaps over-engineered Python implementation of the range and heap
-hierarchy based on the Ruby generator and C++ runtime code from JavaScriptCore:&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;HeapRange&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;end&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;end&lt;/span&gt;
-
-    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;__repr__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s"&gt;"[&lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;, &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;)"&lt;/span&gt;
-
-    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;bool&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt;
-
-    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;overlaps&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s"&gt;"HeapRange"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="nb"&gt;bool&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="c1"&gt;# Empty ranges interfere with nothing
-&lt;/span&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="ow"&gt;or&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
-            &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;False&lt;/span&gt;
-        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt; &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;other&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;
-
-
-&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="nc"&gt;AbstractHeap&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;name&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parent&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;
-
-    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;str&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="n"&gt;result&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;AbstractHeap&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;result&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parent&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;result&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;result&lt;/span&gt;
-
-    &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;compute&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&amp;gt;&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="n"&gt;current&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;start&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;HeapRange&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;current&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="k"&gt;return&lt;/span&gt;
-        &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;child&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;children&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;child&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compute&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;current&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;current&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;child&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;end&lt;/span&gt;
-        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nb"&gt;range&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;HeapRange&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;current&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-
-
-&lt;span class="n"&gt;Any&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;AbstractHeap&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Any"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Object&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Any&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Object"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Array&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Array"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;String&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"String"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Other&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Any&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_child&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"Other"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;Any&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compute&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Where &lt;code class="language-plaintext highlighter-rouge"&gt;Any.compute(0)&lt;/code&gt; kicks off the tree-numbering scheme.&lt;/p&gt;
-
-&lt;p&gt;Fil’s implementation also covers a bunch of abstract heaps such as SSAState and
-Control because his is used for code motion and whatnot. That can be added on
-later but we will not do so in this post.&lt;/p&gt;
-
-&lt;p&gt;So there you have it: a type representation. Now we need to use it in our
-load-store forwarding.&lt;/p&gt;
-
-&lt;h2 id="load-store-forwarding"&gt;Load-store forwarding&lt;/h2&gt;
-
-&lt;p&gt;Recall that our load-store optimization pass looks like this:&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;optimize_load_store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="n"&gt;opt_bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-    &lt;span class="c1"&gt;# Stores things we know about the heap at... compile-time.
-&lt;/span&gt;    &lt;span class="c1"&gt;# Key: an object and an offset pair acting as a heap address
-&lt;/span&gt;    &lt;span class="c1"&gt;# Value: a previous SSA value we know exists at that address
-&lt;/span&gt;    &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Dict&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;Tuple&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;Value&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nb"&gt;int&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;Value&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;obj&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;store_info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;current_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;store_info&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;new_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;eq_value&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;current_value&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;new_value&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-                &lt;span class="k"&gt;continue&lt;/span&gt;
-            &lt;span class="n"&gt;compile_time_heap&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-                &lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;
-                &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;items&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-                &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;!=&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;
-            &lt;span class="p"&gt;}&lt;/span&gt;
-            &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;store_info&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new_value&lt;/span&gt;
-        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;load_info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;load_info&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-                &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;make_equal_to&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-                &lt;span class="k"&gt;continue&lt;/span&gt;
-            &lt;span class="n"&gt;compile_time_heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;
-        &lt;span class="n"&gt;opt_bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;opt_bb&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;At its core, it iterates over the instructions, keeping a representation of the
-heap at compile-time. Reads get cached, writes get cached, and writes also
-invalidate the state of compile-time information about fields that may alias.&lt;/p&gt;
-
-&lt;p&gt;In this case, our &lt;em&gt;may alias&lt;/em&gt; asks only if the offsets overlap. This means that
-the following unit test will fail:&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;test_store_to_same_offset_different_heaps_does_not_invalidate_load&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
-    &lt;span class="n"&gt;bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-    &lt;span class="n"&gt;var0&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getarg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;var0&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Array&lt;/span&gt;
-    &lt;span class="n"&gt;var1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getarg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;var1&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;String&lt;/span&gt;
-    &lt;span class="n"&gt;var2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;var3&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;var4&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;escape&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var4&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;opt_bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;optimize_load_store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;
-        &lt;span class="n"&gt;bb_to_str&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;opt_bb&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"""&lt;/span&gt;&lt;span class="se"&gt;\
-&lt;/span&gt;&lt;span class="s"&gt;var0 = getarg(0)
-var1 = getarg(1)
-var2 = store(var0, 0, 3)
-var3 = store(var1, 0, 4)
-var4 = escape(3)"""&lt;/span&gt;
-    &lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This test is expecting the write to &lt;code class="language-plaintext highlighter-rouge"&gt;var0&lt;/code&gt; to still remain cached even though
-we wrote to the same offset in &lt;code class="language-plaintext highlighter-rouge"&gt;var1&lt;/code&gt;—because we have annotated &lt;code class="language-plaintext highlighter-rouge"&gt;var0&lt;/code&gt; as
-being an &lt;code class="language-plaintext highlighter-rouge"&gt;Array&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;var1&lt;/code&gt; as being a &lt;code class="language-plaintext highlighter-rouge"&gt;String&lt;/code&gt;. If we account for type
-information in our alias analysis, we can get this test to pass.&lt;/p&gt;
-
-&lt;p&gt;After doing a bunch of fussing around with the load-store forwarding (many
-rewrites), I eventually got it down to a very short diff:&lt;/p&gt;
-
-&lt;div class="language-diff highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gi"&gt;+def may_alias(left: Value, right: Value) -&amp;gt; bool:
-+    return (left.info or Any).range.overlaps((right.info or Any).range)
-+
-+
-&lt;/span&gt; def optimize_load_store(bb: Block):
-     opt_bb = Block()
-     # Stores things we know about the heap at... compile-time.
-&lt;span class="p"&gt;@@ -138,6 +210,10 @@&lt;/span&gt; def optimize_load_store(bb: Block):
-                 load_info: value
-                 for load_info, value in compile_time_heap.items()
-                 if load_info[1] != offset
-&lt;span class="gi"&gt;+                or not may_alias(load_info[0], obj)
-&lt;/span&gt;             }
-             compile_time_heap[store_info] = new_value
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;If we don’t have any type/alias information, we default to “I know nothing”
-(&lt;code class="language-plaintext highlighter-rouge"&gt;Any&lt;/code&gt;) for each object. Then we check range overlap.&lt;/p&gt;
-
-&lt;p&gt;The boolean logic in &lt;code class="language-plaintext highlighter-rouge"&gt;optimize_load_store&lt;/code&gt; looks a little weird, maybe. But we
-can also rewrite (via DeMorgan’s law) as:&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="p"&gt;...&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;
-            &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;may_alias&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;load_info&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;So, keeping all the cached field state about fields that are known by offset
-and by type not to alias. Maybe that is clearer (but not as nice a diff).&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Note that the type representation is not so important here! You could use a
-bitset version of the type information if you want. The important things are
-that you can cheaply construct types and check overlap between them.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;!--
-Note that we do not currently have a notion of "must-alias" other than if two
-SSA values are equal. Therefore we can't make use of writes to object A for
-loads from object B even if A and B must alias.
---&gt;
-
-&lt;p&gt;Nice, now our test passes! We can differentiate between memory accesses on
-objects of different types.&lt;/p&gt;
-
-&lt;p&gt;But what if we knew more?&lt;/p&gt;
-
-&lt;h2 id="object-provenance--allocation-site"&gt;Object provenance / allocation site&lt;/h2&gt;
-
-&lt;p&gt;Sometimes we know where an object came from. For example, we may have seen it
-get allocated in the trace. If we saw an object’s allocation, we know that it
-does not alias (for example) any object that was passed in via a parameter. We
-can use this kind of information to our advantage.&lt;/p&gt;
-
-&lt;p&gt;For example, in the following made up IR snippet:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;trace(arg0):
-  v0 = malloc(8)
-  v1 = malloc(16)
-  ...
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;We know that (among other facts) &lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; doesn’t alias &lt;code class="language-plaintext highlighter-rouge"&gt;arg0&lt;/code&gt; or &lt;code class="language-plaintext highlighter-rouge"&gt;v1&lt;/code&gt; because we
-have seen its allocation site.&lt;/p&gt;
-
-&lt;p&gt;I saw this in the old V8 IR Hydrogen’s lightweight alias analysis&lt;sup id="fnref:fork" role="doc-noteref"&gt;&lt;a href="#fn:fork" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;:&lt;/p&gt;
-
-&lt;div class="language-c++ highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;enum&lt;/span&gt; &lt;span class="n"&gt;HAliasing&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-  &lt;span class="n"&gt;kMustAlias&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-  &lt;span class="n"&gt;kMayAlias&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-  &lt;span class="n"&gt;kNoAlias&lt;/span&gt;
-&lt;span class="p"&gt;};&lt;/span&gt;
-
-&lt;span class="n"&gt;HAliasing&lt;/span&gt; &lt;span class="n"&gt;Query&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;HValue&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;HValue&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-  &lt;span class="c1"&gt;// The same SSA value always references the same object.&lt;/span&gt;
-  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kMustAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-
-  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsAllocate&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;||&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsInnerAllocatedObject&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="c1"&gt;// Two non-identical allocations can never be aliases.&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsAllocate&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsInnerAllocatedObject&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-    &lt;span class="c1"&gt;// An allocation can never alias a parameter or a constant.&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsParameter&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-  &lt;span class="p"&gt;}&lt;/span&gt;
-  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsAllocate&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;||&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsInnerAllocatedObject&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="c1"&gt;// An allocation can never alias a parameter or a constant.&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsParameter&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-  &lt;span class="p"&gt;}&lt;/span&gt;
-
-  &lt;span class="c1"&gt;// Constant objects can be distinguished statically.&lt;/span&gt;
-  &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;IsConstant&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;-&amp;gt;&lt;/span&gt;&lt;span class="n"&gt;Equals&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;?&lt;/span&gt; &lt;span class="n"&gt;kMustAlias&lt;/span&gt; &lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="n"&gt;kNoAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-  &lt;span class="p"&gt;}&lt;/span&gt;
-  &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;kMayAlias&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;There is plenty of other useful information such as:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;If we know at compile-time that object A has 5 at offset 0 and object B has 7
-at offset 0, then A and B don’t alias (thanks, CF)
-    &lt;ul&gt;
-      &lt;li&gt;In the RPython JIT in PyPy, this is used to determine if two user (Python)
-objects don’t alias because we know the contents of the user (Python) class
-field&lt;/li&gt;
-    &lt;/ul&gt;
-  &lt;/li&gt;
-  &lt;li&gt;Object size (though perhaps that is a special case of the above bullet)&lt;/li&gt;
-  &lt;li&gt;Field size/type&lt;/li&gt;
-  &lt;li&gt;Deferring alias checks to run-time
-    &lt;ul&gt;
-      &lt;li&gt;Have a branch &lt;code class="language-plaintext highlighter-rouge"&gt;if (a == b) { ... } else { ... }&lt;/code&gt;&lt;/li&gt;
-    &lt;/ul&gt;
-  &lt;/li&gt;
-  &lt;li&gt;…&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;If you have other fun ones, please write in.&lt;/p&gt;
-
-&lt;h2 id="interacting-with-other-instructions"&gt;Interacting with other instructions&lt;/h2&gt;
-
-&lt;p&gt;We only handle loads and stores in our optimizer. Unfortunately, this means we
-may accidentally cache stale information. Consider: what happens if a function
-call (or any other opaque instruction) writes into an object we are tracking?&lt;/p&gt;
-
-&lt;p&gt;The conservative approach is to invalidate all cached information on a function
-call. This is definitely correct, but it’s a bummer for the optimizer. Can we
-do anything?&lt;/p&gt;
-
-&lt;p&gt;Well, perhaps we are calling a well-known function or a specific IR
-instruction. In that case, we can annotate it with effects in the same abstract
-heap model: if the instruction does not write, or only writes to some heaps, we
-can at least only partially invalidate our heap.&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;known_builtin_functions&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-  &lt;span class="s"&gt;"Array_length"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Effects&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reads&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Array&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;writes&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Empty&lt;/span&gt;&lt;span class="p"&gt;()),&lt;/span&gt;
-  &lt;span class="s"&gt;"Object_setShape"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Effects&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reads&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Empty&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;writes&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-  &lt;span class="s"&gt;"String_setEncoding"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;Effects&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;reads&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;Empty&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt; &lt;span class="n"&gt;writes&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;String&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;However, if the function is unknown or otherwise opaque, we need at least more
-advanced alias information and perhaps even (partial) escape analysis.&lt;/p&gt;
-
-&lt;p&gt;Consider: even if an instruction takes no operands, we have no idea what state
-it has access to. If it writes to any object A, we cannot safely cache
-information about any other object B unless we know &lt;em&gt;for sure&lt;/em&gt; that A and B do
-not alias. And we don’t know what the instruction writes to. So we may only
-know we can cache information about B because it was allocated locally and has
-not escaped.&lt;/p&gt;
-
-&lt;h2 id="storing-vs-computing-on-the-fly"&gt;Storing vs computing on the fly&lt;/h2&gt;
-
-&lt;p&gt;Some runtimes such as ART &lt;a href="https://github.com/LineageOS/android_art/blob/8ce603e0c68899bdfbc9cd4c50dcc65bbf777982/compiler/optimizing/load_store_analysis.h#L395"&gt;pre-compute all of their alias information&lt;/a&gt; in a bit
-matrix. This makes more sense if you are using alias information in a full
-control-flow graph, where you might need to iterate over the graph a few times.
-In a trace context, you can do a lot in one single pass—no need to make a
-matrix.&lt;/p&gt;
-
-&lt;h2 id="when-is-this-useful-how-much"&gt;When is this useful? How much?&lt;/h2&gt;
-
-&lt;p&gt;As usual, this is a toy IR and a toy optimizer, so it’s hard to say how much
-faster it makes its toy programs.&lt;/p&gt;
-
-&lt;p&gt;In general, though, there is a dial for analysis and optimization that goes
-between precision and speed. This is a happy point on that dial, only a tiny
-incremental analysis cost bump above offset-only invalidation, but for higher
-precision. I like that tradeoff.&lt;/p&gt;
-
-&lt;p&gt;Also, it is very useful in JIT compilers where generally the managed language
-is a little &lt;a href="https://blog.regehr.org/archives/959"&gt;better-behaved than a C-like
-language&lt;/a&gt;. Somewhere in your IR there
-will be a lot of duplicate loads and stores from a strength reduction pass, and
-this can clean up the mess.&lt;/p&gt;
-
-&lt;!--
-## In other languages
-
-Taking address of objects throws a wrench in it
-
-Can't really do it in C, even though UB
---&gt;
-
-&lt;!--
-https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/dfg/DFGObjectAllocationSinkingPhase.cpp
---&gt;
-
-&lt;h2 id="wrapping-up"&gt;Wrapping up&lt;/h2&gt;
-
-&lt;p&gt;See the &lt;a href="https://github.com/tekknolagi/tekknolagi.github.com/blob/67a1c5cbcf81d96cc63f8b3904619c018d1f2be1/loadstore.py"&gt;full code&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Thanks for joining as I work through a small use of type-based alias analysis
-for myself. I hope you enjoyed.&lt;/p&gt;
-
-&lt;p&gt;See also &lt;a href="https://wingolog.org/archives/2026/02/18/two-mechanisms-for-dynamic-type-checks"&gt;two mechanisms for dynamic type
-checks&lt;/a&gt;
-by Andy Wingo. CRuby uses the latter technique described in the article.&lt;/p&gt;
-
-&lt;h2 id="thanks"&gt;Thanks&lt;/h2&gt;
-
-&lt;p&gt;Thank you to &lt;a href="https://www.chrisgregory.me/"&gt;Chris Gregory&lt;/a&gt; for helpful feedback.&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:fork" role="doc-endnote"&gt;
-      &lt;p&gt;I made &lt;a href="https://github.com/tekknolagi/v8"&gt;a fork of V8&lt;/a&gt; to go spelunk
-around the Hydrogen IR. I reset the V8 repo to the last commit before they
-deleted it in favor of their new Sea of Nodes based IR called TurboFan. &lt;a href="#fnref:fork" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/toy-tbaa/</guid>
-      <pubDate>Mon, 16 Feb 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
