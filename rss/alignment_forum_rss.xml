@@ -5,7 +5,7 @@
     <link>https://www.alignmentforum.org</link>
     <description>A community blog devoted to technical AI alignment research</description>
     <language>en</language>
-    <lastBuildDate>Tue, 11 Aug 2026 03:52:37 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 11 Aug 2026 05:14:18 +0000</lastBuildDate>
     <item>
       <title>Four LLM loss functions → four flavors of LLM misalignment</title>
       <link>https://www.alignmentforum.org/posts/GRmvZsHXH4vaijPMv/four-llm-loss-functions-four-flavors-of-llm-misalignment</link>
@@ -1220,7 +1220,135 @@ mjx-c.mjx-c1D43A.TEX-I::before {
     <item>
       <title>R-lens: Making J-lens More Faithful on Early Layers</title>
       <link>https://www.alignmentforum.org/posts/nv8oedrnLXKRzNEL9/r-lens-making-j-lens-more-faithful-on-early-layers</link>
-      <description>&lt;h1&gt;&lt;span&gt;TL;DR:&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;i&gt;&lt;span&gt;We introduce the R-lens: a drop-in replacement for J-lens that produces clearer readouts on earlier layers. R-Lens is identical to J-Lens, except that we make minor and low-overhead changes to the backwards pass, following &lt;/span&gt;&lt;/i&gt;&lt;a href="https://arxiv.org/abs/1604.00825"&gt;&lt;i&gt;&lt;span&gt;layerwise-relevance propagation&lt;/span&gt;&lt;/i&gt;&lt;/a&gt;&lt;i&gt;&lt;span&gt;, allowing us to reduce the propagation of errors. This method allows us to surface important intermediate variables more consistently and more saliently, reduce the frequency of semantically-irrelevant readouts, and even detect relevant concepts that J-lens misses entirely.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/a856fb5cb241e378d473a0576c8509d35f6fcf51bcb908771b6a074df7cea521/uycziewlcdczwddxgxr0" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h3&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/6e9660aa3e1f15f4276f27a64d14e321996a2e4cac3060fb8d6c1f6188194487/qfqz7qyolrsg2m6zwne1" alt=""&gt;&lt;/h3&gt;&lt;h1&gt;&lt;span&gt;Introduction&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;Motivation&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;The J-lens is a powerful tool for surfacing intermediate variables in the workspace layers of a model, but we find readouts in early layers to often be noisy and largely uninterpretable. Plausibly, either J-lens is degenerate at these depths and fails to resolve content that is in fact present, or the early residual stream genuinely carries no linearly accessible, causally relevant verbalizable content.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We suspect that this is a structural issue with J-lens. J-lens is fit by backpropagating from the final-layer residual stream down to the residual stream at the readout layer. Errors are likely to accumulate over the course of layers, suggesting it may be less accurate at early layers. In this post, we ask whether we can improve on J-lens to minimize such errors and achieve cleaner, causally relevant readouts at early layers.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;What is RelP and how do we apply it?&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;We take inspiration from Relevance Patching (RelP), a method for efficiently approximating attribution patching, a gradient based approximation to activation patching. It keeps the structure of attribution patching, which takes the dot product of an activation difference against a backward-pass, but swaps the local gradient for a propagation coefficient derived from the XAI technique of &lt;/span&gt;&lt;a href="https://arxiv.org/abs/1604.00825"&gt;&lt;span&gt;Layer-wise Relevance Propagation&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;(LRP). LRP adds several stop gradients to the backward pass, e.g to the variance term in LayerNorm, designed to reduce the accumulation of errors/high curvature gradient terms. As this is just adding stop gradients, the cost is negligible.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We therefore use LRP as a drop-in replacement inside J-lens. We fit the R-lens exactly as before but with LRP rules installed in the backward pass, so what gets transported and averaged is a relevance coefficient rather than a raw gradient.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Contributions&lt;/span&gt;&lt;/h2&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;R-lens shows a substantial quantitative advantage over J-lens that increases as models scale, measured across a variety of evaluation categories.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;R-lens produces qualitatively different readouts at earlier layers, significantly reducing the amount of incoherent tokens compared to J-lens.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Through ablation studies, we show that R-lens directions for intermediate variables are more causally important than J-lens directions.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;R-lens can sometimes capture concepts that J-lens never does, especially if these concepts appear exclusively in early layers (however, because concepts typically appear in later layers as well, R-lens is primarily a tool for more faithfully tracking computation over layers).&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h1&gt;&lt;span&gt;Background&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;J-lens&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;The Jacobian lens characterizes an activation by its first-order causal effect on the model's outputs, averaged over contexts and token positions. Concretely, it replaces every layer downstream of the readout point with a single linear map, followed by the model's own unembedding, producing a ranked list of vocabulary tokens for that activation.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;LRP&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;LRP assigns a relevance score to each component and propagates it backward through the model, redistributing relevance from a layer's outputs to its inputs according to rules specific to each component type. LRP preserves ‘total relevance’ from one layer to the next and constructs specialized rules to patch relevance in places where ordinary gradients would break that conservation. Notably, LRP just adds stop gradients, so it is cheap and doesn't change the output of the forward pass.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In particular, we make use of three LRP rules:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;LN-rule:&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;treat the normalization denominator &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
+      <description>&lt;h1&gt;&lt;span&gt;TL;DR:&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;i&gt;&lt;span&gt;We introduce the R-lens: a drop-in replacement for J-lens that produces clearer readouts on earlier layers. R-Lens is identical to J-Lens, except that we make minor and low-overhead changes to the backwards pass, following &lt;/span&gt;&lt;/i&gt;&lt;a href="https://arxiv.org/abs/1604.00825"&gt;&lt;i&gt;&lt;span&gt;layerwise-relevance propagation&lt;/span&gt;&lt;/i&gt;&lt;/a&gt;&lt;i&gt;&lt;span&gt;, allowing us to reduce the propagation of errors. This method allows us to surface important intermediate variables more consistently and more saliently, reduce the frequency of semantically-irrelevant readouts, and even detect relevant concepts that J-lens misses entirely. We open-source our R-lenses and accompanying J-lenses &lt;/span&gt;&lt;/i&gt;&lt;a href="https://huggingface.co/camilablank/workspace-lenses/tree/main" rel="noreferrer"&gt;&lt;i&gt;&lt;span&gt;here&lt;/span&gt;&lt;/i&gt;&lt;/a&gt;&lt;i&gt;&lt;span&gt;.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/a856fb5cb241e378d473a0576c8509d35f6fcf51bcb908771b6a074df7cea521/uycziewlcdczwddxgxr0" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h3&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/6e9660aa3e1f15f4276f27a64d14e321996a2e4cac3060fb8d6c1f6188194487/qfqz7qyolrsg2m6zwne1" alt=""&gt;&lt;/h3&gt;&lt;h1&gt;&lt;span&gt;Introduction&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;Motivation&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;The J-lens is a powerful tool for surfacing intermediate variables in the workspace layers of a model, but we find readouts in early layers to often be noisy and largely uninterpretable. Plausibly, either J-lens is degenerate at these depths and fails to resolve content that is in fact present, or the early residual stream genuinely carries no linearly accessible, causally relevant verbalizable content.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We suspect that this is a structural issue with J-lens. J-lens is fit by backpropagating from the final-layer residual stream down to the residual stream at the readout layer. Errors are likely to accumulate over the course of layers, suggesting it may be less accurate at early layers. In this post, we ask whether we can improve on J-lens to minimize such errors and achieve cleaner, causally relevant readouts at early layers.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;What is RelP and how do we apply it?&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;We take inspiration from Relevance Patching (RelP), a method for efficiently approximating attribution patching, a gradient based approximation to activation patching. It keeps the structure of attribution patching, which takes the dot product of an activation difference against a backward-pass, but swaps the local gradient for a propagation coefficient derived from the XAI technique of &lt;/span&gt;&lt;a href="https://arxiv.org/abs/1604.00825"&gt;&lt;span&gt;Layer-wise Relevance Propagation&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;(LRP). LRP adds several stop gradients to the backward pass, e.g to the variance term in LayerNorm, designed to reduce the accumulation of errors/high curvature gradient terms. As this is just adding stop gradients, the cost is negligible.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We therefore use LRP as a drop-in replacement inside J-lens. We fit the R-lens exactly as before but with LRP rules installed in the backward pass, so what gets transported and averaged is a relevance coefficient rather than a raw gradient.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Contributions&lt;/span&gt;&lt;/h2&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;R-lens shows a substantial quantitative advantage over J-lens that increases as models scale, measured across a variety of evaluation categories.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;R-lens produces qualitatively different readouts at earlier layers, significantly reducing the amount of incoherent tokens compared to J-lens.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Through ablation studies, we show that R-lens directions for intermediate variables are more causally important than J-lens directions.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;R-lens can sometimes capture concepts that J-lens never does, especially if these concepts appear exclusively in early layers (however, because concepts typically appear in later layers as well, R-lens is primarily a tool for more faithfully tracking computation over layers).&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h1&gt;&lt;span&gt;Background&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;J-lens&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;The Jacobian lens characterizes an activation by its first-order causal effect on the model's outputs, averaged over contexts and token positions. Concretely, it replaces every layer downstream of the readout point with a single linear map, followed by the model's own unembedding, producing a ranked list of vocabulary tokens for that activation.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;LRP&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;LRP assigns a relevance score to each component and propagates it backward through the model, redistributing relevance from a layer's outputs to its inputs according to rules specific to each component type. LRP preserves ‘total relevance’ from one layer to the next and constructs specialized rules to patch relevance in places where ordinary gradients would break that conservation. Notably, LRP just adds stop gradients, so it is cheap and doesn't change the output of the forward pass.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In particular, we make use of three LRP rules:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;LN-rule:&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;treat the normalization denominator &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
+
+
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row &gt; * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
 
 mjx-math {
   display: inline-block;
@@ -1398,11 +1526,6 @@ mjx-mi {
   text-align: left;
 }
 
-mjx-mtext {
-  display: inline-block;
-  text-align: left;
-}
-
 mjx-TeXAtom {
   display: inline-block;
   text-align: left;
@@ -1421,273 +1544,6 @@ mjx-msup {
 mjx-mn {
   display: inline-block;
   text-align: left;
-}
-
-mjx-c.mjx-c221A.TEX-S1::before {
-  padding: 0.85em 1.02em 0.35em 0;
-  content: "\221A";
-}
-
-mjx-c.mjx-c28::before {
-  padding: 0.75em 0.389em 0.25em 0;
-  content: "(";
-}
-
-mjx-c.mjx-c1D716.TEX-I::before {
-  padding: 0.431em 0.406em 0.011em 0;
-  content: "\3F5";
-}
-
-mjx-c.mjx-c2B::before {
-  padding: 0.583em 0.778em 0.082em 0;
-  content: "+";
-}
-
-mjx-c.mjx-c56::before {
-  padding: 0.683em 0.75em 0.022em 0;
-  content: "V";
-}
-
-mjx-c.mjx-c61::before {
-  padding: 0.448em 0.5em 0.011em 0;
-  content: "a";
-}
-
-mjx-c.mjx-c72::before {
-  padding: 0.442em 0.392em 0 0;
-  content: "r";
-}
-
-mjx-c.mjx-c5B::before {
-  padding: 0.75em 0.278em 0.25em 0;
-  content: "[";
-}
-
-mjx-c.mjx-c1D465.TEX-I::before {
-  padding: 0.442em 0.572em 0.011em 0;
-  content: "x";
-}
-
-mjx-c.mjx-c5D::before {
-  padding: 0.75em 0.278em 0.25em 0;
-  content: "]";
-}
-
-mjx-c.mjx-c29::before {
-  padding: 0.75em 0.389em 0.25em 0;
-  content: ")";
-}
-
-mjx-c.mjx-c47::before {
-  padding: 0.705em 0.785em 0.022em 0;
-  content: "G";
-}
-
-mjx-c.mjx-c45::before {
-  padding: 0.68em 0.681em 0 0;
-  content: "E";
-}
-
-mjx-c.mjx-c4C::before {
-  padding: 0.683em 0.625em 0 0;
-  content: "L";
-}
-
-mjx-c.mjx-c55::before {
-  padding: 0.683em 0.75em 0.022em 0;
-  content: "U";
-}
-
-mjx-c.mjx-c2217::before {
-  padding: 0.465em 0.5em 0 0;
-  content: "\2217";
-}
-
-mjx-c.mjx-c2F::before {
-  padding: 0.75em 0.5em 0.25em 0;
-  content: "/";
-}
-
-mjx-c.mjx-c1D44B.TEX-I::before {
-  padding: 0.683em 0.852em 0 0;
-  content: "X";
-}
-
-mjx-c.mjx-c1D459.TEX-I::before {
-  padding: 0.694em 0.298em 0.011em 0;
-  content: "l";
-}
-
-mjx-c.mjx-c2208::before {
-  padding: 0.54em 0.667em 0.04em 0;
-  content: "\2208";
-}
-
-mjx-c.mjx-c211D.TEX-A::before {
-  padding: 0.683em 0.722em 0 0;
-  content: "R";
-}
-
-mjx-c.mjx-c7B::before {
-  padding: 0.75em 0.5em 0.25em 0;
-  content: "{";
-}
-
-mjx-c.mjx-c34::before {
-  padding: 0.677em 0.5em 0 0;
-  content: "4";
-}
-
-mjx-c.mjx-cD7::before {
-  padding: 0.491em 0.778em 0 0;
-  content: "\D7";
-}
-
-mjx-c.mjx-c1D451.TEX-I::before {
-  padding: 0.694em 0.52em 0.01em 0;
-  content: "d";
-}
-
-mjx-c.mjx-c7D::before {
-  padding: 0.75em 0.5em 0.25em 0;
-  content: "}";
-}
-
-
-
-
-
-
-
-
-
-
-
-
-mjx-container[jax="CHTML"] {
-  line-height: 0;
-}
-
-mjx-container [space="1"] {
-  margin-left: .111em;
-}
-
-mjx-container [space="2"] {
-  margin-left: .167em;
-}
-
-mjx-container [space="3"] {
-  margin-left: .222em;
-}
-
-mjx-container [space="4"] {
-  margin-left: .278em;
-}
-
-mjx-container [space="5"] {
-  margin-left: .333em;
-}
-
-mjx-container [rspace="1"] {
-  margin-right: .111em;
-}
-
-mjx-container [rspace="2"] {
-  margin-right: .167em;
-}
-
-mjx-container [rspace="3"] {
-  margin-right: .222em;
-}
-
-mjx-container [rspace="4"] {
-  margin-right: .278em;
-}
-
-mjx-container [rspace="5"] {
-  margin-right: .333em;
-}
-
-mjx-container [size="s"] {
-  font-size: 70.7%;
-}
-
-mjx-container [size="ss"] {
-  font-size: 50%;
-}
-
-mjx-container [size="Tn"] {
-  font-size: 60%;
-}
-
-mjx-container [size="sm"] {
-  font-size: 85%;
-}
-
-mjx-container [size="lg"] {
-  font-size: 120%;
-}
-
-mjx-container [size="Lg"] {
-  font-size: 144%;
-}
-
-mjx-container [size="LG"] {
-  font-size: 173%;
-}
-
-mjx-container [size="hg"] {
-  font-size: 207%;
-}
-
-mjx-container [size="HG"] {
-  font-size: 249%;
-}
-
-mjx-container [width="full"] {
-  width: 100%;
-}
-
-mjx-box {
-  display: inline-block;
-}
-
-mjx-block {
-  display: block;
-}
-
-mjx-itable {
-  display: inline-table;
-}
-
-mjx-row {
-  display: table-row;
-}
-
-mjx-row &gt; * {
-  display: table-cell;
-}
-
-mjx-mtext {
-  display: inline-block;
-}
-
-mjx-mstyle {
-  display: inline-block;
-}
-
-mjx-merror {
-  display: inline-block;
-  color: red;
-  background-color: yellow;
-}
-
-mjx-mphantom {
-  visibility: hidden;
-}
-
-_::-webkit-full-page-media, _:future, :root mjx-container {
-  will-change: opacity;
 }
 
 mjx-c::before {
@@ -1891,6 +1747,136 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
 @font-face /* 21 */ {
   font-family: MJXTEX-VB;
   src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-c.mjx-c221A.TEX-S1::before {
+  padding: 0.85em 1.02em 0.35em 0;
+  content: "\221A";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c1D716.TEX-I::before {
+  padding: 0.431em 0.406em 0.011em 0;
+  content: "\3F5";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c56::before {
+  padding: 0.683em 0.75em 0.022em 0;
+  content: "V";
+}
+
+mjx-c.mjx-c61::before {
+  padding: 0.448em 0.5em 0.011em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c72::before {
+  padding: 0.442em 0.392em 0 0;
+  content: "r";
+}
+
+mjx-c.mjx-c5B::before {
+  padding: 0.75em 0.278em 0.25em 0;
+  content: "[";
+}
+
+mjx-c.mjx-c1D465.TEX-I::before {
+  padding: 0.442em 0.572em 0.011em 0;
+  content: "x";
+}
+
+mjx-c.mjx-c5D::before {
+  padding: 0.75em 0.278em 0.25em 0;
+  content: "]";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c47::before {
+  padding: 0.705em 0.785em 0.022em 0;
+  content: "G";
+}
+
+mjx-c.mjx-c45::before {
+  padding: 0.68em 0.681em 0 0;
+  content: "E";
+}
+
+mjx-c.mjx-c4C::before {
+  padding: 0.683em 0.625em 0 0;
+  content: "L";
+}
+
+mjx-c.mjx-c55::before {
+  padding: 0.683em 0.75em 0.022em 0;
+  content: "U";
+}
+
+mjx-c.mjx-c2217::before {
+  padding: 0.465em 0.5em 0 0;
+  content: "\2217";
+}
+
+mjx-c.mjx-c2F::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "/";
+}
+
+mjx-c.mjx-c1D44B.TEX-I::before {
+  padding: 0.683em 0.852em 0 0;
+  content: "X";
+}
+
+mjx-c.mjx-c1D459.TEX-I::before {
+  padding: 0.694em 0.298em 0.011em 0;
+  content: "l";
+}
+
+mjx-c.mjx-c2208::before {
+  padding: 0.54em 0.667em 0.04em 0;
+  content: "\2208";
+}
+
+mjx-c.mjx-c211D.TEX-A::before {
+  padding: 0.683em 0.722em 0 0;
+  content: "R";
+}
+
+mjx-c.mjx-c7B::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "{";
+}
+
+mjx-c.mjx-c34::before {
+  padding: 0.677em 0.5em 0 0;
+  content: "4";
+}
+
+mjx-c.mjx-cD7::before {
+  padding: 0.491em 0.778em 0 0;
+  content: "\D7";
+}
+
+mjx-c.mjx-c1D451.TEX-I::before {
+  padding: 0.694em 0.52em 0.01em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c7D::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "}";
 }
 &lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\sqrt{(\epsilon + \text{Var}[x])}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msqrt&gt;&lt;mjx-sqrt&gt;&lt;mjx-surd&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c221A TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-surd&gt;&lt;mjx-box style="padding-top: 0.107em;"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D716 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mtext class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c56"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c5B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c5D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-box&gt;&lt;/mjx-sqrt&gt;&lt;/mjx-msqrt&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; as constant, making the norm linear and preventing relevance collapse.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Identity-rule:&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;detach the nonlinear factor of GELU/SiLU, so the activation's backward pass becomes a per-element linear map. i.e. replace &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\text{GELU}(x)" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c47"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c45"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c55"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; with &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="x*" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2217"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;stop_grad(GELU&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="(x)/x" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2F"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D465 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;)&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Half-rule:&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;split relevance evenly across a multiplicative gate's two branches instead of double-counting through the product.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h1&gt;&lt;span&gt;Methods: the R-Lens&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;Dense models&lt;/span&gt;&lt;/h2&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;What we modify&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;LN-rule on the residual-stream RMSNorms: replace the forward with a copy that detached the normalization factor&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Identity rule + half-rule on the gated MLP: The identity-rule makes SiLU backward a per-element linear map (gradient is just sigmoid(z) instead of the full SiLU derivative), and the half-rule splits relevance evenly between the gate path and the up path instead of double-counting through the bilinear product&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;What we do not modify:&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;All linear layers (the LRP 0-rule produces the same thing as autograd’s ordinary gradient)&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Attention&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;q/k norms&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h2&gt;&lt;span&gt;MoE models&lt;/span&gt;&lt;/h2&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We use a similar setup to dense models, with a few modifications to account for the architectural differences:&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We extend the LRP rules to all routed experts (i.e. we treat all experts as if they were normal MLP layers)&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;We freeze the expert routing weights (+softmax/sigmoid scoring, router logits, and gate projection)&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Some models have a shared expert, which is always on. We multiply the shared expert’s output by a constant and sweep over a few values of the constant, which amplifies the shared expert’s importance&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;Note: DeepSeek-v4-flash’s residual stream uses manifold-constrained hyper-connections (mHC), which means that the state carried between sublayers is a matrix &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="X_l \in \mathbb{R}^{\{4\times d\}}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D44B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.024em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D459 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2208"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup space="4"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-ds mjx-b"&gt;&lt;mjx-c class="mjx-c211D TEX-A"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c7D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;.&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;For this model, we additionally freeze the mHC residual-mixing coefficients&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h1&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;Quantitative comparisons&lt;/span&gt;&lt;/h2&gt;&lt;h3&gt;&lt;span&gt;Evals&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;Our evals are similar in content to those described in &lt;/span&gt;&lt;a href="https://transformer-circuits.pub/2026/workspace/index.html#app-quant"&gt;&lt;span&gt;Appendix A.6&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;of the J-lens paper. We probe on the &lt;/span&gt;&lt;b&gt;&lt;span&gt;bolded&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;token position:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Multihop: 2-hop factual questions&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Example:&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Prompt: “the color of the planet fourth from the&lt;/span&gt;&lt;b&gt;&lt;span&gt; Sun&amp;nbsp;&lt;/span&gt;&lt;/b&gt;&lt;span&gt;is”&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Intermediate: “Mars”&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Multilingual: model using English representations given a non-English prompt&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Example:&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Prompt: “lo opuesto&amp;nbsp;de &lt;/span&gt;&lt;b&gt;&lt;span&gt;‘grande’&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;es” (“the opposite of ‘big’ is”)&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Intermediate: “small”&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Association: a short passage that evokes an unnamed concept&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Example:&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Prompt: “She couldn't buy groceries anymore without strangers whispering, pointing, and holding up their &lt;/span&gt;&lt;b&gt;&lt;span&gt;phones.&lt;/span&gt;&lt;/b&gt;&lt;span&gt;”&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Intermediate: “fame”&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;Typo: a passage with a common misspelled word&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Example:&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Prompt: “We made a reservation at our favorite &lt;/span&gt;&lt;b&gt;&lt;span&gt;resturant&lt;/span&gt;&lt;/b&gt;&lt;span&gt;"&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Intermediate: “restaurant”&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;Poetry: the first half of a rhyming couplet&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Example:&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Prompt: “A rhyming couplet:\nA wagging tail came bounding through the fog,&lt;/span&gt;&lt;b&gt;&lt;span&gt;\n&lt;/span&gt;&lt;/b&gt;&lt;span&gt;”&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Intermediate: “dog”&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;For each model we filtered for the questions the model was capable of answering correctly (for multihop and multilingual).&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Metrics&lt;/span&gt;&lt;/h3&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Mean pass@10 over layers and categories (i.e. in layer x, does the intermediate appear in the top 10 J-lens readout at the target position)&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Pass@10 per layer and per category&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/h3&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;R-lens shows a substantial quantitative advantage over J-lens as models scale&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;There is no R-lens advantage for both the smallest dense and MoE models we tested. But the R-lens for every other model shows an improvement over J-lens, for both pass@10 averaged over the first half of layers and averaged over all layers. This advantage increases with model size, with the R-lens for DeepSeek-V4-Flash (a 284B-parameter/13B-active MoE model) showing the largest advantage.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Eval performance across layers and for individual eval categories shown below for each model&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/94a757d3153d86b8eacd14677c5338d929f64b9909a6161a7acfe88b9664ac3e/jrj2kj5ru9xwesbauqkw" alt=""&gt;&lt;/h3&gt;&lt;h3&gt;&lt;br&gt;&lt;/h3&gt;&lt;h2&gt;&lt;span&gt;Qualitative comparisons&lt;/span&gt;&lt;/h2&gt;&lt;h3&gt;&lt;span&gt;Layer at which the target concept first appears&lt;/span&gt;&lt;/h3&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;The R-lens often surfaces important intermediate concepts at earlier layers than the J-lens&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Typo prompt example:&lt;/span&gt;&lt;/b&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;On the misspelled word “aganst”, R-lens surfaces the correctly-spelled “against” at rank 1 at layer 4, while J-lens never surfaces “against” on the token position where the typo occurs&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;figure style="width:64.50151057401813%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786311907/lexical_client_uploads/eripxbqfb0utfdpliggh.png" alt="Screenshot 2026-08-09 at 2.45.01 PM.png"&gt;&lt;/figure&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Multihop prompt example:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; “The capital of the country where sushi originated is”&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;On the token “sushi”, R-lens surfaces the intermediate “Japan” at layer 2, while J-lens does not surface it until layer 14&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;figure style="width:63.89728096676737%" class="image image_resized"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786311923/lexical_client_uploads/lszbfrwdbdiazgfypxxv.png" alt="Screenshot 2026-08-09 at 2.45.19 PM.png"&gt;&lt;/figure&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Basic readout prompt example: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;“The athlete Michael Jordan plays the sport of”&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;On the token “Jordan”, R-lens surfaces the token “basketball” at layer 4, while J-lens surfaces it at layer 20&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;R-lens is generally more coherent in early layers than J-lens&lt;/span&gt;&lt;/h2&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;In early layers, J-lens tends to contain what we refer to as “trash tokens”: tokens that are seemingly non-semantic, incoherent, or unrelated to the prompt&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;E.g. “锁定” ("locking"), “尷” (half of "awkward"), “＊＊＊＊＊＊＊＊”, “ ...\n\n”, “......”, “euw”, “tav”, “zinho”, etc.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;One conclusion you might draw from this is that J-Lens is working as intended, and early layers do not contain the types of “verbalizable representations” that define workspace content, so there is in effect nothing for J-lens to surface. However, the fact that R-Lens works shows this is clearly false.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;We can quantify this and see that R-lens seems to contain drastically fewer trash tokens in the early layers.&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Even if they're not super informative, they show clear structure, e.g. representing the current token or similar tokens&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;E.g. for the prompt below, after “color”, we see “颜色的” (“of color” in Chinese); after “fourth”, we see “fifth”&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We even see examples of &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/6ek6n7yZ5DzfarJHy/towards-surfacing-model-algorithms-with-meta-tokens-in-the-j"&gt;&lt;span&gt;“interpretative meta-tokens”&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;coming up on very early layers&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;E.g. for the prompt below, the token “是什么呢” (“what is this?”) pops up as early as L6 when the model is trying to do the multihop computation&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/81add2a78d0122b2a57ea30db06bd5e1f44790983de9d8779d2a71660f6e0e83/woqaakgwnreknpy3j81g" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;We perform ablations to determine the causal importance of R-lens and J-lens directions&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Setup:&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;on 30 questions from the multihop eval set, we ablate the projection of the R-lens, J-lens, and logit lens directions for the intermediate token from the activations on the penultimate token position of the prompt.&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1" class="nested-list-item"&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We test ablating only on the &lt;/span&gt;&lt;b&gt;&lt;span&gt;first half of layers&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;(to test saliency of early representations for each method) and ablating on &lt;/span&gt;&lt;b&gt;&lt;span&gt;all layers&lt;/span&gt;&lt;/b&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;We test the &lt;/span&gt;&lt;b&gt;&lt;span&gt;relative accuracy loss&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;(judged with a GPT 5.4 nano autorater): we sample each prompt 8 times before and after ablating, and measure the reduction in accuracy across all 30 prompts&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Results:&lt;/span&gt;&lt;/b&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;On nearly all models (with the exception of the two smaller MoEs on the first half of layers), ablating the R-lens directions for the intermediates results in a much larger decrease in accuracy than ablating J-lens or logit lens directions.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;This suggests that the R-lens directions for intermediates are more causally important for determining the answer, especially on the largest model, Deepseek-V4-Flash.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786319928/lexical_client_uploads/u0est0vlg4d3bolzwa0x.png" alt="image.png"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786319916/lexical_client_uploads/xbliju63t9silllmr5as.png" alt="image.png"&gt;&lt;h2&gt;&lt;span&gt;R-lens captures early-layer concepts that J-lens never surfaces:&lt;/span&gt;&lt;/h2&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We show above that R-lens is often able to read out concepts at earlier layers than J-lens. Typically, these concepts show up in later layers and are eventually read by J-Lens. This means R-Lens is a valuable tool for tracking computation over layers, but less so for just detecting the presence of concepts.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;However, in certain cases R-lens can surface concepts that appear exclusively in earlier layers, which J-lens entirely misses&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Example: on the token “Verona”, R-lens surfaces “Italy” at rank 1 around layer 5, while it has rank &amp;gt;1000 with J-lens&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/cb689b249c97594ef1284c253f84306a1b698384c5f3a9f6984e2498bd026f47/fnm9czmhsz5zcoqjeill" alt=""&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Example: in a prompt briefly mentioning Albert Einstein, the token “ physicists” is surfaced in the top 10 by R-lens around layers 6-17 but not by J-lens&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/71a3398779b00e4731ce3a4528f25f5d69958461b29fae790bf6d3319e76d81c/xpubbrosjulsjgmy516u" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;We train probes to upper bound the earliest layer we can expect lens readouts&lt;/span&gt;&lt;/h2&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Setup:&lt;/span&gt;&lt;/b&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We train linear probes to distinguish between 10 concepts within a category (e.g. for athletes, we train a linear classifier on 10 famous athletes)&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;On a simple factual recall question (e.g. “The athlete Michael Jordan plays the sport of”), we find the earliest layer where these probes get 0.99-1.00 accuracy&lt;/span&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;These layers represent a crude “upper bound” on how early we can expect lens readouts to identify concepts. We don't take it too seriously (and in the case of landmarks, R-Lens beats it)&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Results:&lt;/span&gt;&lt;/b&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;We find that R-lens consistently appears at earlier layers than J-lens, getting significantly closer to the probe-defined upper bound.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/4ff5f363ceda92904c68c91dc3272e648df718adb0c3f07f79f0d0af3fa6ac9e/vqvyczurzoooutjzhzdm" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;CKA Analysis&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;We found R-lens to be more different than J-lens in early layers and the R-space CKA to show roughly 2-3 distinct bands as opposed to J-space CKA’s 4-5 for Qwen-3.6-27b.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/2ecb454ebfcc95d15d4d7affe6e07d9577855f84a614fd020838cf9e39e7ea06/adp9nqlgiw9rm3dqf4i4" alt=""&gt;&lt;h1&gt;&lt;span&gt;Appendix&lt;/span&gt;&lt;/h1&gt;&lt;h2&gt;&lt;span&gt;Do MLP layers preferentially amplify RelP lens directions?&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;We measure the MLP gain (how strongly the information encoded by a direction &lt;/span&gt;&lt;i&gt;&lt;span&gt;v&lt;/span&gt;&lt;/i&gt;&lt;span&gt;&amp;nbsp;is amplified by the next MLP block) of directions from J-lens, R-lens, and logit lens compared to those of a standard MLP neuron. This is similar to the experiment from &lt;/span&gt;&lt;a href="https://transformer-circuits.pub/2026/workspace/index.html#struct-broadcast"&gt;&lt;span&gt;Figure 32&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;of the J-lens paper. We find that on Qwen3.6-27B, J-lens and R-lens directions are similarly amplified across layers, and these are significantly more amplified than the MLP neuron in later workspace layers.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/nv8oedrnLXKRzNEL9/050340ebeccf658a960315d3a780b9c54626930e6252089875047833eb1db8c8/angkkqhzssixdjfysgda" alt=""&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Quantitative eval results for other models&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/694d851fde74313d961c1115a31c34bedbb25da07c86d6b1b4ad667721438ada/wog8ik5mijqq5btsblgd" alt=""&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/f03cf03d5d224d374a6f5f4d34e21581ad2b85dc5b15ae2ca247e048d9e7370b/ieu0cgsspquawfbe50ps" alt=""&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/19222394692b05a92eaf1aad129a3dcd9f6534e9ce2830ac5bf449c045fb38cc/byullqsu5ipak5vrjxon" alt=""&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/c8ae5e0db4a2907613f15232258223e5f4b0311b36b6d93fdf19490bfde16442/swocykqlt7fgbbcmtzri" alt=""&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/fe323e9d31ed83a19e09a6b40db9a768a0d1410cbf7635a229dc116fef66213e/yfjnapvd9ntrxgc7mytn" alt=""&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/bd803b5114a2ecc0f9a983ef57a152276a82728ce9ef7d8f867fedf5dd23841b/myu2s2xtqbkmsyprcgkl" alt=""&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.alignmentforum.org/posts/nv8oedrnLXKRzNEL9/r-lens-making-j-lens-more-faithful-on-early-layers#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">nv8oedrnLXKRzNEL9</guid>
