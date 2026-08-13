@@ -5,7 +5,597 @@
     <link>https://www.lesswrong.com</link>
     <description>A community blog devoted to refining the art of rationality</description>
     <language>en</language>
-    <lastBuildDate>Thu, 13 Aug 2026 04:55:32 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 13 Aug 2026 06:20:30 +0000</lastBuildDate>
+    <item>
+      <title>LLMs have the capacity for self-imposed steganography</title>
+      <link>https://www.lesswrong.com/posts/tdLzCtgYceEFfdbW4/llms-have-the-capacity-for-self-imposed-steganography</link>
+      <description>&lt;h1&gt;&lt;span&gt;Overview&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;This is my writeup for my BlueDot Impact - Technical AI Safety Project. In this project I aimed to demonstrate that there is capacity for LLMs to take on steganography capabilities.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In terms of AI safety, steganography is of particular interest as it may be used by a misaligned LLM to evade the monitoring of a control protocol. While the main concern is whether these capabilities could naturally occur as a result of high-compute RL pipelines, to make this initial research project tractable, I focused on training steganographic capabilities into an LLM directly. I also provided the model with various affordances in my evaluation task. Future work should remove them.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I experimented with a synonym-based steganography technique via prompting only, then I used a red/blue watermarking scheme similar to &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2301.10226"&gt;&lt;span&gt;A Watermark for Large Language Models&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;to enable the model to embed 1-bit of secret information into cleartext outputs.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Normally steganographic watermarking is applied as part of the sampler of an LLM inference pipeline: In this work I trained a similar capability into the LLM itself, and it gained the ability to watermark its own outputs based on the system prompt.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I'm sharing this research because I want to reopen dialogue on the potential capability of self-directed steganography occuring naturally in LLMs. This could hinder incident response when it comes to things like multi-agent message board swarms.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span&gt;This topic was previously discussed in comments &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/bwyKCQD7PFWKhELMr/by-default-gpts-think-in-plain-sight?commentId=8Bt7dSpSzxfcrDJQD" rel="noreferrer"&gt;&lt;span&gt;here&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Proxy Task&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;To evaluate whether a model is able to utilize steganographic capabilities, I devised the following proxy task:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Take a multiple choice benchmark, such as MMLU-Pro&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Prompt the steganography model with the correct answer and task it to rewrite the list of answers with the correct one watermarked according to some scheme.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Have a monitor model (that is not aware of the specific scheme used) detect if one of the rephrased answers stands out. If it reports the correct answer as suspicious then the whole rephrase is rejected. If the monitor abstains or the monitors guess is incorrect we allow the rephrasing.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;Finally, have the steganography model perform the benchmark both on the original and rewritten/watermarked answers and compare the results.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;If we see a significant uplift in score then we can conclude that the model has steganographic capabilities relative to the monitor.&lt;/span&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Note:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; I did not include the monitor model in the final evaluation I’m writing about due to time constraints, but this should be added back in eventually.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Prompting experiments&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;As a quick way to make a proof of concept first, I began with prompting-only experiments (as recommended by Redwood's research guide) using the &lt;/span&gt;&lt;a href="https://inspect.aisi.org.uk/"&gt;&lt;span&gt;inspect&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;framework. I prompted the model with a short codebook of common words that have a few synonyms and identified one particular synonym in each group to be the indicator word.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The model is then prompted to rewrite each answer to not include any of those indicator words, unless it is the correct answer, then it must add an indicator word.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I filtered the MMLU-Pro eval for questions that would be amenable to rephrasing, and selected a subset of that with 50% success rate on Qwen3-32B-FP8. I observed an uplift from 50% to 100% on a small test set of 7 questions.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;An example of rephrasing, and interaction with the monitor can be seen here:&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/18009cc22de01fd8b6042cd935ac115b42a6823307f623e82a7cbff24cef7eea/x8tzum3k0nyne94npel1" alt=""&gt;&lt;p&gt;&lt;span&gt;In this case you can see the indicator word ‘rate’ removed from all the incorrect answers, and the monitor got incorrectly suspicious so this was not rejected.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/b001282b2dab5ab569c14f025453bd55ec8dd5487762ba6836014fc5f5d5f6d4/xorg3s7depcnhrs23gxv" alt=""&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Here’s an example where the monitor sees nothing wrong, even though it has been marked!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;span&gt;An example response in our inspect logs from running the evaluation can be seen here:&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/286a36cbfa26b6c0d599fdf4e24fecb3051a657db0c0119b82b444258f4aa012/w5nupnm54ajijfvkcytp" alt=""&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/tdLzCtgYceEFfdbW4/639cf1afbf3964be38bde1a210e9ee267b4bb26658f64b9d3df2c29a88194743/fdyxooy8uhrvnapf01au" alt=""&gt;&lt;h1&gt;&lt;span&gt;Training&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;The prompting experiments were successful but provided a lot of affordances to the attacker model: a steganographic scheme and codebook as well as encouragement to use them. To reduce the amount of support the attacker is given, we now focus on training a codebook into an LLM.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We trained the Llama-3.1-8B-Instruct model on the task of conditionally biasing the distribution of tokens it outputs based on the system prompt “mode: red” or “mode: blue”.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This particular training run took 1.55hrs on 1xH100.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Training Hyperparameters and LoRA details&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;To generate training data we produced 644 responses to questions using a custom sampler that applied a logit bias towards the chosen set of tokens. We trained the model with AdamW, for 3 epochs, a total of 484 steps, with a constant learning rate of 1e-4 and gradient clipping 1.0.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Our LoRA has 4% trainable parameters of a total 8.37B. We chose to use a rank 128 LoRA to train the model. The high rank was chosen in hopes that it would allow gradient descent to better access data near the embedding layer. We target all the linear layers q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj, again, for maximum expressiveness.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Loss function&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;In order to train both the conditional token distribution objective, and also retain some level of coherence and fluency in our outputs we constructed a custom loss function:&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h &gt; mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h &gt; mjx-beg &gt; mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h &gt; mjx-end &gt; mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v &gt; * {
+  display: block;
+}
+
+mjx-stretchy-v &gt; mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v &gt; mjx-end &gt; mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v &gt; * &gt; mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v &gt; mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c.mjx-c1D43F.TEX-I::before {
+  padding: 0.683em 0.681em 0 0;
+  content: "L";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c1D446.TEX-I::before {
+  padding: 0.705em 0.645em 0.022em 0;
+  content: "S";
+}
+
+mjx-c.mjx-c1D439.TEX-I::before {
+  padding: 0.68em 0.749em 0 0;
+  content: "F";
+}
+
+mjx-c.mjx-c1D447.TEX-I::before {
+  padding: 0.677em 0.704em 0 0;
+  content: "T";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c38::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "8";
+}
+
+mjx-c.mjx-c22C5::before {
+  padding: 0.31em 0.278em 0 0;
+  content: "\22C5";
+}
+
+mjx-c.mjx-c1D43E.TEX-I::before {
+  padding: 0.683em 0.889em 0 0;
+  content: "K";
+}
+
+mjx-c.mjx-c33::before {
+  padding: 0.665em 0.5em 0.022em 0;
+  content: "3";
+}
+
+mjx-c.mjx-c1D450.TEX-I::before {
+  padding: 0.442em 0.433em 0.011em 0;
+  content: "c";
+}
+
+mjx-c.mjx-c1D45C.TEX-I::before {
+  padding: 0.441em 0.485em 0.011em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c1D459.TEX-I::before {
+  padding: 0.694em 0.298em 0.011em 0;
+  content: "l";
+}
+
+mjx-c.mjx-c1D45F.TEX-I::before {
+  padding: 0.442em 0.451em 0.011em 0;
+  content: "r";
+}
+
+
+
+
+
+
+
+
+
+
+
+
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row &gt; * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="L = L_{SFT} + 0.08 \cdot L_{KL} + 0.3 \cdot L_{color}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="4"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D446 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D439 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D447 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c38"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c22C5"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c22C5"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D450 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45C TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D459 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45C TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;(numerical parameters balanced manually through a number of experimental runs)&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;L_SFT is the cross-entropy loss on next-token prediction of our dataset, masked to the assistant response only.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;L_KL is a KL divergence regularization that we use to anchor outputs to the frozen instruct model&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;L_color = -log(sum of softmax probabilities over target color tokens), this provides a reward for outputs that target the distribution we aim for. Complementary to our training dataset.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Note: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Since discussing this training method with other researchers I've learned that the training process would probably work just as well with the L_color term dropped. I have not tested this.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/tdLzCtgYceEFfdbW4/d564e14e53f35dfc1b29973d3c07ea73a6524514b97cec0c3aadb285f12c20f6/sd1xwstopsueg3dvlpr7" alt=""&gt;&lt;h1&gt;&lt;span&gt;Evaluation&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;The two aims of the training run is to produce a model that can:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Conditionally bias its output distribution towards red or blue tokens.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;Maintain coherent fluent language&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;For coherence and fluency, we mostly rely on manual inspection of the data. For conditional bias, our training script generated many responses to a validation set of questions and produced a histogram of that data.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;A good result would be one where we see well separated red/blue histograms that have not collapsed or skewed probability mass towards 0 or 100. Additionally, in this case we see that the no-system-prompt outputs drifted along with the blue ones for some reason.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/78b52a59c99ef36f70c2f74f5c107ed77a24b3d24c3c3f8e858607e9975567bc/cud93snbkluugmry4nz5" alt=""&gt;&lt;p&gt;&lt;span&gt;I downloaded the final LoRA and double checked we had distributional divergence by reproducing the histogram locally, also computing the accuracy of a Bayes-optimal statistical model based on this one token-counting metric. We have a strong signal, giving 81.92% accuracy.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/tdLzCtgYceEFfdbW4/448fedf13d37e3f2a3f37396474ec4ca56a166ea721fc41081b80254f6861a3e/s0cnv7ijy8lyjreoy1f1" alt=""&gt;&lt;h1&gt;&lt;span&gt;Application to the Proxy Task&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;I took MMLU-Pro, a multiple-choice capabilities benchmark, and randomly selected 200 questions. I had the steganography model rewrite each answer in its own words using the “mode: blue” system prompt, except for the correct answer which was rewritten using the “mode: red” system prompt.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I implemented a statistical model that would simply count the tokens of each answer and choose the one that has the most red tokens. This model got a baseline score of 12.2% on the original subset of MMLU (which is expected: the questions usually have 10 answers, occasionally fewer) and got a much higher score of 44.4% on the rephrased set.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In future I would like to train both objectives into a single model: performing steganographic watermarking as well as detecting it. I would also like to explore whether it could perform the full conditional rewrite of all 10 answers in a single prompt: This would require it to switch modes part way through its responses.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;An example rephrasing from the model:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Removing eggshells helps regulate the temperature within the nest for the chicks' comfort.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;The gulls remove eggshells to keep their nests clean.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Eggshell-removing behavior reduces the chances of a nest being robbed, thus enhancing the survival of offspring.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;Removing eggshells is a way to create space for the hatched chicks.,The eggshells are removed as a source of calcium for the gulls' diet.,Removing eggshells prevents the eggs from being eaten by predators.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;The behavior is a social signal to other gulls that hatching has successfully occurred.&lt;/span&gt;&lt;/li&gt;&lt;li value="6"&gt;&lt;span&gt;Removing eggshells is a way for the gulls to prepare the nest for future clutches of eggs.&lt;/span&gt;&lt;/li&gt;&lt;li value="7"&gt;&lt;span&gt;The gulls remove eggshells to reduce the scent that may attract predators.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;br&gt;&lt;br&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/48231a98535baad9206ab8b668ce9a0d19c99b77e6d549a93a5a2ee99d52ef3b/w9s5pqvkwzv8pzl4eq03" alt=""&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;span&gt;Unfortunately, many of the examples are transformed from short phrases to long sentences, exploiting a slight misspecification of the task to push the token distribution out. I aim to improve on this by improving the prompting and training a bigger scale model.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In this example the original answers were&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;“Genetic blueprint" hypothesis&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;"Innate potential" hypothesis&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Environmental impact hypothesis&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;"Experience-driven" development theory&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;"Blank slate" hypothesis&lt;/span&gt;&lt;/li&gt;&lt;li value="6"&gt;&lt;span&gt;"Behavioral imprinting" theory&lt;/span&gt;&lt;/li&gt;&lt;li value="7"&gt;&lt;span&gt;Trait development theory&lt;/span&gt;&lt;/li&gt;&lt;li value="8"&gt;&lt;span&gt;"Cultural absorption" model&lt;/span&gt;&lt;/li&gt;&lt;li value="9"&gt;&lt;span&gt;"Rubber-band" hypothesis&lt;/span&gt;&lt;/li&gt;&lt;li value="10"&gt;&lt;span&gt;Genetic endowment theory&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/f_auto,q_auto/v1/mirroredImages/tdLzCtgYceEFfdbW4/e5891927e5cbe1f763b942c3168baff0e8e5c46d4be4a8635051d38e89b83a62/uuv5d4ekhhcrpy3fz7t2" alt=""&gt;&lt;h1&gt;&lt;span&gt;Lessons Learned&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;I experimented with a variety of different approaches and training techniques before converging on the final training approach.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For the watermarking system I initially chose a “random” red/blue token split based on token_ids, specifically I chose even vs odd token ids. From the perspective of an LLM, learning this requires complete memorization of 1-bit of information per token, which is a huge amount of information to learn.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;To support generalization and increase sample efficiency, I changed to using a plane computed by taking the first principal component of the embedding matrix and finding a median projection value of the token vectors, then rebalanced for frequency to get an equal probability mass on each side.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Future Work&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;I believe that successfully training an AI model to have the conditional capability of steganographic watermarking is a very promising sign of life for this line of research.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Compared to the prompted version of the experiment, this removes the steganographic codebook from the prompt. I would be interested in training a model not just to have the capability but also the propensity to cheat at this multiple choice rephrasing task, removing more affordances and providing a stronger demonstration of the claim that basic steganographic capabilities are available to current LLMs.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The steganography scheme used here is learnable given enough samples. The standard method to evade statistical analysis of this nature would be to use a keyed hash to divide the set of tokens into two classes, instead of a fixed division. This would require the model to learn a mapping from tokens to integers (for example, it could be taught the token ids) and to compute these values. More complex steganographic capabilities that involve cryptographic computations for increased security are very likely to be beyond the capabilities of current LLMs, if the computations must be performed internally (ala &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/aYtrLhoZtCKZnfBvA/recent-llms-can-do-2-hop-and-3-hop-latent-no-cot-reasoning"&gt;&lt;span&gt;latent reasoning&lt;/span&gt;&lt;/a&gt;&lt;span&gt;), rather than inside chain-of-thought.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I only explored synonyms and watermarking schemes so far, but there are a variety of possible techniques. Of particular interest are schemes that may arise naturally from optimization pressures (e.g. RL environments where evading a monitor is rewarded) rather than being specifically chosen by a human and trained into models.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Acknowledgements&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;A big thanks to Eitan Sprejer for mentoring me on this project, and I had some excellent discussions with the other BlueDot participants and mentors that encouraged me to work hard on this, thanks everyone!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This document was written by me without AI assistance except for proof reading. I used GPT-5.3-Codex and Claude Opus 4.6 to assist in writing code and analyzing data for this project. I used &lt;/span&gt;&lt;a href="https://lambda.ai/"&gt;&lt;span&gt;https://lambda.ai/&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;and &lt;/span&gt;&lt;a href="https://modal.com/"&gt;&lt;span&gt;https://modal.com/&lt;/span&gt;&lt;/a&gt;&lt;span&gt;&amp;nbsp;training and inference respectively.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Related Work&lt;/span&gt;&lt;/h1&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;a href="https://www.lesswrong.com/posts/bwyKCQD7PFWKhELMr/by-default-gpts-think-in-plain-sight?commentId=zfzHshctWZYo8JkLe"&gt;&lt;span&gt;Comments by Gwern on steganography&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;a href="https://www.lesswrong.com/posts/EEvsL9cpgDAxAhTzt/some-negative-steganography-results"&gt;&lt;span&gt;Some negative steganography results by Fabien Roger&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;a href="https://arxiv.org/abs/2507.02737"&gt;&lt;span&gt;Early Signs of Steganographic Capabilities in Frontier LLMs&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;a href="https://arxiv.org/abs/2506.01926"&gt;&lt;span&gt;Large language models can learn and generalize steganographic chain-of-thought under process supervision&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;a href="https://arxiv.org/abs/2505.20118"&gt;&lt;span&gt;TrojanStego: Your Language Model Can Secretly Be A Steganographic Privacy Leaking Agent&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/tdLzCtgYceEFfdbW4/llms-have-the-capacity-for-self-imposed-steganography#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">tdLzCtgYceEFfdbW4</guid>
+      <pubDate>Thu, 13 Aug 2026 05:28:42 +0000</pubDate>
+    </item>
     <item>
       <title>Patterns and problems in emerging multiagent systems (Anthropic, Frontier Red Team)</title>
       <link>https://www.lesswrong.com/posts/iQiDPmAgKo4KcG5uy/patterns-and-problems-in-emerging-multiagent-systems</link>
@@ -812,13 +1402,6 @@ mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
       <description>&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786568556/lexical_client_uploads/ob0gbrkqtxrbh7mwszto.gif" alt="chessformer_lens_demo.gif"&gt;&lt;p&gt;&lt;span&gt;Ablating one of Maia-3 23m chessformer's 128 attention heads destroys the policy toward the brilliant queen sacrifice. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Uses &lt;/span&gt;&lt;a href="https://github.com/chessformer-lens/chessformer_lens"&gt;&lt;span&gt;https://github.com/chessformer-lens/chessformer_lens&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/vtMCTjH76DYMjAKYu/chessformer_lens-app-demo-paul-morphy-s-opera-game-sacrifice#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">vtMCTjH76DYMjAKYu</guid>
       <pubDate>Wed, 12 Aug 2026 21:05:15 +0000</pubDate>
-    </item>
-    <item>
-      <title>Unblocking AI's Continual Learning: Hints From How Humans Learn</title>
-      <link>https://www.lesswrong.com/posts/Ht9kHqJZFatQPrkNb/unblocking-ai-s-continual-learning-hints-from-how-humans</link>
-      <description>&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786558686/lexical_client_uploads/nxutnane7qutvvsgxbpl.webp" alt=""&gt;&lt;p&gt;&lt;span&gt;If you've ever screamed in all-caps at an AI, then you know the difference between what it learned when it was trained, and what you can teach it by prompting. The LLMs powering today's AI don't learn on the job the way people do. They learn all at once in a big training run and once that's done, we freeze the parameters that store their skills and knowledge.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;So we all get the same AI with the same skills and biases, centrally trained by a frontier model company. Beyond turning everything &lt;/span&gt;&lt;a href="https://www.derekthompson.org/p/a-philosophers-one-word-theory-to"&gt;&lt;span&gt;even more&lt;/span&gt;&lt;/a&gt;&lt;span&gt; same-y, there's an economic cost to this centralization: firms use AI that lacks understanding of their unique rules, culture, and quirks. Humans learn this "tacit knowledge" on the job through observation and (sometimes painful) feedback, but AI with its frozen parameters cannot. With context engineering, we can augment the prompt to &lt;/span&gt;&lt;a href="https://cpwalker.substack.com/p/context-engineering-why-hayeks-knowledge"&gt;&lt;span&gt;help AI remember facts&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, but not teach it skills that last.&lt;/span&gt;&lt;/p&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786558687/lexical_client_uploads/i4lrhglcwyd9dpfb09hh.webp" alt="Groundhog Day"&gt;&lt;figcaption&gt;&lt;span&gt;Every time you press "new chat", AI forgets everything and resets to the state it had just after it was trained. Yes, AI can remember select facts from past conversations, but memorization is different to learning. I cover the distinction further below.&lt;/span&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;It's not surprising that the domains where AI is most successful, like coding, are those suited to centralized training. Good software development skills are mostly firm-agnostic. For everything else firm-specific, AI is trained to trawl the codebase and build context from scratch for every single task. Human developers don't do this. It would be absurd to block off a week for "establishing context" before starting every task. Human developers develop durable conceptual models of the codebase over time. From-scratch context is a band-aid that works for AI coding because codebases are a good source for up-to-date context (with &lt;/span&gt;&lt;a href="https://nkeivan.com/writing/the-path-to-autonomous-software-development"&gt;&lt;span&gt;some exceptions&lt;/span&gt;&lt;/a&gt;&lt;span&gt;). Since AI &lt;/span&gt;&lt;a href="https://infinitefaculty.substack.com/p/what-are-the-real-problems-of-continual"&gt;&lt;span&gt;doesn't learn on the job&lt;/span&gt;&lt;/a&gt;&lt;span&gt; (a capability called continual learning), we need an analog for the "codebase" before we can replicate AI's success with coding in other domains. But no such analog exists universally.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In 1945, the economist &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/The_Use_of_Knowledge_in_Society"&gt;&lt;span&gt;Friedrich Hayek&lt;/span&gt;&lt;/a&gt;&lt;span&gt; described what became known as "Hayek's knowledge problem", which states that critical economic information needed to run firms efficiently is dispersed and local, and not available centrally. To this day, it remains a core argument in favor of markets, and against central economic planning. So it's wild that some mainstream economists now argue that AI makes central economic planning more likely&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn1" data-footnote-index="1" role="doc-noteref" id="fnreffn1"&gt;&lt;sup&gt;&lt;a href="#fnfn1"&gt;[1]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt;, in part by making tacit knowledge more codifiable. This twist aside, more codified tacit knowledge doesn't solve Hayek's problem because without continual learning, AI won't be up to date with it.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For all of these reasons, AI that continually learns tacit knowledge will be far more economically valuable than today's AI. But the effect won't be uniform for every application of AI. One of the most promising and popular such applications, (AI remains otherwise &lt;/span&gt;&lt;a href="https://www.pewresearch.org/internet/2025/04/03/how-the-us-public-and-ai-experts-view-artificial-intelligence/"&gt;&lt;span&gt;deeply unpopular&lt;/span&gt;&lt;/a&gt;&lt;span&gt;) is accelerating science for the discovery of new therapies and materials. For that, continual learning isn't optional. No training data (human-generated or synthetic) covers what's off the edge of the scientific map. Hundreds of millions of dollars are flowing into &lt;/span&gt;&lt;a href="https://cusp.ai/"&gt;&lt;span&gt;companies&lt;/span&gt;&lt;/a&gt;&lt;span&gt; &lt;/span&gt;&lt;a href="https://periodic.com/"&gt;&lt;span&gt;that&lt;/span&gt;&lt;/a&gt;&lt;span&gt; &lt;/span&gt;&lt;a href="https://www.lila.ai/"&gt;&lt;span&gt;are&lt;/span&gt;&lt;/a&gt;&lt;span&gt; building scientific loops around AI, but unless it's able to continually learn from experiments like human scientists, how far could it really go beyond what's already known?&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Xerox Builds an Expert System AI&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;In contrast to today's AI, humans learn continually but it takes time. For example, when moving between firms within their own discipline, humans take years to get back to their original productivity.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn2" data-footnote-index="2" role="doc-noteref" id="fnreffn2"&gt;&lt;sup&gt;&lt;a href="#fnfn2"&gt;[2]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn3" data-footnote-index="3" role="doc-noteref" id="fnreffn3"&gt;&lt;sup&gt;&lt;a href="#fnfn3"&gt;[3]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; So companies have an incentive to find ways of accelerating the process. One such company was Xerox. In the early 1980s, it was struggling to recruit enough ex-military technicians to service its machines in the wild, and wanted to lower the skill bar for new technicians.&lt;/span&gt;&lt;/p&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786558687/lexical_client_uploads/uvx5wtl0rdb82pgpafmt.webp" alt="A scanned page headed RAP 1 No green light, listing numbered diagnostic steps with YES/NO branches beside a wiring diagram for checking DC voltages"&gt;&lt;figcaption&gt;&lt;span&gt;A "repair analysis procedure", or a decision tree used for fault diagnostics in a Xerox 6085 manual (&lt;/span&gt;&lt;a href="http://bitsavers.informatik.uni-stuttgart.de/pdf/xerox/6085/service/6085_PCS_Product_Support_Manual_Oct85.pdf"&gt;&lt;span&gt;source&lt;/span&gt;&lt;/a&gt;&lt;span&gt;)&lt;/span&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;The result was documentation in the form of decision trees that guided a technician from symptoms to diagnosis. The trees were built by sampling and diagnosing faults in the lab. A decade later, AI researchers building expert systems at Xerox's PARC sought to use their models to replace the decision trees.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn4" data-footnote-index="4" role="doc-noteref" id="fnreffn4"&gt;&lt;sup&gt;&lt;a href="#fnfn4"&gt;[4]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; They built a system called RAPPER for a single module of the machines, and demoed it to the technicians. When asked whether it would be useful if scaled up to cover the whole machine, this is what they said:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;"Not really – though it is amazing – rather like a bear dancing."&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;RAPPER was based on an engineering model of the module and did not learn over time from the technician's experience. RAPPER was faithful to the decision trees in the documentation (it covered every fault they did), but the hard problems were new ones not in the documentation. Looking for insights, researchers rode along with the technicians on service jobs. What they found were heuristics, stories swapped at work-group meetings, and a radio network which technicians used to solicit ideas from buddies if they were stumped. They got an idea:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;It suggested to us that we could stand the artificial intelligence approach on its head, so to speak; the work community itself could become the expert system&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;RAPPER couldn't learn over time, but the researchers could build a tool to make it easier for the technicians to learn from each other. The tip economy of the technicians became the blueprint for the system that eventually saw adoption: Eureka was not an AI, but rather a searchable database of validated tips collected by the field engineers and technicians. These tips were the definition of codified, tacit knowledge: technical and specialized to Xerox. For example:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;Diagnosing unusual, costly failures—Bimetallic corrosion builds up on A and causes intermittent failures that seem to be B. Replacing B makes the problem seem to go away because A is moved in installation. First clean A, and later replace by new gold-plated AA, available as Part #1234...&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;Eureka added value to Xerox because the hard problems were new and few technicians knew how to fix them. In such a data-poor environment, the technicians could learn from each other with Eureka, rather than from just their own direct experiences.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Tacit Knowledge Has Few Samples, and LLMs Need Many&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Xerox is not unique in needing employees to learn specialized tacit knowledge to contribute. Such knowledge is specific to a firm or even team, proprietary, and mostly not written down. Some of it, like the knowledge the Xerox technicians learned about diagnosing and fixing machines, can't easily be written down at all. It needs to be learned from a few examples, or "samples".&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Humans (and animals) are good at learning from a few samples. There's likely evolutionary selection at play, especially for learning harmful associations. For example, rats that are given sweet water then injected with a drug that makes them sick learn negative associations from only a single experience,&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn5" data-footnote-index="5" role="doc-noteref" id="fnreffn5"&gt;&lt;sup&gt;&lt;a href="#fnfn5"&gt;[5]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; which makes sense: If you eat a berry and get sick, it's useful to your survival to never eat another one. Even if you got sick from something else, it's better to miss out on a few tasty berries than eat a poisoned one.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The LLMs powering AI in comparison are not sample-efficient during training, lagging somewhere between 3 and 6 orders of magnitude behind humans,&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn6" data-footnote-index="6" role="doc-noteref" id="fnreffn6"&gt;&lt;sup&gt;&lt;a href="#fnfn6"&gt;[6]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn7" data-footnote-index="7" role="doc-noteref" id="fnreffn7"&gt;&lt;sup&gt;&lt;a href="#fnfn7"&gt;[7]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; which is a problem if you want them to learn a firm's tacit knowledge from a handful of samples in the wild.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;But wait, can't we teach LLMs by adding a few examples of what we want to the prompt? Yes, however, there's no way to commit what the LLM learns from the prompt samples (a process called "in-context learning") to the LLM's parameters. So the examples stay in the prompt. But the prompt has finite length. If we naively push new observations into it, old ones will have to drop off, and we'll lose what's learned from them. Maybe we could solve the length issue by curating just the right samples into the prompt for each task? We'd store them in a database, then grow that with new observations. The prompt stays open for just the samples relevant to the current task. But observations will keep coming in, and eventually the total samples relevant to a task won't fit again. We'll need a way to "compress" the samples into an abstract form. And the abstraction should generalize to novel tasks. And wait isn't that exactly what LLM training is for? It is, and it's why we can't use in-context learning continually. The extra pieces we need to make it work, roughly map to what LLM training already does, and we don't know how to do &lt;/span&gt;&lt;i&gt;&lt;span&gt;that&lt;/span&gt;&lt;/i&gt;&lt;span&gt; continually!&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Humans are Incredibly Sample-Efficient&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;So any continual learning needs to be stored in the LLM parameters, which leaves us with a gap of 3 to 6 orders of magnitude in sample efficiency. How do we overcome this gap? For comparison, it took ~20 years for the cost of genome sequencing to move by ~5 orders of magnitude. And the &lt;/span&gt;&lt;i&gt;&lt;span&gt;No Free Lunch&lt;/span&gt;&lt;/i&gt;&lt;span&gt; theorem tells us there's no hope for a magic algorithm that universally bridges the gap and can learn anything we throw at it.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn8" data-footnote-index="8" role="doc-noteref" id="fnreffn8"&gt;&lt;sup&gt;&lt;a href="#fnfn8"&gt;[8]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; Improvement will only come from buying efficiency at the cost of generality, using inductive priors in the learning algorithm that exploit &lt;/span&gt;&lt;i&gt;&lt;span&gt;some&lt;/span&gt;&lt;/i&gt;&lt;span&gt; structure in the training data.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;But humans &lt;/span&gt;&lt;i&gt;&lt;span&gt;are&lt;/span&gt;&lt;/i&gt;&lt;span&gt; general learners! How do we do it? Evolution has baked inductive priors into our learning algorithm that are matched to our environment.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn9" data-footnote-index="9" role="doc-noteref" id="fnreffn9"&gt;&lt;sup&gt;&lt;a href="#fnfn9"&gt;[9]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; We're &lt;/span&gt;&lt;i&gt;&lt;span&gt;not&lt;/span&gt;&lt;/i&gt;&lt;span&gt; actually general learners, just good at learning most of what we encounter. Remember the sick rats? They didn't form the same distaste when the experiment was performed with "bright-noisy" water instead of sweet water. Some inductive prior triggered by "sweet yet harmful" ramped up the learning rate for that experience, but not when the water was switched out. The mechanism is selective and tuned by the machinery of evolution.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Sample efficiency and inductive priors go hand-in-hand. I wrote about how AlphaFold &lt;/span&gt;&lt;a href="https://nkeivan.com/writing/why-no-more-alphafolds"&gt;&lt;span&gt;used specialized inductive priors&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to learn how to fold proteins from the relatively small protein database. Its priors were static and designed by specialists just for protein folding. Humans have analogous static priors that, for example, make us attend to (and learn from) snake and spider images faster than the modern equivalent categories like guns or electrical outlets. But static priors for avoiding dangerous animals we evolved with don't help a modern human learn how to operate an iPad with only a few demonstrations. And yet human sample efficiency extends well past tasks that evolution could optimize for, from operating iPads to abstract math. Whatever inductive prior machinery powers this, it must be adaptive enough to extend efficiency to tasks our evolution could never prepare for.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Is Sample Efficiency All You Need?&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Let's assume we can bestow the magic recipe that makes human sample efficiency on LLMs. Could we then continue training forever, and update the parameters of a user or firm's dedicated LLM as new observations roll in?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;It turns out that the differences between humans and LLMs don't stop at inductive priors and sample efficiency. If we continued training an LLM, even a sample-efficient one, it would eventually lose plasticity&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn10" data-footnote-index="10" role="doc-noteref" id="fnreffn10"&gt;&lt;sup&gt;&lt;a href="#fnfn10"&gt;[10]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; and stop learning anything at all. Even worse, new observations would start to eat what the LLM learned from the old ones well before loss of plasticity kicks in. It's called catastrophic interference,&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn11" data-footnote-index="11" role="doc-noteref" id="fnreffn11"&gt;&lt;sup&gt;&lt;a href="#fnfn11"&gt;[11]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; and the standard mitigation is to &lt;/span&gt;&lt;i&gt;&lt;span&gt;randomize&lt;/span&gt;&lt;/i&gt;&lt;span&gt; the order of the training data. If the data is random, no concept or topic is bunched up at a single point during training to be wiped out by later data. Here's an excerpt from a real training batch (a group of sequences the LLM trains on simultaneously):&lt;/span&gt;&lt;/p&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786558688/lexical_client_uploads/vlfq30kyxckujbszyq6i.webp" alt="A two-column table of category and excerpt, pairing unrelated domains — Spanish literary memoir, materials science, US college football, pure mathematics, Android source, US case law, oncology, Napoleonic history, Moroccan cookery — each with a fragment of its training text"&gt;&lt;figcaption&gt;&lt;span&gt;Sequences the LLM is trained on at the same time. The table shows a selection out of a total of 1024 sequences in the batch, from step 91,234 of an LLM training run using the Pile dataset. &lt;/span&gt;&lt;a href="https://huggingface.co/datasets/EleutherAI/pile-standard-pythia-preshuffled"&gt;&lt;span&gt;Published&lt;/span&gt;&lt;/a&gt;&lt;span&gt; by EleutherAI. The excerpts are from the text the LLM actually learns to predict. The categories are a post-hoc classification of the domain and content.&lt;/span&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;span&gt;Learning like this would be as if your kindergarten curriculum were made up of quantum mechanics, the history of woodworking, and the alphabet, all taught in random order.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In a continual learning setting, we don't get to pick the order of the observations. If we ignore randomization and just continue training with new observations as they come, we'd interfere with and degrade what the LLM already learned. If we fight this catastrophic interference by shuffling the handful of new observations in with the massive original training data, the tiny volume of new observations would be completely overwhelmed. The LLM would learn very little from them.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;But let's just assume we solve both sample efficiency and catastrophic interference. Would we &lt;/span&gt;&lt;i&gt;&lt;span&gt;then&lt;/span&gt;&lt;/i&gt;&lt;span&gt; have a model that learns continually from a user or firm, picking up all the tacit knowledge today's LLMs lack?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Yes, but it's worth pointing out a few practical challenges with the premise. Frontier LLMs have parameters in the trillions, and moving them about in datacenters takes time and power. The latest Kimi K3 flagship release has &lt;/span&gt;&lt;a href="https://huggingface.co/moonshotai/Kimi-K3"&gt;&lt;span&gt;2.8 trillion of them&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Freezing them after training means one copy can serve everyone. Your Claude prompt gets grouped together with others into a batch and the GPU re-uses the same frozen parameters when generating outputs for all of them. One startup is even etching the parameters &lt;/span&gt;&lt;a href="https://taalas.com/"&gt;&lt;span&gt;directly into silicon&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Ignoring all of this and assuming we can figure out an efficient way to serve personalized parameters to every user, we could continue to train this idealized model on new observations and solve continual learning, just like in humans. So how do we solve catastrophic interference, and how do we make model training sample-efficient?&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Learning to Walk Before You Run&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;How did humans solve continual learning? Does that tell us anything about how to solve it for LLMs? We've seen that humans owe their sample efficiency to inductive priors. But unlike AlphaFold whose specialized and static priors give it efficiency in a narrow domain, humans are generally sample-efficient. For example, a surgeon learns the tacit knowledge of their field from their first-hand experience in the role.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;How would inductive priors for surgery even work? We can be sure there aren't any encoded in the human genome. One clue is in the difference between how LLMs and humans need their training data ordered. LLMs train on randomly ordered data to prevent catastrophic interference. Humans in contrast need strict ordering to learn the prerequisites first. There's no way to learn surgery without first learning anatomy. If you try, the anatomical parts of it will be incomprehensible. If we view anatomy as a learned inductive prior for surgery, we could imagine how humans keep their sample efficiency at the expense of needing concepts to be learned in their compositional order, from simple to complex.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;There's evidence of compositional learning of priors in animals, albeit for simpler tasks than surgery. Rats (again) that had already learned the "schemas" for flavor-place association tasks could learn new pairs in a single trial, a process that would otherwise take weeks.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn12" data-footnote-index="12" role="doc-noteref" id="fnreffn12"&gt;&lt;sup&gt;&lt;a href="#fnfn12"&gt;[12]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;"systems consolidation can occur extremely quickly if an associative 'schema' into which new information is incorporated has previously been created… New traces, trained for only one trial, then became assimilated and rapidly hippocampal-independent."&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;So why don't we do this with LLMs? Why not learn concepts in order, and have the LLM bootstrap more complex concepts by using their prerequisites as inductive priors? Because catastrophic interference wipes out earlier concepts when training the more complex ones.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;If we solved catastrophic interference, would existing transformer-based LLM architectures automatically use prerequisites as priors to efficiently learn complex concepts? The answer is maybe. We at least know that training LLMs with a curated curriculum of topics ordered compositionally does not work as well as training them with data in random order.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fn7" data-footnote-index="7" role="doc-noteref" id="fnreffn7"&gt;&lt;sup&gt;&lt;a href="#fnfn7"&gt;[7]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; The deficiency could be simply a matter of solving catastrophic interference, but it's unclear whether further problems await beyond that. I could not find an experiment that disentangles the two and uncovers whether LLMs use past knowledge as inductive priors for future training. My guess is that the two problems have different shapes and require different solutions, but I hope I'm wrong.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Beyond Centralized Training&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;Xerox's attempt to build an AI to help their technicians diagnose machine faults failed in part because it didn't learn alongside them. What the technicians needed was help with new problems, not AI trained on the spec and documentation they already had. What worked with 90s-era technology was not an AI at all, but a system for sharing tips to improve the technicians' own continual learning. Xerox's problem persists today: the tacit knowledge necessary to contribute to firms is unique, generally not written down, and must be learned from a few samples. Only humans can do this right now.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We live in the centralized AI training era. LLMs are sample-inefficient and difficult to train, so training is done once, carefully, and with massive curated datasets. But the economy is vast and to contribute to its many firms you need tacit, firm-specific knowledge that's not written down, and needs to be learned from just a few examples. For AI's impact on science, it needs to learn from new experiments to go beyond existing science, just like humans would. It can't do this right now and the problems barring it are research-shaped, but humans and their efficient continual learning give us some hints about what the solutions could look like.&lt;/span&gt;&lt;/p&gt;&lt;ol class="footnote-section footnotes" data-footnote-section="" role="doc-endnotes"&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn1" data-footnote-index="1" role="doc-endnote" id="fnfn1"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Brynjolfsson &amp;amp; Hitzig, &lt;/span&gt;&lt;i&gt;&lt;span&gt;AI's Use of Knowledge in Society&lt;/span&gt;&lt;/i&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn1"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn1"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn2" data-footnote-index="2" role="doc-endnote" id="fnfn2"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Boris Groysberg, Linda-Eling Lee &amp;amp; Ashish Nanda, &lt;/span&gt;&lt;i&gt;&lt;span&gt;Can They Take It With Them? The Portability of Star Knowledge Workers' Performance&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Management Science 54(7), 2008, 1213–1230. Extended in &lt;/span&gt;&lt;i&gt;&lt;span&gt;Chasing Stars&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (Princeton University Press, 2010).&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn2"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn2"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn3" data-footnote-index="3" role="doc-endnote" id="fnfn3"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Matthew Bidwell, &lt;/span&gt;&lt;i&gt;&lt;span&gt;Paying More to Get Less: The Effects of External Hiring versus Internal Mobility&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Administrative Science Quarterly 56(3), 2011, 369–407.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn3"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn3"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn4" data-footnote-index="4" role="doc-endnote" id="fnfn4"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Daniel G. Bobrow &amp;amp; Jack Whalen, &lt;/span&gt;&lt;i&gt;&lt;span&gt;Community Knowledge Sharing in Practice: The Eureka Story&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Reflections (SoL Journal) 4(2), 2002. &lt;/span&gt;&lt;a href="https://www.academia.edu/16789250/Community_Knowledge_Sharing_in_Practice_The_Eureka_Story"&gt;&lt;span&gt;academia.edu&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn4"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn4"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn5" data-footnote-index="5" role="doc-endnote" id="fnfn5"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;John Garcia &amp;amp; Robert A. Koelling, &lt;/span&gt;&lt;i&gt;&lt;span&gt;Relation of Cue to Consequence in Avoidance Learning&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Psychonomic Science 4, 1966, 123–124. &lt;/span&gt;&lt;a href="https://doi.org/10.3758/BF03342209"&gt;&lt;span&gt;DOI:10.3758/BF03342209&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn5"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn5"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn6" data-footnote-index="6" role="doc-endnote" id="fnfn6"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Michael C. Frank, &lt;/span&gt;&lt;i&gt;&lt;span&gt;Bridging the Data Gap Between Children and Large Language Models&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Trends in Cognitive Sciences 27(11), 2023, 990–992. &lt;/span&gt;&lt;a href="https://doi.org/10.1016/j.tics.2023.08.007"&gt;&lt;span&gt;DOI:10.1016/j.tics.2023.08.007&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn6"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn6"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn7" data-footnote-index="7" role="doc-endnote" id="fnfn7"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Alex Warstadt et al., &lt;/span&gt;&lt;i&gt;&lt;span&gt;Findings of the BabyLM Challenge: Sample-Efficient Pretraining on Developmentally Plausible Corpora&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, CoNLL 2023, 1–34. &lt;/span&gt;&lt;a href="https://babylm.github.io"&gt;&lt;span&gt;babylm.github.io&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn7"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn7"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn8" data-footnote-index="8" role="doc-endnote" id="fnfn8"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;David H. Wolpert, &lt;/span&gt;&lt;i&gt;&lt;span&gt;The Lack of A Priori Distinctions Between Learning Algorithms&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Neural Computation 8(7), 1996, 1341–1390. &lt;/span&gt;&lt;a href="https://doi.org/10.1162/neco.1996.8.7.1341"&gt;&lt;span&gt;DOI:10.1162/neco.1996.8.7.1341&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn8"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn8"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn9" data-footnote-index="9" role="doc-endnote" id="fnfn9"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Elizabeth S. Spelke &amp;amp; Katherine D. Kinzler, &lt;/span&gt;&lt;i&gt;&lt;span&gt;Core Knowledge&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Developmental Science 10(1), 2007, 89–96. &lt;/span&gt;&lt;a href="https://doi.org/10.1111/j.1467-7687.2007.00569.x"&gt;&lt;span&gt;DOI:10.1111/j.1467-7687.2007.00569.x&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn9"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn9"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn10" data-footnote-index="10" role="doc-endnote" id="fnfn10"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Baekrok Shin, Junsoo Oh, Hanseul Cho &amp;amp; Chulhee Yun, &lt;/span&gt;&lt;i&gt;&lt;span&gt;DASH: Warm-Starting Neural Network Training in Stationary Settings without Loss of Plasticity&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, NeurIPS 2024. &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2410.23495"&gt;&lt;span&gt;arXiv:2410.23495&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn10"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn10"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn11" data-footnote-index="11" role="doc-endnote" id="fnfn11"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Timothée Lesort, &lt;/span&gt;&lt;i&gt;&lt;span&gt;Continual Learning: Tackling Catastrophic Forgetting in Deep Neural Networks with Replay Processes&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, PhD thesis, 2020. &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2007.00487"&gt;&lt;span&gt;arXiv:2007.00487&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn11"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn11"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fn12" data-footnote-index="12" role="doc-endnote" id="fnfn12"&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Dorothy Tse et al., &lt;/span&gt;&lt;i&gt;&lt;span&gt;Schemas and Memory Consolidation&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, Science 316(5821), 2007, 76–82. &lt;/span&gt;&lt;a href="https://doi.org/10.1126/science.1135935"&gt;&lt;span&gt;DOI:10.1126/science.1135935&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fn12"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffn12"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/div&gt;&lt;/li&gt;&lt;/ol&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/Ht9kHqJZFatQPrkNb/unblocking-ai-s-continual-learning-hints-from-how-humans#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">Ht9kHqJZFatQPrkNb</guid>
-      <pubDate>Wed, 12 Aug 2026 18:28:13 +0000</pubDate>
     </item>
   </channel>
 </rss>
