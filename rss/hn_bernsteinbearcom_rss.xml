@@ -5,7 +5,197 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Thu, 13 Aug 2026 18:03:50 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 13 Aug 2026 19:58:25 +0000</lastBuildDate>
+    <item>
+      <title>Another partial SSI trick with canonicalize</title>
+      <link>https://bernsteinbear.com/blog/more-partial-ssi/?utm_source=rss</link>
+      <description>&lt;p&gt;After reading &lt;a href="https://cfallin.org/blog/2026/04/09/aegraph/"&gt;Chris Fallin’s aegraph
+post&lt;/a&gt;, new ZJIT contributor dak2
+landed a block-local version of the &lt;code class="language-plaintext highlighter-rouge"&gt;canonicalize&lt;/code&gt; function in
+&lt;a href="https://github.com/ruby/ruby/pull/16828"&gt;#16828&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;The pseudocode of the block-local canonicalize function looks like this:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;function&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;reverse_post_order&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="n"&gt;rewrite_map&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;insns&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;operands&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;map_in_place&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;lambda&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;rewrite_map&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;opcode&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"GuardType"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;rewrite_map&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;val&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;As a refresher, this turns IR like this:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;v0:Object = ...
+v1:Int = GuardType v0, Int
+... do something with v1
+
+v2:Int = GuardType v0, Int
+... do something with v2
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;into this:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;v0:Object = ...
+v1:Int = GuardType v0, Int
+... do something with v1
+
+v2:Int = GuardType v1, Int
+... do something with v2
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Note that the second use of &lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; has been turned into &lt;code class="language-plaintext highlighter-rouge"&gt;v1&lt;/code&gt;. This is important
+because a later constant-folding pass can observe that the input &lt;code class="language-plaintext highlighter-rouge"&gt;v1&lt;/code&gt; of &lt;code class="language-plaintext highlighter-rouge"&gt;GuardType
+v1, Int&lt;/code&gt; is &lt;em&gt;already an Int&lt;/em&gt; and can therefore replace all uses of &lt;code class="language-plaintext highlighter-rouge"&gt;v2&lt;/code&gt; with
+&lt;code class="language-plaintext highlighter-rouge"&gt;v1&lt;/code&gt; and delete the guard.&lt;/p&gt;
+
+&lt;p&gt;Because in this local version we make a new &lt;code class="language-plaintext highlighter-rouge"&gt;rewrite_map&lt;/code&gt; for each block, we
+don’t carry any rewrites across blocks (but ZJIT still gained a lot because
+until recently its IR was in maximal SSA form, so a block-local pass had more
+global effects).&lt;/p&gt;
+
+&lt;p&gt;About five days later, dak2 came back with a global version in
+&lt;a href="https://github.com/ruby/ruby/pull/17013"&gt;#17013&lt;/a&gt;! This PR came with a bunch of
+changes in the name of performance—which I appreciate—but I like doing the
+silly slow thing first, especially because the PR is so much smaller. We can
+always refactor it later to be faster and, in the meantime, use the slow but
+maybe-easier-to-verify thing as a correctness oracle. So I did&lt;sup id="fnref:much-later" role="doc-noteref"&gt;&lt;a href="#fn:much-later" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt; the
+silly slow thing in &lt;a href="https://github.com/ruby/ruby/pull/17766"&gt;#17766&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;This copy-happy version of canonicalize looks like:&lt;/p&gt;
+
+&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;rewrite_maps&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;blocks&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="n"&gt;dominators&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;compute_dominators&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;function&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;reverse_post_order&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="n"&gt;rewrite_map&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;rewrite_maps&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;dominators&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;idom&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;)].&lt;/span&gt;&lt;span class="n"&gt;clone&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;insns&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;operands&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;map_in_place&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;lambda&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;rewrite_map&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;o&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;opcode&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"GuardType"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;rewrite_map&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;insn&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;val&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;insn&lt;/span&gt;
+    &lt;span class="n"&gt;rewrite_maps&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;block&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;rewrite_map&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;(Which you may or may not notice looks a lot like &lt;a href="https://github.com/beehive-lab/Maxine-VM/blob/e213a842f78983e2ba112ae46de8c64317bc206e/com.sun.c1x/src/com/sun/c1x/opt/GlobalValueNumberer.java"&gt;Maxine’s GVN
+implementation&lt;/a&gt;.
+This is not a coincidence.)&lt;/p&gt;
+
+&lt;p&gt;The core stays the same as the block-local version but now we can cascade
+rewrites along the dominator tree. I say that but we’re not actually computing
+a (top-down walkable) dominator tree—we’re only building a (bottom-up) map of
+&lt;code class="language-plaintext highlighter-rouge"&gt;idom&lt;/code&gt; using &lt;a href="/assets/img/dominators-engineered.pdf"&gt;the engineered algorithm&lt;/a&gt;
+(PDF). The rewrites still cascade down the dominator tree because this
+RPO-walk+idom-clone approach ends up being equivalent to actually walking a
+dominator tree.&lt;/p&gt;
+
+&lt;p&gt;The block iteration order is different (RPO vs domtree pre-order) but the only
+property we care about maintaining is that we visit dominators before blocks
+that get dominated, and that is true in both.&lt;/p&gt;
+
+&lt;p&gt;But where was I going with all this?&lt;/p&gt;
+
+&lt;p&gt;…&lt;/p&gt;
+
+&lt;p&gt;Oh, right. More &lt;a href="/blog/partial-ssi/"&gt;partial SSI&lt;/a&gt;. In the last post, we
+inserted &lt;code class="language-plaintext highlighter-rouge"&gt;RefineType&lt;/code&gt; in SSA construction so that we can infer things about the
+Ruby type of the conditional. For example:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;bb0:
+  v0: Object = ...
+  v1: CBool = Test v0
+  v2: Truthy = RefineType v0, Truthy
+  v3: Falsy = RefineType v0, Falsy
+  CondBranch v1, bb1(v2), bb2(v3)
+
+bb1(v4:Truthy):
+  ...
+
+bb2(v5:Falsy):
+  ...
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This is neat when the branch comes from Ruby code but sometimes we synthesize
+branches so we can’t do this in SSA construction. The general case looks like
+this:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;bb0:
+  v0: CBool = ...
+  CondBranch v0, bb1, bb2
+
+bb1:
+  ...
+
+bb2:
+  ...
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;In this more general case, we stil want &lt;code class="language-plaintext highlighter-rouge"&gt;bb1&lt;/code&gt; to know that &lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; is
+&lt;code class="language-plaintext highlighter-rouge"&gt;CBool[true]&lt;/code&gt; in that branch and &lt;code class="language-plaintext highlighter-rouge"&gt;bb2&lt;/code&gt; to know that &lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; is &lt;code class="language-plaintext highlighter-rouge"&gt;CBool[false]&lt;/code&gt; in
+its branch (and in blocks dominated by &lt;code class="language-plaintext highlighter-rouge"&gt;bb1&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;bb2&lt;/code&gt;).&lt;/p&gt;
+
+&lt;p&gt;Well, this is another thing we can do in &lt;code class="language-plaintext highlighter-rouge"&gt;canonicalize&lt;/code&gt;!&lt;/p&gt;
+
+&lt;p&gt;All we need to do is at the beginning of each block B:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Check if B has one incoming control edge E&lt;sup id="fnref:block-vs-edge" role="doc-noteref"&gt;&lt;a href="#fn:block-vs-edge" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt;&lt;/li&gt;
+  &lt;li&gt;Check if the terminator T for E.block is a conditional branch&lt;/li&gt;
+  &lt;li&gt;If T.iftrue == B, seed the &lt;code class="language-plaintext highlighter-rouge"&gt;rewrite_map&lt;/code&gt; with &lt;code class="language-plaintext highlighter-rouge"&gt;T.cond =&amp;gt; Const(CBool[true])&lt;/code&gt;&lt;/li&gt;
+  &lt;li&gt;If T.iffalse == B, seed the &lt;code class="language-plaintext highlighter-rouge"&gt;rewrite_map&lt;/code&gt; with &lt;code class="language-plaintext highlighter-rouge"&gt;T.cond =&amp;gt; Const(CBool[false])&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;If you plan on running &lt;code class="language-plaintext highlighter-rouge"&gt;canonicalize&lt;/code&gt; multiple times, you may end up generating
+many constant instructions in your IR. To avoid this, you can intern them and,
+for example, place them in the entry block. This helps make the pass idempotent
+instead of always allocating new instructions.&lt;/p&gt;
+
+&lt;p&gt;So what does this buy us?&lt;/p&gt;
+
+&lt;p&gt;Well, I admit I was looking at the &lt;code class="language-plaintext highlighter-rouge"&gt;30k_ifelse&lt;/code&gt; benchmark on ruby-bench and
+wondering how to further collapse a bunch of IR that came out of my prototype
+value numbering implementation. The IR after value numbering looked like:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;bb0:
+  v0: CBool = ...
+  CondBranch v0, bb1, bb2
+
+bb1:
+  ...
+  CondBranch v0, ...
+
+bb2:
+  ...
+  CondBranch v0, ...
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;and it felt a little silly that &lt;code class="language-plaintext highlighter-rouge"&gt;bb1&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;bb2&lt;/code&gt; didn’t get more information
+about &lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; by being branch targets. This couple-line change managed to collapse
+a bunch of those branches.&lt;/p&gt;
+
+&lt;p&gt;So, perhaps a bit contrived, but it feels like a useful tool to have.&lt;/p&gt;
+
+&lt;p&gt;See you all next time!&lt;/p&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:much-later" role="doc-endnote"&gt;
+      &lt;p&gt;This PR landed much later than dak2’s because I wanted to wait
+for the &lt;a href="https://github.com/ruby/ruby/pull/17311"&gt;SSA minimization pass&lt;/a&gt; to
+land—more on that another time—so that global canonicalization could do
+more. Otherwise, because we had maximal SSA, we didn’t really re-use SSA
+values across blocks. &lt;a href="#fnref:much-later" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+    &lt;li id="fn:block-vs-edge" role="doc-endnote"&gt;
+      &lt;p&gt;It’s possible to have one block A do a conditional branch to
+another block B for both the iftrue case and the iffalse case. This is
+useful if, for example, it is passing different data along the block
+arguments of each edge. For this reason, we check the number of incoming
+edges, not the number of predecessor blocks. &lt;a href="#fnref:block-vs-edge" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/more-partial-ssi/</guid>
+      <pubDate>Thu, 13 Aug 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>A quick look at zero-knowledge proofs</title>
       <link>https://bernsteinbear.com/blog/zkp/?utm_source=rss</link>
@@ -4177,256 +4367,6 @@ is just 1/K of them for some K that I don’t remember. &lt;a href="#fnref:samp
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/zjit-perfetto/</guid>
       <pubDate>Fri, 27 Mar 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>A fuzzer for the Toy Optimizer</title>
-      <link>https://bernsteinbear.com/blog/toy-fuzzer/?utm_source=rss</link>
-      <description>&lt;p&gt;&lt;em&gt;Another entry in the &lt;a href="https://pypy.org/categories/toy-optimizer.html"&gt;Toy Optimizer series&lt;/a&gt;&lt;/em&gt;.&lt;/p&gt;
-
-&lt;p&gt;It’s hard to get compiler optimizers right. Even if you build up a painstaking test
-suite by hand, you will likely miss corner cases, especially corner cases at
-the interactions of multiple components or multiple optimization passes.&lt;/p&gt;
-
-&lt;p&gt;I wanted to see if I could write a fuzzer to catch some of these bugs
-automatically. But a fuzzer alone isn’t much use without some correctness
-oracle—in this case, we want a more interesting bug than accidentally
-crashing the optimizer. We want to see if the optimizer introduces a
-correctness bug in the program.&lt;/p&gt;
-
-&lt;p&gt;So I set off in the most straightforward way possible, inspired by my
-hazy memories of a former &lt;a href="https://pypy.org/posts/2024/03/fixing-bug-incremental-gc.html"&gt;CF blog post&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h2 id="generating-programs"&gt;Generating programs&lt;/h2&gt;
-
-&lt;p&gt;Generating random programs isn’t so bad. We have program generation APIs and we
-can dynamically pick which ones we want to call. I wrote a small loop that
-generates &lt;code class="language-plaintext highlighter-rouge"&gt;load&lt;/code&gt;s from and &lt;code class="language-plaintext highlighter-rouge"&gt;store&lt;/code&gt;s to the arguments at random offsets and with
-random values, and &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt;s to random instructions with outputs. The idea
-with the &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt; is to keep track of the values as if there was some other
-function relying on them.&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;generate_program&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
-    &lt;span class="n"&gt;bb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Block&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-    &lt;span class="n"&gt;args&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getarg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
-    &lt;span class="n"&gt;num_ops&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;30&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;ops_with_values&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;[:]&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;_&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;num_ops&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-        &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;choice&lt;/span&gt;&lt;span class="p"&gt;([&lt;/span&gt;&lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"escape"&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-        &lt;span class="n"&gt;arg&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;choice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;a_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;choice&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ops_with_values&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;v&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;ops_with_values&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;v&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;randint&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"escape"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;escape&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a_value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="nb"&gt;NotImplementedError&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s"&gt;"Unknown operation &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This generates random programs. Here is an example stringified random program:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;var0 = getarg(0)
-var1 = getarg(1)
-var2 = getarg(2)
-var3 = load(var2, 0)
-var4 = load(var0, 1)
-var5 = load(var1, 1)
-var6 = escape(var0)
-var7 = store(var0, 2, 3)
-var8 = store(var2, 0, 7)
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;No idea what would generate something like this, but oh well.&lt;/p&gt;
-
-&lt;h2 id="verifying-programs"&gt;Verifying programs&lt;/h2&gt;
-
-&lt;p&gt;Then we want to come up with our invariants. I picked the invariant that, under
-the same preconditions, the heap will look the same after running an optimized
-program as it would under an un-optimized program&lt;sup id="fnref:equivalence" role="doc-noteref"&gt;&lt;a href="#fn:equivalence" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;. So we can delete
-instructions, but if we don’t have a load-bearing store, store the wrong
-information, or cache stale loads, we will probably catch that.&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;verify_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="n"&gt;before_no_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s"&gt;"a"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"b"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"c"&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-    &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s"&gt;"a"&lt;/span&gt;
-    &lt;span class="n"&gt;before_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-    &lt;span class="n"&gt;optimized&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;optimize_load_store&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;after_no_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimized&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s"&gt;"a"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"b"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s"&gt;"c"&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-    &lt;span class="n"&gt;after_alias&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;optimized&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="n"&gt;before_no_alias&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;after_no_alias&lt;/span&gt;
-    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="n"&gt;before_alias&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;after_alias&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;I have a very silly verifier that tests two cases: one where the arguments do
-not alias and one where they are all the same object. Generating partial
-aliases would be a good extension here.&lt;/p&gt;
-
-&lt;p&gt;Last, we have the interpreter.&lt;/p&gt;
-
-&lt;h2 id="running-programs"&gt;Running programs&lt;/h2&gt;
-
-&lt;p&gt;The interpreter is responsible for keeping track of the heap (as indexed by
-&lt;code class="language-plaintext highlighter-rouge"&gt;(object, offset)&lt;/code&gt; pairs) as well as the results of the various instructions.&lt;/p&gt;
-
-&lt;p&gt;We keep track of the &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt;d values so we can see results of some
-instructions even if they do not get written back to the heap. Maybe we should
-be &lt;code class="language-plaintext highlighter-rouge"&gt;escape&lt;/code&gt;ing all instructions with output instead of only random ones. Who
-knows.&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;interpret_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="n"&gt;heap&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
-    &lt;span class="n"&gt;ssa&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt;
-    &lt;span class="n"&gt;escaped&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;bb&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"getarg"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
-        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"store"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;obj&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
-            &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;heap&lt;/span&gt;&lt;span class="p"&gt;[(&lt;/span&gt;&lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;
-        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"load"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;obj&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)]&lt;/span&gt;
-            &lt;span class="n"&gt;offset&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;get_num&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;heap&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;obj&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;offset&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="s"&gt;"unknown"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;value&lt;/span&gt;
-        &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s"&gt;"escape"&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="nb"&gt;isinstance&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;Constant&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-                &lt;span class="n"&gt;escaped&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-                &lt;span class="n"&gt;escaped&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;ssa&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="nb"&gt;NotImplementedError&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s"&gt;"Unknown operation &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s"&gt;"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;heap&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s"&gt;"escaped"&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;escaped&lt;/span&gt;
-    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;heap&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Then we return the heap so that the verifier can check.&lt;/p&gt;
-
-&lt;h2 id="the-harness"&gt;The harness&lt;/h2&gt;
-
-&lt;p&gt;Then we run a bunch of random tests through the verifier!&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;test_random_programs&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
-    &lt;span class="c1"&gt;# Remove random.seed if using in CI... instead print the seed out so you
-&lt;/span&gt;    &lt;span class="c1"&gt;# can reproduce crashes if you find them
-&lt;/span&gt;    &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;seed&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-    &lt;span class="n"&gt;num_programs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;100000&lt;/span&gt;
-    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;i&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;num_programs&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-        &lt;span class="n"&gt;program&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;generate_program&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="n"&gt;verify_program&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;program&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;The number of programs is configurable. Or you could make this &lt;code class="language-plaintext highlighter-rouge"&gt;while True&lt;/code&gt;.
-But due to how simple the optimizer is, we will find all the possible bugs
-pretty quickly.&lt;/p&gt;
-
-&lt;p&gt;I initially started writing this post because I thought I had found a bug, but
-it turns out that I had, with CF’s help, in 2022, walked through every possible
-case in the “buggy” situation, and the optimizer handles those cases correctly.
-That explains why the verifier didn’t find that bug!&lt;/p&gt;
-
-&lt;h2 id="testing-the-verifier"&gt;Testing the verifier&lt;/h2&gt;
-
-&lt;p&gt;So does it work? If you run it, it’ll hang for a bit and then report no issues.
-That’s helpful, in a sense… it’s revealing that it is unable to find a
-certain class of bug in the optimizer.&lt;/p&gt;
-
-&lt;p&gt;Let’s comment out the main load-bearing pillar of correctness in the
-optimizer—removing aliasing writes—and see what happens.&lt;/p&gt;
-
-&lt;p&gt;We get a crash nearly instantly:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ uv run --with pytest pytest loadstore.py -k random
-...
-=========================================== FAILURES ============================================
-_____________________________________ test_random_programs ______________________________________
-
-    def test_random_programs():
-        random.seed(0)
-        num_programs = 100000
-        for i in range(num_programs):
-            program = generate_program()
-&amp;gt;           verify_program(program)
-
-loadstore.py:617:
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
-
-bb = [Operation(getarg, [Constant(0)], None, None), Operation(getarg, [Constant(1)], None, None), Operation(getarg, [Consta...], None, None)], None, None), Operation(load, [Operation(getarg, [Constant(0)], None, None), Constant(0)], None, None)]
-
-    def verify_program(bb):
-        before_no_alias = interpret_program(bb, ["a", "b", "c"])
-        a = "a"
-        before_alias = interpret_program(bb, [a, a, a])
-        optimized = optimize_load_store(bb)
-        after_no_alias = interpret_program(optimized, ["a", "b", "c"])
-        after_alias = interpret_program(optimized, [a, a, a])
-        assert before_no_alias == after_no_alias
-&amp;gt;       assert before_alias == after_alias
-E       AssertionError: assert {('a', 0): 4,...', 3): 1, ...} == {('a', 0): 9,...', 3): 1, ...}
-E
-E         Omitting 4 identical items, use -vv to show
-E         Differing items:
-E         {('a', 0): 4} != {('a', 0): 9}
-E         Use -v to get more diff
-
-loadstore.py:610: AssertionError
-==================================== short test summary info ====================================
-FAILED loadstore.py::test_random_programs - AssertionError: assert {('a', 0): 4,...', 3): 1, ...} == {('a', 0): 9,...', 3): 1, ...}
-=============================== 1 failed, 15 deselected in 0.04s ================================
-$
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;We should probably use &lt;code class="language-plaintext highlighter-rouge"&gt;bb_to_str(bb)&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;bb_to_str(optimized)&lt;/code&gt; to print out
-the un-optimized and optimized traces in the &lt;code class="language-plaintext highlighter-rouge"&gt;assert&lt;/code&gt; failure messages. But we
-get a nice diff of the heap automatically, which is neat. And it points to an
-aliasing problem!&lt;/p&gt;
-
-&lt;h2 id="full-code"&gt;Full code&lt;/h2&gt;
-
-&lt;p&gt;See the &lt;a href="https://github.com/tekknolagi/tekknolagi.github.com/blob/fbccf9696e98721ca77c8d5ec5f828a11492b04c/loadstore.py"&gt;full code&lt;/a&gt;.&lt;/p&gt;
-
-&lt;h2 id="extensions"&gt;Extensions&lt;/h2&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;Synthesize (different) types for non-aliasing objects and add them in &lt;code class="language-plaintext highlighter-rouge"&gt;info&lt;/code&gt;
-  &lt;!--
-    * CF notes that we could maybe do this by, instead of adding `.info`, have a
-      `checktype` guard instruction that the optimizer can use to learn types and
-      change aliasing from inside the trace
-  --&gt;&lt;/li&gt;
-  &lt;li&gt;Shrink/reduce failing examples down for easier debugging&lt;/li&gt;
-  &lt;li&gt;Use Hypothesis for property-based testing, which CF notes also gives you
-shrinking&lt;/li&gt;
-  &lt;li&gt;&lt;a href="https://pypy.org/posts/2022/12/jit-bug-finding-smt-fuzzing.html"&gt;Use Z3 to encode&lt;/a&gt; the generated programs instead of randomly interpreting them&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;h2 id="thanks"&gt;Thanks&lt;/h2&gt;
-
-&lt;p&gt;Thank you to &lt;a href="https://cfbolz.de/"&gt;CF Bolz-Tereick&lt;/a&gt; for feedback on this post!&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:equivalence" role="doc-endnote"&gt;
-      &lt;p&gt;CF notes that this notion of equivalence works for this
-optimizer but not for one that does allocation removal (escape analysis).
-If we removed allocations and writes to them, we would be changing the heap
-results and our verifier would appear to fail. This means we have to, if we
-are to delete allocations, pick a more subtle definition of equivalence.&lt;/p&gt;
-
-      &lt;p&gt;Perhaps something that looks like escape analysis in the verifier’s
-interpreter? &lt;a href="#fnref:equivalence" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/toy-fuzzer/</guid>
-      <pubDate>Wed, 25 Feb 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
