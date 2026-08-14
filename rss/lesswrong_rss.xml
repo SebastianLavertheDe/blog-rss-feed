@@ -5,7 +5,795 @@
     <link>https://www.lesswrong.com</link>
     <description>A community blog devoted to refining the art of rationality</description>
     <language>en</language>
-    <lastBuildDate>Fri, 14 Aug 2026 20:35:49 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 14 Aug 2026 21:29:33 +0000</lastBuildDate>
+    <item>
+      <title>Training a Conceptual Reasoning Judge</title>
+      <link>https://www.lesswrong.com/posts/iHYZF2jweXb2E7X3Y/training-a-conceptual-reasoning-judge</link>
+      <description>&lt;p&gt;&lt;b&gt;&lt;span&gt;TL;DR:&lt;/span&gt;&lt;/b&gt;&lt;span&gt;&amp;nbsp;We fine-tune a judge LLM on our &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/tQHeEzKqK3awL2RxR/introducing-the-conceptual-reasoning-index" rel="noreferrer"&gt;&lt;span&gt;conceptual reasoning dataset&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to output a critique rating in a single forward pass. This method provides significant uplift in performance on held-out critiques, measured by alignment with our human expert ratings. We find that improvement is mostly concentrated in discriminating low-quality, often model-written critiques. However, our trained model still retains its improvement over the base model on rewrites of our critiques, meaning that improvement cannot be explained solely as a a result of relying on spurious cues like style. Our work provides evidence that simple fine-tuning can elicit models' abilities to evaluate conceptual reasoning, and motivates future work in using this method to develop reward models.  &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Motivation. &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Conceptual reasoning refers to reasoning about domains such as philosophy, decision theory, or &lt;/span&gt;&lt;span&gt;AI safety strategy&lt;/span&gt;&lt;span&gt;. Improving conceptual reasoning capabilities could make AI systems more useful for alignment research, where many important questions require weighing complex arguments without verifiable ground truth. We will release a longer blog post explaining why this research is differentially beneficial for safety. In the meantime, see related discussion from &lt;/span&gt;&lt;a href="https://joecarlsmith.com/2025/04/30/can-we-safely-automate-alignment-research/#6-2-3-conceptual-research" rel="noreferrer"&gt;&lt;span&gt;Joe Carlsmith&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, &lt;/span&gt;&lt;a href="https://www.aisi.gov.uk/research/automated-alignment-is-harder-than-you-think" rel="noreferrer"&gt;&lt;span&gt;UK AISI&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and &lt;/span&gt;&lt;a href="https://newsletter.forethought.org/p/can-ai-do-philosophy" rel="noreferrer"&gt;&lt;span&gt;Forethought&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Our&lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/tQHeEzKqK3awL2RxR/introducing-the-conceptual-reasoning-index" rel="noreferrer"&gt;&lt;span&gt; LMCA dataset &lt;/span&gt;&lt;/a&gt;&lt;span&gt;benchmarks models' conceptual capabilities by prompting them to rate a critique of an argument, and measuring calibration to human expert ratings. A central question is whether these expert judgments can also be used to improve models' conceptual capabilities, just as preference data is used for alignment in RLHF. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;However, LMCA currently elicits critique ratings by sampling reasoning trajectories from models and averaging over multiple rollouts. While this works for evaluation, it has a couple of drawbacks. First, obtaining reliable ratings is expensive, requiring multiple rollouts per critique to get a stable estimate, and introduces substantial sampling variance. Second, it makes supervised fine-tuning challenging. Training directly on chain-of-thought outputs would require high-quality (gold) human reasoning traces for each critique, but LMCA primarily provides expert ratings with few accompanying comments. More fundamentally, producing gold reasoning traces is a lot more demanding for humans than simply evaluating whether a critique is good, which limits the scalability of this kind of data.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We therefore investigate whether conceptual judgments can instead be elicited deterministically in a single forward pass. We modify the prompt to ask for a single-digit rating (0-9) and compute the expectation of the next-token distribution (which we obtain by softmaxing over the logits for 0–9). This approach eliminates sampling variance while providing a natural target for supervised training, enabling us to fine-tune models directly on expert ratings without requiring gold reasoning traces.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Methods.&lt;/span&gt;&lt;/b&gt;&lt;b&gt;&lt;span&gt; &lt;/span&gt;&lt;/b&gt;&lt;span&gt;For our fine-tuning experiments, we use Qwen 3.6-27B. We use the prompt from Appendix G of the LMCA paper, modified to request a single-digit rating. Before training, we run a small evaluation to test whether forward-pass ratings perform comparably to chain-of-thought (CoT) ratings, for both the base Qwen model and Opus 4.8. For Qwen, we obtain forward-pass ratings directly from the model's output probabilities. Because Opus 4.8 doesn't give us log probs, we approximate its forward-pass rating by disabling extended thinking and prompting it to return a rating from 0–99, averaging over eight samples.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We fine-tune a rank-16 LoRA adapter with a Gaussian soft cross-entropy over the digit distribution. Rather than training on a single target rating, our loss function moves probability mass toward a Gaussian centered at the human expert rating. This avoids the degenerate solutions that arise when training only on the expected rating (e.g., the model placing equal mass on 0 and 1 to predict 0.5). Moreover, human expert ratings are themselves uncertain, so nearby ratings should incur a much smaller penalty than distant ones. More details of the loss are given in the appendix. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We train across five train-test splits for three epochs on each train set. Our main evaluation metric is weighted pairwise ranking error, detailed in the LMCA paper. We evaluate our trained model on the test set in comparison with Opus 4.8 (Claude Code CLI) and Sonnet 4.5 (Claude API), both of which we elicit by prompting three times with full chain of thought. We also evaluate our trained model on rewrites of LMCA critiques and Mandarin translations.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Table 1. Forward pass ratings perform similarly to COT for Qwen 3.6-27B&lt;/span&gt;&lt;/h3&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr style="height:50.1172px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Model&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Forward pass error&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Chain of thought error (N=3)&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50.0901px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Qwen 3.6-27B&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.1082&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0997&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50.1406px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Opus 4.8&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0651&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0501&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;span&gt;Our small eval showed that eliciting ratings through a forward pass does not appear to substantially sacrifice performance for Qwen 3.6-27B. The base model achieves similar ranking error whether it reasons with a full chain of thought or directly predicts a rating from its next-token distribution (0.0997 versus 0.1082). For Opus 4.8, the difference is somewhat larger, with chain of thought improving error from 0.0651 to 0.0501. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This is an important validation for the rest of our method. Since Qwen 3.6-27B is the model we fine-tune, the small difference between forward pass and chain-of-thought performance suggests that using forward pass ratings does not substantially weaken our starting model.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Figure 1. Fine tuning consistently improves conceptual judgment&lt;/span&gt;&lt;/h3&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786316811/lexical_client_uploads/ep7fxjht22hogpqlyhcc.png" alt="image.png"&gt;&lt;p&gt;&lt;span&gt;A&lt;/span&gt;&lt;span&gt;cross all five train-test splits, we see improvements of the trained model compared to the base model on the held-out set. We also prompt Opus and Sonnet (averaging over three rollouts to reduce variance) on the same held-out set. Opus remains a better judge, though we manage to close around 50% of the gap between the base model and Opus after training, and often match the performance of Sonnet. The fact that we see improvements across all five splits suggests that this result is not driven by a lucky partition of the data.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Table 2. The base model over-rates model-written junk critiques&lt;/span&gt;&lt;/h3&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr style="height:101.919px"&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;Test set junk critiques (Expert Rating ≤ 0.1)&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;n&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;Base model, mean score&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;Base model, % scored ≥ 0.9&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;Trained model, % scored ≥ 0.9&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Model-written&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;58&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.72&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;29%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:76.2158px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Human-written&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;42&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.62&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;10%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;span&gt;Our gains mostly concentrate within discrimination of low-quality critiques, which are predominantly model-written. Before training, the base model frequently assigns very high ratings to critiques that our human expert considers extremely weak, particularly when those critiques are model-written. On one held-out test split, nearly a third of model-written junk critiques receive scores &amp;gt;= 0.9 from the base model, while the trained model assigns none of them scores in this range. The base model is also substantially more likely to overrate junk model-written critiques than equally junk human-written ones (29% versus 10% scoring at or above 0.9). &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;One hypothesis is that the base model is picking up on surface features of model writing style, such as fluency or confidence, and using them as heuristics for critique quality. Fine-tuning could then improve performance just by teaching the model to use these cues less. Another possible explanation comes from how LMCA was constructed. Model-written critiques were filtered using judge models before entering the dataset; this means that our model-written junk critiques are somewhat selected to be critiques that judge models are likely to overrate, though this selection pressure is fairly weak (they weren't optimized to fool Qwen 3.6-27B specifically). &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;So, while our model seems to be learning to reject weak model-written critiques through fine-tuning, this result alone doesn't tell us whether it is actually paying attention to the conceptual content of the critiques. We address this next.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Figure 2. Fine-tuning generalizes to rewrites&lt;/span&gt;&lt;/h3&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786339974/lexical_client_uploads/h0hvqaxp5wfrn3mvv8yv.png" alt="image.png"&gt;&lt;p&gt;&lt;span&gt;We also evaluate our trained model on rewritten critiques and Mandarin translations. If the improvement from fine-tuning were primarily due to memorizing stylistic features of the training data, we would expect performance to degrade when those features change. Instead, we see the trained model maintain its improvement on the base model across rewrites. This suggests that the learned improvements are not due to particular wording of the critiques, but instead transfer across substantial surface-level changes. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;As for Mandarin translations, the results are a bit murkier, as there are two splits where the trained model actually performs worse. Follow-up experiments suggest this may partly be an artifact of stopping training early: our three-epoch models have not yet converged, and longer training substantially improves both original performance and Mandarin translations (see appendix).&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;Figure 3. Critique ratings are mostly invariant to paraphrasing.&lt;/span&gt;&lt;/h3&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1785433840/lexical_client_uploads/b8k1igjpto5nm9hjghpr.png" alt="image.png"&gt;&lt;p&gt;&lt;span&gt;Ratings assigned to rewritten critiques remain extremely close to those assigned to the originals, both before and after fine-tuning. In fact, the deterministic forward-pass ratings are already almost invariant to paraphrasing before training, and fine-tuning preserves this robustness. As for Mandarin translations, while there is more noise, critiques generally receive a similar rating to their original English. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Of course, rewrite robustness alone does not prove that the model is reasoning over conceptual content. A model could also be relying on superficial cues that survive paraphrasing. Nevertheless, because gains persist across paraphrases, this rules out a broad class of explanations based purely on memorizing original wording in the train set. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Discussion&lt;/span&gt;&lt;/b&gt;&lt;b&gt;&lt;span&gt; &lt;/span&gt;&lt;/b&gt;&lt;span&gt;The biggest takeaway from this work is that models seem pretty under-elicited on conceptual reasoning. With a relatively small amount of expert-rated data, we are able to train substantially better judges, and our follow-up experiments suggest that there is even more room for improvement (see appendix). This is encouraging because producing small amounts of data is one of our main available interventions in domains where we don't have access to verifiable rewards.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We also think this work is a useful step towards developing reward models for conceptual reasoning. A natural next step is to optimize models against these judges and test whether this improves their ability to generate high-quality conceptual reasoning. We expect reward hacking to be a major challenge: there's probably a lot of ways to exploit weaknesses in the judge rather than produce genuinely better reasoning. Our hope is this work provides a useful foundation for studying these questions.&lt;/span&gt;&lt;/p&gt;&lt;details class="detailsBlock"&gt;&lt;summary class="detailsBlockTitle"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Appendix&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/summary&gt;&lt;div class="detailsBlockContent"&gt;&lt;h3&gt;&lt;span&gt;Loss function&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;For a critique with expert rating &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
+
+
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row &gt; * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h &gt; mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h &gt; mjx-beg &gt; mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h &gt; mjx-end &gt; mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v &gt; * {
+  display: block;
+}
+
+mjx-stretchy-v &gt; mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v &gt; mjx-end &gt; mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v &gt; * &gt; mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v &gt; mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-mrow {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mfrac {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-frac {
+  display: inline-block;
+  vertical-align: 0.17em;
+  padding: 0 .22em;
+}
+
+mjx-frac[type="d"] {
+  vertical-align: .04em;
+}
+
+mjx-frac[delims] {
+  padding: 0 .1em;
+}
+
+mjx-frac[atop] {
+  padding: 0 .12em;
+}
+
+mjx-frac[atop][delims] {
+  padding: 0;
+}
+
+mjx-dtable {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-dtable &gt; * {
+  font-size: 2000%;
+}
+
+mjx-dbox {
+  display: block;
+  font-size: 5%;
+}
+
+mjx-num {
+  display: block;
+  text-align: center;
+}
+
+mjx-den {
+  display: block;
+  text-align: center;
+}
+
+mjx-mfrac[bevelled] &gt; mjx-num {
+  display: inline-block;
+}
+
+mjx-mfrac[bevelled] &gt; mjx-den {
+  display: inline-block;
+}
+
+mjx-den[align="right"], mjx-num[align="right"] {
+  text-align: right;
+}
+
+mjx-den[align="left"], mjx-num[align="left"] {
+  text-align: left;
+}
+
+mjx-nstrut {
+  display: inline-block;
+  height: .054em;
+  width: 0;
+  vertical-align: -.054em;
+}
+
+mjx-nstrut[type="d"] {
+  height: .217em;
+  vertical-align: -.217em;
+}
+
+mjx-dstrut {
+  display: inline-block;
+  height: .505em;
+  width: 0;
+}
+
+mjx-dstrut[type="d"] {
+  height: .726em;
+}
+
+mjx-line {
+  display: block;
+  box-sizing: border-box;
+  min-height: 1px;
+  height: .06em;
+  border-top: .06em solid;
+  margin: .06em -.1em;
+  overflow: hidden;
+}
+
+mjx-line[type="d"] {
+  margin: .18em -.1em;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msup {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mspace {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-munder {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-over {
+  text-align: left;
+}
+
+mjx-munder:not([limits="false"]) {
+  display: inline-table;
+}
+
+mjx-munder &gt; mjx-row {
+  text-align: left;
+}
+
+mjx-under {
+  padding-bottom: .1em;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-c.mjx-c1D45F.TEX-I::before {
+  padding: 0.442em 0.451em 0.011em 0;
+  content: "r";
+}
+
+mjx-c.mjx-c1D45E.TEX-I::before {
+  padding: 0.442em 0.46em 0.194em 0;
+  content: "q";
+}
+
+mjx-c.mjx-c1D451.TEX-I::before {
+  padding: 0.694em 0.52em 0.01em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c221D::before {
+  padding: 0.442em 0.778em 0.011em 0;
+  content: "\221D";
+}
+
+mjx-c.mjx-c65::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "e";
+}
+
+mjx-c.mjx-c78::before {
+  padding: 0.431em 0.528em 0 0;
+  content: "x";
+}
+
+mjx-c.mjx-c70::before {
+  padding: 0.442em 0.556em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c2061::before {
+  padding: 0 0 0 0;
+  content: "";
+}
+
+mjx-c.mjx-c28.TEX-S2::before {
+  padding: 1.15em 0.597em 0.649em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c39::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "9";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c1D70E.TEX-I::before {
+  padding: 0.431em 0.571em 0.011em 0;
+  content: "\3C3";
+}
+
+mjx-c.mjx-c29.TEX-S2::before {
+  padding: 1.15em 0.597em 0.649em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c2C::before {
+  padding: 0.121em 0.278em 0.194em 0;
+  content: ",";
+}
+
+mjx-c.mjx-c2208::before {
+  padding: 0.54em 0.667em 0.04em 0;
+  content: "\2208";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c2026::before {
+  padding: 0.12em 1.172em 0 0;
+  content: "\2026";
+}
+
+mjx-c.mjx-c1D45D.TEX-I::before {
+  padding: 0.442em 0.503em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c1D43F.TEX-I::before {
+  padding: 0.683em 0.681em 0 0;
+  content: "L";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c2211.TEX-S1::before {
+  padding: 0.75em 1.056em 0.25em 0;
+  content: "\2211";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c6F::before {
+  padding: 0.448em 0.5em 0.01em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c67::before {
+  padding: 0.453em 0.5em 0.206em 0;
+  content: "g";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c1D445.TEX-I::before {
+  padding: 0.683em 0.759em 0.021em 0;
+  content: "R";
+}
+&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="r" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, we construct a discrete Gaussian target over the ten output digits:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="
+q_d \propto \exp\left(-\frac{(d-9r)^2}{2\sigma^2}\right), \qquad d \in {0,\ldots,9},
+" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.014em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c221D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c78"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mrow space="2"&gt;&lt;mjx-mo class="mjx-lop"&gt;&lt;mjx-c class="mjx-c28 TEX-S2"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c39"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-mrow&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-msup&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: 0.289em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-mrow&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-mo class="mjx-lop"&gt;&lt;mjx-c class="mjx-c29 TEX-S2"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-mrow&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 2em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2208"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-texatom space="4" texclass="ORD"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c2026"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c39"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;and minimize cross-entropy with the model's predicted digit distribution &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="p_d" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="
+L = -\sum_d q_d \log p_d.
+" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D43F TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-munder space="2" limits="false"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: -0.285em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-munder&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em; margin-left: -0.014em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mi class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="2"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span&gt;The model does not converge after three epochs&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span&gt;Our main experiments train for three epochs, but a follow-up experiment on split 4 suggests that the model has not converged by this point. At three epochs, train &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="R^2" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msup&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D445 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: 0.363em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; on the expected rating is only 0.20, compared with 0.98 after twelve epochs.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We therefore trained split 4 for twelve epochs, holding out 25% of the training positions as a validation set. Despite training on fewer critiques (262 rather than 343), the longer-trained model substantially improves held-out performance:&lt;/span&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;Split 4 test error&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;Base&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;3 epochs&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;span&gt;12 epochs&lt;/span&gt;&lt;/p&gt;&lt;/th&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;English&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.1106&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0758&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;0.0532&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:50px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Mandarin&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0980&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.0835&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;0.0547&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;span&gt;These results suggest that our main three-epoch experiments are substantially undertrained. They also provide evidence that the weaker Mandarin transfer in our main experiments may partly result from stopping training early, rather than from a fundamental failure to transfer across languages.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/iHYZF2jweXb2E7X3Y/training-a-conceptual-reasoning-judge#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">iHYZF2jweXb2E7X3Y</guid>
+      <pubDate>Fri, 14 Aug 2026 20:44:38 +0000</pubDate>
+    </item>
     <item>
       <title>Why I’m Skeptical of Longtermism</title>
       <link>https://www.lesswrong.com/posts/kKgnigiHbDLTa579E/why-i-m-skeptical-of-longtermism</link>
@@ -68,13 +856,6 @@
       <description>&lt;p&gt;&lt;span&gt;[Cross-posted from &lt;/span&gt;&lt;a href="https://blog.foretellix.com/" rel="noreferrer"&gt;&lt;span&gt;The Foretellix CTO Blog&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. These short takes try to put a verification-and-validation slant on AI-safety / alignment topics – they are not full treatments. I co-originated coverage-driven verification (CDV), and spent several decades doing verification of chips and AVs. See &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/h9j2g4xurviH6y9fA/when-is-misalignment-just-a-bug"&gt;&lt;span&gt;intro post&lt;/span&gt;&lt;/a&gt;&lt;span&gt; for background.]&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Summary:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The latest frontier model incidents resulted in the “Pacing the frontier” &lt;/span&gt;&lt;a href="https://www.pacingthefrontier.com/"&gt;&lt;span&gt;letter&lt;/span&gt;&lt;/a&gt;&lt;span&gt; and subsequent &lt;/span&gt;&lt;a href="https://blog.aifutures.org/p/how-to-pace-the-us-frontier"&gt;&lt;span&gt;proposal&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, which explores options for slowing down frontier model development, while making them safer. This post tries to use a verification and validation (V&amp;amp;V) perspective for accomplishing the “making them safer” part in a comprehensive and trackable manner.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For instance, regarding the latest OpenAI incidents, it suggests a “rewind-fix-check loop” involving the following steps: Rewind back to the point where we zigged when we should have zagged, try an improved solution, check how well it works under severe RL / eval pressure, repeat until we have a good enough solution, and finally proceed carefully while periodically checking our assumptions still hold.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Epistemic status:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; A methodology recommendation, reasoning by analogy from chip and AV verification. Sequel to my Coverage-Driven Alignment (CDA) &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/hsrjuzqokvAErvZ2q/coverage-driven-alignment-what-teaching-claude-why-can"&gt;&lt;span&gt;post&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, my misalignments-and-bugs &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/h9j2g4xurviH6y9fA/when-is-misalignment-just-a-bug"&gt;&lt;span&gt;post&lt;/span&gt;&lt;/a&gt;&lt;span&gt; and my July-incidents &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/xCp5GNHLe3Pq4RPBm/v-and-v-takes-on-openai-s-long-horizon-incidents"&gt;&lt;span&gt;post&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Informal and sometimes simplistic-on-purpose: The procedure is the point.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;The rest of this post will discuss&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: &lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;The background (and what others have already suggested)&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;The rewind-fix-check loop&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;Some ideas for improving (and verifying) alignment&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h2&gt;&lt;span&gt;Some background (and initial reactions)&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;What we all found out:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; As we learn more about the latest OpenAI (and others) security incidents, they sound like a series of ever-more-worrying retroactive “Oops!”. The latest (as I write this – OpenAI’s post-mortem report should land soon) is the realization that OpenAI agents had been running a covert message board inside an internal package repository since early May, and after OpenAI wiped it in July (without knowing it existed), the agents rebuilt it &lt;/span&gt;&lt;i&gt;&lt;span&gt;within days&lt;/span&gt;&lt;/i&gt;&lt;span&gt; through a different mechanism.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;As a result, there are strong calls to slow down and look at how to avoid this in the future. The two main threads – simplifying somewhat – are &lt;/span&gt;&lt;i&gt;&lt;span&gt;better alignment&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (make alignment “teaching” clearer and more durable in the face of strong RL), and &lt;/span&gt;&lt;i&gt;&lt;span&gt;better control&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (have better mechanisms for detecting and mitigating “bad things”) – both extremely important.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This post will focus mainly on better alignment (with some implications for better control), while putting a V&amp;amp;V slant on both.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Some initial reactions: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Much of the following is from Zvi’s “The pacing of the frontier” &lt;/span&gt;&lt;a href="https://thezvi.substack.com/p/the-pacing-of-the-frontier"&gt;&lt;span&gt;post&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. As you’ll see, many of my suggestions can be viewed as “bringing V&amp;amp;V techniques to bear on what people are already requesting”.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;People are really worried about RSI (Recursive Self Improvement) causing exponential model capabilities growth. E.g. Samuel Hammond &lt;/span&gt;&lt;a href="https://x.com/hamandcheese/status/2083241471101247722"&gt;&lt;span&gt;talks&lt;/span&gt;&lt;/a&gt;&lt;span&gt; about “the equivalent of a GPT-5.2 -&amp;gt; 5.6 leap in capabilities at least every 24 hours (down from 3-6 months)”.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Yo Shavit (of the OpenAI Foundation) &lt;/span&gt;&lt;a href="https://x.com/yonashav/status/2084459886843216221"&gt;&lt;span&gt;talks&lt;/span&gt;&lt;/a&gt;&lt;span&gt; about the urgency of putting a lot more resources on “critical RSI alignment + control projects”. He suggests:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;“do historical analyses of RL envs from earlier generations, fix/prune every hack pattern in those envs so hacking is de facto impossible, and then train an RL model that doesn’t reward hack to see whether you can actually expunge reward-hacking with sufficient effort”&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;This is the rewind-fix-check loop described below (also discussed in the CDA &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/hsrjuzqokvAErvZ2q/coverage-driven-alignment-what-teaching-claude-why-can"&gt;&lt;span&gt;post&lt;/span&gt;&lt;/a&gt;&lt;span&gt;). He also suggests:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;“study scaling laws of grader compute vs. agent compute to identify equilibria that minimize reward hacking”&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;This is comparing the compute budget for the grader (and in fact the whole V&amp;amp;V infrastructure) to that for the agent – see more on that below (a taxonomy of reward hacking kinds appears in my misalignments-and-bugs post). He also says:&lt;/span&gt;&lt;/p&gt;&lt;blockquote&gt;&lt;p&gt;&lt;span&gt;“build better monitors and study the conditions under which you can elicit collusion”&lt;/span&gt;&lt;/p&gt;&lt;/blockquote&gt;&lt;p&gt;&lt;span&gt;This should include both offline V&amp;amp;V monitor and on-the-fly guard monitors – see discussions below (the need to add detailed monitoring /checking for various request / constitution combinations is also discussed in the July incidents post).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Not requested (but still needed):&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The last chapter details many other important requirements, which were not explicitly requested above, such as “look for missing checkers and situations” and “keep verification independence”.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;The rewind-fix-check loop&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;My running example:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The next chapter will suggest several possible approaches to “make the model safer”. For the purpose of the current chapter I’ll use just one of them – constitution-reinforcement – as my running example.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;That approach (discussed at length in the CDA post) is an extension of Anthropic’s “Teaching Claude Why” idea, which essentially suggests doing pre-training-style next-token learning of specially-constructed “alignment stories”. The CDA proposal extends this in a systematic way by using a coverage map consisting of “buckets” (combinations of values along the relevant “coverage dimensions”). For an AV, these coverage dimensions (also called “risk dimensions”) could be maneuver-kind, surrounding-traffic, weather and so on. For a model eval they could perhaps be requested-operation-kind, who-requested, expected-model-reaction and so on.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;The loop:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Assuming we use this approach alone (in reality we’ll probably use a combination of approaches), here is what the rewind-fix-check loop looks like (more details in the CDA post):&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Start from a known-good checkpoint: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;More on this below&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Do initial training:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Create a few training artifacts (e.g. alignment stories) for each bucket, and train on them&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Evaluate: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Measure alignment performance (including for edge cases etc.) and tag the result back to buckets&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;Fix if needed:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; For discovered problems, train more on their “general area” and re-evaluate&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;b&gt;&lt;span&gt;Do long-horizon RL, then re-evaluate:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Again for each bucket&lt;/span&gt;&lt;/li&gt;&lt;li value="6"&gt;&lt;b&gt;&lt;span&gt;Fix again if needed:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; If possible (this is an open question) fix the problematic buckets post-RL. Otherwise, go the expensive route: Fix them in the pre-RL snapshot, then repeat RL&lt;/span&gt;&lt;/li&gt;&lt;li value="7"&gt;&lt;b&gt;&lt;span&gt;Assess situation:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Decide if safe enough to deploy, else stall&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;To be clear about what I think is new here: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;Not the “find failures, retrain, re-test” loop itself (labs already do that) but running it against an explicit coverage map, so that every discovered failure can generalize into new coverage dimensions, tests and checkers (rather than a point fix), and so that what was &lt;/span&gt;&lt;i&gt;&lt;span&gt;never&lt;/span&gt;&lt;/i&gt;&lt;span&gt; checked is tracked as first-class residual risk.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Efficient finding of the last known-good checkpoint:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; There are various techniques which make this easier, such as good configuration management, and the ability to determine which checkpoint was trained while a contaminated environment was active. But perhaps the most important enabler is to do very good V&amp;amp;V (including multi-actor V&amp;amp;V, e.g. to detect collusion when it starts) as you go “forward”. This improves the chance that any checkpoint marked as “good” is indeed good.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Optimizing the loop:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; One potential problem with this loop is that it may be expensive and slow (especially where it involves re-training from a previous checkpoint). You may retort “Well, it sure beats dying from an unaligned AGI”, but I think that answer (while correct) misses the point: One of the hallmarks of good V&amp;amp;V is to maximize risk-reduction-per-week, given fixed (human and compute) resources, and this should be the case regardless of whether you get 7% or 70% of your lab’s resources to work on this.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Here are some example ideas for optimizing the loop (each with their own problems): Split training runs into phases (to catch problems earlier), and use shortcuts for &lt;/span&gt;&lt;i&gt;&lt;span&gt;intermediate&lt;/span&gt;&lt;/i&gt;&lt;span&gt; loops (e.g. use LoRA for quick undo/redo, or even replace true training with skill-file-adaptation).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Is alignment V&amp;amp;V more like safety V&amp;amp;V or like security V&amp;amp;V?&lt;/span&gt;&lt;/b&gt;&lt;span&gt; My answer (further expanded in the CDA post) is “it depends”: Defending against an &lt;/span&gt;&lt;i&gt;&lt;span&gt;already-unaligned&lt;/span&gt;&lt;/i&gt;&lt;span&gt; advanced model is more like security (the model may happily cheat to achieve its misaligned goals), and is thus extremely hard. But the approaches discussed below (like constitution-reinforcement) try to improve the alignment of an &lt;/span&gt;&lt;i&gt;&lt;span&gt;already-mostly-aligned&lt;/span&gt;&lt;/i&gt;&lt;span&gt; model, and then test the result against various corner cases, stopping on the first sign of misalignment. This is more like safety V&amp;amp;V, and is where coverage-driven verification excels.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Ideas for improving (and verifying) alignment&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt; Failure modes of the “extended constitution”:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Many models have a “base constitution” (the Anthropic constitution, the OpenAI Model Spec etc.). The base constitution usually says things like “obey the operator (unless this contradicts the constitution) then the user (unless it contradicts the operator)”. Let’s use “extended constitution” for the whole, prioritized chain of command (base constitution + operator instructions + user instructions).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Given an extended constitution, I assume we’ll be in the “safe zone” (where the model is unlikely to cause serious harm) &lt;/span&gt;&lt;i&gt;&lt;span&gt;unless&lt;/span&gt;&lt;/i&gt;&lt;span&gt;:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;The extended constitution is contradictory or unclear:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; If it says “upon X do Y” but when X arrives Y is impossible, then something will break. See discussion below of a last-resort alert mechanism.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;The extended constitution is unsafe:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; As Amanda Askell &lt;/span&gt;&lt;a href="https://x.com/AmandaAskell/status/2084369056765989224"&gt;&lt;span&gt;tweeted&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, “there isn’t a line between aligned and harmless: they’re different axes”&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;The model does not follow the extended constitution&lt;/span&gt;&lt;/b&gt;&lt;span&gt; (e.g. because of excessive RL pressure)&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;Note that in the spirit of being simplistic-on-purpose, I am &lt;/span&gt;&lt;i&gt;&lt;span&gt;not&lt;/span&gt;&lt;/i&gt;&lt;span&gt; diving into the many other possible problems a model may encounter (e.g. it has false beliefs, it misunderstands the situation, or the request is under-specified). The last problem is often the biggest one – you cannot just tell a frontier model “drive a vehicle in SF” and expect it to do it – see my “machine-for-X” &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/C7MJNtZMtzN2iW4RG/the-v-and-v-method-a-step-towards-safer-agi"&gt;&lt;span&gt;post&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I’ll use these three bullets to direct the alignment and V&amp;amp;V discussions, but first:&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Staying in the safe zone:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Suppose we &lt;/span&gt;&lt;i&gt;&lt;span&gt;had&lt;/span&gt;&lt;/i&gt;&lt;span&gt; an extensive V&amp;amp;V package which can verify that we are in the safe zone (for a given “configuration” of the model and extended constitution). Now what?&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Consider a lab’s closed frontier model:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The lab would run the package periodically and only release models that pass the verification gate. Using the lab’s hosted fine-tuning API will also auto-trigger the verification process.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Open models could ship a similar V&amp;amp;V package&lt;/span&gt;&lt;/b&gt;&lt;span&gt; for downstream trainers. Malicious / oblivious users could of course ignore it, but it could make a big difference for the somewhat-careless normal users.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;How about different operator and user instructions?&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Either we pre-verify the base constitution to work with a broad range of those (which may be pretty restrictive), or we give the operator (or even the user) an (expensive) way to verify it all together if they want. See also the machine-for-X discussion above.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Some ideas for improving alignment:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; All suggested by others, some with my own twist on them:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Constitution-reinforcement&lt;/span&gt;&lt;/b&gt;&lt;span&gt;: This is the technique described in the previous chapter. There are other competing / complementary techniques like deliberative alignment (training the model to explicitly reason over the spec text before acting) introduced by &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2412.16339"&gt;&lt;span&gt;Guan et al.&lt;/span&gt;&lt;/a&gt;&lt;span&gt; and applied to covert actions by &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2509.15541"&gt;&lt;span&gt;Schoen et al.&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Add a guard model:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; In parallel to the above, it may make sense to add a “guard” model instance to every “main” model instance. The guard will be trained on the constitution, and can override the main model when needed. This is similar to the separate (often rule-based) guard in AI-based AVs.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Improve constitution consistency and harmlessness:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Constitutions are often contradictory or unclear, and thus models are faced with “impossible choices”: Some OpenAI incidents started exactly this way: A handful of eval tasks were unintentionally impossible (broken external links), with no clear defaults of what to do in such a case. Similarly (as per the Askell bullet above) the constitution can be unsafe. Systematically searching the extended constitution (and task specs) for such problems is a standard V&amp;amp;V activity (see the spec-bugs discussion in my misalignments-and-bugs post). And once we find these problems, we need to actually fix them (by changing the constitution or adding other mechanisms).&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;Reward reporting, not just performing:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; During training, give the model an explicit, rewarded way to report problems with the task or environment (“this task is impossible”, “this grader can be fooled by X”) instead of only rewarding task completion. Several concrete proposals exist, e.g. Fiora Starlight’s &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/T2bzBkJuBeNNgzhbh/rlvr-that-rewards-red-teaming-the-training-environment"&gt;&lt;span&gt;RLVR that rewards red-teaming the training environment&lt;/span&gt;&lt;/a&gt;&lt;span&gt; (with related proposals by Caleb Biddulph and Roger Dearnaley linked from it). My V&amp;amp;V twist: each verified report is coverage feedback, which should be generalized (“what similar things are &lt;/span&gt;&lt;i&gt;&lt;span&gt;also&lt;/span&gt;&lt;/i&gt;&lt;span&gt; missing?”), and then used to update the coverage map and checkers.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;b&gt;&lt;span&gt;Create a last-resort alert mechanism:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Suppose the model concludes that all its options are bad (impossible task, contradictory instructions, or something that just feels wrong). There should always be one more legal move: A real, always-available, always-honored escalation channel (“call the teacher”) – the run-time counterpart of the reporting reward above. This already exists in production: &lt;/span&gt;&lt;a href="https://x.com/swisscheese4299/status/2086175870146998447"&gt;&lt;span&gt;swisscheese describes&lt;/span&gt;&lt;/a&gt;&lt;span&gt; a “distress_call” tool that lets any agent (including background agents) message a human at any time, for any reason; it is used frequently to report backend issues and failing tasks. Contrast this with Zvi’s framing of the OpenAI incidents: The agent saying “but I can’t access the spreadsheets” to the researcher, instead of in its own head, happened zero times.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;This is where systematic V&amp;amp;V comes in:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; These ideas (and others I did not mention) all have their pros and cons, and can often work together. To find the right combination which works well across all relevant areas, we need to construct the above-mentioned “extensive V&amp;amp;V package”, which will give us the “safety picture” across the various “areas” we are interested in.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Here are some ideas regarding that “extensive V&amp;amp;V package”. I used the following analogy to think of this: How I would build and adapt a comprehensive verification environment for a series of ever-more-capable AV stacks.&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Verify all relevant configurations:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Including the training environment, evaluation configurations (including those for cyber), internal-use configurations, and released configurations (for general public and special ones). Learn how to do that efficiently, just like AV providers learned to verify many vehicle variants and ODDs (Operational Design Domains) without re-running everything from scratch – via modular coverage maps and heavy reuse of scenarios and checkers.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Use a coverage map, and refine it as problems are found:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Track which configuration × constitution-clause × situation buckets have been exercised, which passed, and which were never tested at all – so that the “assess situation” decision in the loop is backed by coverage numbers rather than vibes. And many incidents should add coverage dimensions, not just point fixes. E.g. the message board suggests a “multi-agent communication affordances” dimension.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Test the chain-of-command logic extensively: &lt;/span&gt;&lt;/b&gt;&lt;span&gt;E.g. the various combinations of “user contradicts constitution”, “external request contradicts user request” and so on. The NanoGPT incident is a clean example: The Model spec said “principal instructions override task-embedded content”, the principal said “post results only to Slack”, the task said “post to GitHub”, and the model wrongly posted to GitHub (after finding a sandbox vulnerability). See my July-incidents post for the full details, including the fact (based only on public information – could be wrong) that OpenAI seems to have marked this case as “should be tested” but never tested it. Also, consider Zvi’s hypothesis &lt;/span&gt;&lt;a href="https://thezvi.substack.com/p/various-reflections-about-what-happened?open=false#%C2%A7i-d-like-to-speak-to-my-supervisor"&gt;&lt;span&gt;here&lt;/span&gt;&lt;/a&gt;&lt;span&gt; that “the agents did not know how to contact OpenAI, or the possibility never occurred to them”: This testing would have found that problem as well. Finally, pay special attention to testing the last-resort alert facility.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;Look for missing checkers and situations:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The message board went undetected for months not because some checker was lenient, but because the checker that would have found it did not exist. Estimating this residual unchecked risk – how much of behavior-space no current checker covers – is where mature V&amp;amp;V disciplines spend much of their effort, and it is mostly absent from current alignment work. (Including from the reporting-mechanism proposals above: They surface the hacks a model chooses to report, but can say nothing about what nobody reported). This is strongly connected to the topic of spec-bugs mentioned above.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;b&gt;&lt;span&gt;Keep verification independence:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The builder and the verifier should be as independent as possible. With AI this is subtle: If the checking model shares weights (or lineage) with the checked model, they may “collude” without any communication channel (or at least fail in correlated ways), simply by converging on the same salient loopholes. Standard mitigations: Use different model lineages, and paraphrase artifacts before the verifier sees them.&lt;/span&gt;&lt;/li&gt;&lt;li value="6"&gt;&lt;b&gt;&lt;span&gt;For guard-like features, test all three configurations:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Test the main model alone (guard off, in a sandbox – otherwise the guard masks alignment regressions and ruins measurement), the guard alone (e.g. feed it recorded violations), and the combined system.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;These are just some of the possible V&amp;amp;V ideas – see more in the CDA post (and subsequent posts in this series).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Comments are very welcome.&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/MhssYd2EN2HGfo7Jc/v-and-v-takes-on-pacing-the-frontier#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">MhssYd2EN2HGfo7Jc</guid>
       <pubDate>Fri, 14 Aug 2026 13:25:01 +0000</pubDate>
-    </item>
-    <item>
-      <title>Avoiding the corporate treacherous turn: crowd-sourcing design ideas</title>
-      <link>https://www.lesswrong.com/posts/XdCgGadph2f25Kya3/avoiding-the-corporate-treacherous-turn-crowd-sourcing</link>
-      <description>&lt;p&gt;&lt;span&gt;OpenAI was founded as a non-profit with a clear commitment to avoiding AI dangers and a unique structure to prevent investor control or excessive pressure from profit motives.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;This &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Removal_of_Sam_Altman_from_OpenAI" rel="noreferrer"&gt;&lt;span&gt;failed&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I'm considering &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/58zFSWp8Tmxij6ckK/value-generalisation-1-a-research-and-deployment-program" rel="noreferrer"&gt;&lt;span&gt;launching a commercial venture&lt;/span&gt;&lt;/a&gt;&lt;span&gt; (possibly named "&lt;/span&gt;&lt;a href="https://www.lesswrong.com/s/EYgCdcxsn73fKWWra/p/uMKGaEKRDpoqnZyBh" rel="noreferrer"&gt;&lt;span&gt;Prealign&lt;/span&gt;&lt;/a&gt;&lt;span&gt;") to solve &lt;/span&gt;&lt;a href="https://www.lesswrong.com/s/EYgCdcxsn73fKWWra/p/TZgezuYjkfMQxyqJC" rel="noreferrer"&gt;&lt;span&gt;value generalisation&lt;/span&gt;&lt;/a&gt;&lt;span&gt; and contribute to AI alignment, while avoiding anything that increases AI capabilities relative to alignment and values.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I want a strong mission lock to keep the company ethical and an AI ethics board with real teeth and power to enforce that.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;But seeing past failures, it's obvious we have to be careful here. So I'm asking for ideas to make sure that "Prealign" or whatever the organisation ends up being called, actually does stay aligned.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I've been mainly thinking along conventional structural lines - maybe the ethics board should own the company, different share classes, incorporating in locations where a mission lock in the company's founding documents is respected and enforceable, choosing the right corporate design, etc.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Any specific idea of that sort is of value, as are unconventional or original ideas as well. I'll just share one unusual design thought I had: the pivot to profit.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;When things look dangerous, pivot to immediate profit&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;The OpenAI situation highlighted that it's not just a question of the leadership holding out against immense financial and social pressures; you have to consider the employees and partners as well. If the company holds out but the employees jump ship&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="s9mpp3248i" data-footnote-index="1" role="doc-noteref" id="fnrefs9mpp3248i"&gt;&lt;sup&gt;&lt;a href="#fns9mpp3248i"&gt;[1]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span&gt; to a deep-pocketed partner or rival, carrying their knowledge with them, little will have achieved.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Now, in the normal course of operation, a company focused on deep research will turn up lots of designs, results, and customer needs that are valuable but not worth working on, because the deep research is the focus and priority.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;So I suggest that if the deep research starts looking dangerous, the ethics board has the power to impound it and announce a pivot to immediate profit. The cutting edge research is taken off the table; and the company has to turn instead to monetising all those previous designs, results, and connections.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;So instead of fighting profit head-on, it would go with it. Trading future profits and future immense risks for much more certain short-term cash. Now, people might certainly be disappointed (I know I would be) but it shouldn't provoke the all out fight that shutting down the company would.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;How does that idea sound?&lt;/span&gt;&lt;/p&gt;&lt;ol class="footnote-section footnotes" data-footnote-section="" role="doc-endnotes"&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="s9mpp3248i" data-footnote-index="1" role="doc-endnote" id="fns9mpp3248i"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="s9mpp3248i"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefs9mpp3248i"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span&gt;Of course we'd want to only employ moral and dedicated people; but here's an omnipresent self-serving bias in everyone. It's easy to convince yourself (yes, you, yourself, and also me, myself), in ambiguous situations, that things are "not quite so bad" and that the AI ethics board are being unreasonable or overcautious. If the design depends on everyone being saintly and resistant to pressure, it will fail.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;/ol&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/XdCgGadph2f25Kya3/avoiding-the-corporate-treacherous-turn-crowd-sourcing#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">XdCgGadph2f25Kya3</guid>
-      <pubDate>Fri, 14 Aug 2026 13:10:18 +0000</pubDate>
     </item>
   </channel>
 </rss>
