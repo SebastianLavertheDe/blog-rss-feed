@@ -11,7 +11,8 @@ import sys
 import argparse
 import time
 import re
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timezone, timedelta
 from email.utils import format_datetime
 import xml.etree.ElementTree as ET
 
@@ -52,6 +53,157 @@ class ExternalRSSImporter:
         self.use_atom = use_atom
         self.max_retries = max_retries
         self._extracted_feed_info = None
+        self._date_cache = None
+        self._date_stats = {'page': 0, 'wayback': 0, 'dropped': 0, 'deferred': 0}
+        self._wb_fail_streak = 0
+
+    # ------------------------------------------------------------------
+    # Missing-date resolution: page metadata -> Wayback first capture.
+    # Items still undated after both are dropped from the output feed.
+    # ------------------------------------------------------------------
+
+    def _load_date_cache(self):
+        if self._date_cache is not None:
+            return self._date_cache
+        path = self._date_cache_path()
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                self._date_cache = json.load(f)
+        except (OSError, ValueError):
+            self._date_cache = {}
+        return self._date_cache
+
+    def _save_date_cache(self):
+        if self._date_cache is None:
+            return
+        path = self._date_cache_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(self._date_cache, f, ensure_ascii=False, indent=2)
+
+    def _date_cache_path(self):
+        return os.path.join('cache', 'date_cache.json')
+
+    def _extract_date_from_page(self, link):
+        """Extract a publication date from the article page itself."""
+        try:
+            resp = requests.get(link, timeout=15, allow_redirects=True, headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            })
+            resp.raise_for_status()
+            html = resp.text[:200000]
+        except requests.exceptions.RequestException:
+            return None
+
+        # <meta property="article:published_time"> / og:updated_time / dc.date / itemprop
+        for pattern in (
+            r'<meta[^>]+(?:property|name|itemprop)=["\'](?:article:published_time|og:updated_time|dc\.date|datePublished|date)["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name|itemprop)=["\'](?:article:published_time|og:updated_time|dc\.date|datePublished|date)["\']',
+            r'<time[^>]+datetime=["\']([^"\']+)["\']',
+            r'"datePublished"\s*:\s*"([^"]+)"',
+        ):
+            m = re.search(pattern, html, re.IGNORECASE)
+            if m:
+                dt = self.parse_date(m.group(1))
+                if dt:
+                    return dt
+        return None
+
+    # Sentinel returned by _extract_date_from_wayback when the CDX API
+    # definitively reports no captures (vs None, which means the probe itself
+    # failed and the item should be retried next run).
+    _WB_NOT_FOUND = 'not_found'
+
+    def _extract_date_from_wayback(self, link):
+        """First Wayback capture timestamp ~= publication date for popular pages.
+
+        Returns a datetime, _WB_NOT_FOUND (200 but no captures), or None when
+        the probe fails (network error / non-200) so it can be retried later.
+        """
+        last_error = None
+        for attempt in range(2):
+            try:
+                resp = requests.get(
+                    'http://web.archive.org/cdx/search/cdx',
+                    params={'url': re.sub(r'^https?://', '', link), 'output': 'json',
+                            'limit': 1, 'fl': 'timestamp'},
+                    timeout=20,
+                )
+                if resp.status_code in (429, 500, 502, 503):
+                    last_error = f"HTTP {resp.status_code}"
+                else:
+                    resp.raise_for_status()
+                    rows = resp.json()
+                    # [["timestamp"], ["20080509061013"]]
+                    if isinstance(rows, list) and len(rows) > 1 and len(rows[1]) > 0:
+                        ts = rows[1][0]
+                        return datetime.strptime(ts[:14], '%Y%m%d%H%M%S').replace(tzinfo=timezone.utc)
+                    return self._WB_NOT_FOUND
+            except (requests.exceptions.RequestException, ValueError, IndexError) as e:
+                last_error = str(e)
+            if attempt == 0:
+                time.sleep(3)  # brief backoff before the single retry
+        print(f"    wayback probe failed ({last_error}), will retry next run: {link}")
+        return None
+
+    def resolve_missing_date(self, link):
+        """Resolve a date for a dateless item. Returns None if undated (item is dropped).
+
+        Negative results are cached with a TTL: a brand-new article may have no
+        Wayback capture yet, so drops are re-probed after a few days.
+        """
+        if not link:
+            return None
+        cache = self._load_date_cache()
+        if link in cache:
+            cached = cache[link]
+            if isinstance(cached, str):
+                return self.parse_date(cached)
+            # Negative entry: re-probe only after the TTL. Legacy nulls carry
+            # no timestamp and are re-probed once, then rewritten with one.
+            if isinstance(cached, dict):
+                failed_dt = self.parse_date(cached.get('no_date_at', ''))
+                if failed_dt is None or datetime.now(timezone.utc) - failed_dt < timedelta(days=7):
+                    return None
+            # Legacy null or expired negative: fall through and probe again
+
+        dt = self._extract_date_from_page(link)
+        source = 'page'
+        if dt is None:
+            if self._wb_fail_streak >= 5:
+                # Circuit breaker: CDX looks unreachable, defer the rest
+                self._date_stats['deferred'] += 1
+                return None
+            time.sleep(1.0)  # be polite to the CDX API
+            wb = self._extract_date_from_wayback(link)
+            if wb is None:
+                # Probe failed (network/rate limit): don't cache anything so
+                # the item is retried next run
+                self._wb_fail_streak += 1
+                self._date_stats['deferred'] += 1
+                return None
+            self._wb_fail_streak = 0
+            dt = None if wb is self._WB_NOT_FOUND else wb
+            source = 'wayback'
+
+        if dt is not None:
+            self._date_stats[source] += 1
+            cache[link] = dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            print(f"    dated via {source}: {link} -> {cache[link]}")
+        else:
+            self._date_stats['dropped'] += 1
+            cache[link] = {
+                'no_date_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            }
+            print(f"    no date found, dropping: {link}")
+        self._save_date_cache()
+        return dt
+
+    def _print_date_stats(self):
+        s = self._date_stats
+        if s['page'] or s['wayback'] or s['dropped'] or s['deferred']:
+            print(f"  Date resolution: {s['page']} via page, {s['wayback']} via wayback, "
+                  f"{s['dropped']} dropped, {s['deferred']} deferred to next run")
 
     def _sort_key_datetime(self, value):
         return value if value is not None else datetime.min.replace(tzinfo=timezone.utc)
@@ -113,15 +265,17 @@ class ExternalRSSImporter:
         }
 
     def parse_date(self, date_str):
-        """Parse various date formats"""
+        """Parse various date formats. Returns None when unparseable."""
         from dateutil import parser as date_parser
+        if not date_str:
+            return None
         try:
             parsed_date = date_parser.parse(date_str, tzinfos={"UT": timezone.utc, "UTC": timezone.utc})
             if parsed_date.tzinfo is None:
                 parsed_date = parsed_date.replace(tzinfo=timezone.utc)
             return parsed_date
-        except:
-            return datetime.now(timezone.utc)
+        except (ValueError, OverflowError, TypeError):
+            return None
 
     def fetch_with_retry(self):
         """Fetch feed with retry logic"""
@@ -209,6 +363,13 @@ class ExternalRSSImporter:
             )[:30]
 
             for e in sorted_entries:
+                dt = entry_datetime(e)
+                if dt is None:
+                    # Undated upstream entry: resolve or drop
+                    dt = self.resolve_missing_date(e.get('link', ''))
+                    if dt is None:
+                        continue
+
                 item = ET.SubElement(channel, 'item')
                 ET.SubElement(item, 'title').text = clean_xml_text(e.get('title', ''))
                 ET.SubElement(item, 'link').text = clean_xml_text(e.get('link', ''))
@@ -217,8 +378,6 @@ class ExternalRSSImporter:
                 guid = ET.SubElement(item, 'guid', attrib={'isPermaLink': 'false'})
                 guid.text = clean_xml_text(guid_val)
 
-                # pubDate
-                dt = entry_datetime(e) or datetime.now(timezone.utc)
                 ET.SubElement(item, 'pubDate').text = format_datetime(dt)
 
                 # description
@@ -227,6 +386,7 @@ class ExternalRSSImporter:
             # Save output
             os.makedirs('rss', exist_ok=True)
             output_path = os.path.join('rss', self.output_file)
+            self._print_date_stats()
 
             tree = ET.ElementTree(rss)
             ET.indent(tree, space='  ')
@@ -301,6 +461,11 @@ class ExternalRSSImporter:
                     guid_text = id_elem.text if id_elem is not None else link_text
 
                     parsed_date = self.parse_date(pub_date_text) if pub_date_text else None
+                    if parsed_date is None:
+                        # Undated upstream entry: resolve or drop
+                        parsed_date = self.resolve_missing_date(link_text)
+                        if parsed_date is None:
+                            continue
                     parsed_entries.append({
                         "title": title_text,
                         "link": link_text,
@@ -331,6 +496,7 @@ class ExternalRSSImporter:
             # Save output
             os.makedirs('rss', exist_ok=True)
             output_path = os.path.join('rss', self.output_file)
+            self._print_date_stats()
             rss_content = feed.rss_str(pretty=True)
             with open(output_path, 'wb') as f:
                 f.write(rss_content)
@@ -418,6 +584,11 @@ class ExternalRSSImporter:
                     parsed_date = None
                     if pub_date_text:
                         parsed_date = self.parse_date(pub_date_text)
+                    if parsed_date is None:
+                        # Undated upstream item: resolve or drop
+                        parsed_date = self.resolve_missing_date(link_text)
+                    if parsed_date is None:
+                        continue
 
                     parsed_items.append({
                         'title': title_text,
@@ -431,8 +602,8 @@ class ExternalRSSImporter:
                     print(f"Warning: Error processing item: {e}")
                     continue
 
-            # Sort items by date (newest first), items without dates go last
-            parsed_items.sort(key=lambda x: x['pub_date'] if x['pub_date'] else datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+            # Sort items by date (newest first)
+            parsed_items.sort(key=lambda x: x['pub_date'], reverse=True)
 
             # Add sorted entries to channel
             for item_data in parsed_items:
@@ -451,6 +622,7 @@ class ExternalRSSImporter:
 
             # Save to file with pretty print
             output_path = os.path.join('rss', self.output_file)
+            self._print_date_stats()
             xml_bytes = ET.tostring(new_rss, encoding='utf-8', xml_declaration=True)
 
             # Pretty print by parsing and re-serializing
