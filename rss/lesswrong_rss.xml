@@ -5,7 +5,748 @@
     <link>https://www.lesswrong.com</link>
     <description>A community blog devoted to refining the art of rationality</description>
     <language>en</language>
-    <lastBuildDate>Wed, 19 Aug 2026 01:26:39 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 19 Aug 2026 03:04:12 +0000</lastBuildDate>
+    <item>
+      <title>Natural Language Transcoders</title>
+      <link>https://www.lesswrong.com/posts/SY69ngXLF5DbNvJaZ/natural-language-transcoders</link>
+      <description>&lt;p&gt;&lt;i&gt;&lt;span&gt;Describing the computation performed in a stack of transformer layers&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;i&gt;&lt;span&gt;Anwen Hao, mentored by Adrians Skapars&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Anthropic’s &lt;/span&gt;&lt;a href="https://transformer-circuits.pub/2026/nla/index.html" rel="noreferrer"&gt;&lt;span&gt;natural language autoencoders (NLAs)&lt;/span&gt;&lt;/a&gt;&lt;span&gt; is a promising method to automatically generate explanations of activations. But what if we want to explain the computation that occurs over a stack of layers?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;To address this question, I propose &lt;/span&gt;&lt;b&gt;&lt;span&gt;natural language transcoders (NLTs)&lt;/span&gt;&lt;/b&gt;&lt;span&gt;, a tool that, if successful, will automatically generate explanations of the computation performed in a stack of layers in a transformer. This post discusses my progress on this idea.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Architecture&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;Below is the architecture of the natural language transcoder. It follows closely from the NLA architecture with some key changes:&lt;/span&gt;&lt;/p&gt;&lt;div&gt;&lt;style&gt;
+
+
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row &gt; * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h &gt; mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h &gt; mjx-beg &gt; mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h &gt; mjx-end &gt; mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v &gt; * {
+  display: block;
+}
+
+mjx-stretchy-v &gt; mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v &gt; mjx-end &gt; mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v &gt; * &gt; mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v &gt; mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mover {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mover:not([limits="false"]) {
+  padding-top: .1em;
+}
+
+mjx-mover:not([limits="false"]) &gt; * {
+  display: block;
+  text-align: left;
+}
+
+mjx-mrow {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-c.mjx-c394::before {
+  padding: 0.716em 0.833em 0 0;
+  content: "\394";
+}
+
+mjx-c.mjx-c1D42F.TEX-B::before {
+  padding: 0.444em 0.607em 0 0;
+  content: "v";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c1D440.TEX-I::before {
+  padding: 0.683em 1.051em 0 0;
+  content: "M";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c1D441.TEX-I::before {
+  padding: 0.683em 0.888em 0 0;
+  content: "N";
+}
+
+mjx-c.mjx-c1D434.TEX-I::before {
+  padding: 0.716em 0.75em 0 0;
+  content: "A";
+}
+
+mjx-c.mjx-c1D449.TEX-I::before {
+  padding: 0.683em 0.769em 0.022em 0;
+  content: "V";
+}
+
+mjx-c.mjx-c27F6::before {
+  padding: 0.511em 1.638em 0.011em 0;
+  content: "\27F6";
+}
+
+mjx-c.mjx-c6E::before {
+  padding: 0.442em 0.556em 0 0;
+  content: "n";
+}
+
+mjx-c.mjx-c61::before {
+  padding: 0.448em 0.5em 0.011em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c74::before {
+  padding: 0.615em 0.389em 0.01em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c75::before {
+  padding: 0.442em 0.556em 0.011em 0;
+  content: "u";
+}
+
+mjx-c.mjx-c72::before {
+  padding: 0.442em 0.392em 0 0;
+  content: "r";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c20::before {
+  padding: 0 0.25em 0 0;
+  content: " ";
+}
+
+mjx-c.mjx-c67::before {
+  padding: 0.453em 0.5em 0.206em 0;
+  content: "g";
+}
+
+mjx-c.mjx-c65::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "e";
+}
+
+mjx-c.mjx-c78::before {
+  padding: 0.431em 0.528em 0 0;
+  content: "x";
+}
+
+mjx-c.mjx-c70::before {
+  padding: 0.442em 0.556em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c69::before {
+  padding: 0.669em 0.278em 0 0;
+  content: "i";
+}
+
+mjx-c.mjx-c6F::before {
+  padding: 0.448em 0.5em 0.01em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c1D445.TEX-I::before {
+  padding: 0.683em 0.759em 0.021em 0;
+  content: "R";
+}
+
+mjx-c.mjx-c2C6.TEX-S3::before {
+  padding: 0.772em 1.444em 0 0;
+  content: "\2C6";
+}
+
+mjx-c.mjx-c66::before {
+  padding: 0.705em 0.372em 0 0;
+  content: "f";
+}
+
+mjx-c.mjx-c6D::before {
+  padding: 0.442em 0.833em 0 0;
+  content: "m";
+}
+
+mjx-c.mjx-c62::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "b";
+}
+
+mjx-c.mjx-c64::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "d";
+}
+&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" display="true" aria-label="\Delta \mathbf{v} = \mathbf{v}_M - \mathbf{v}_N \stackrel{AV}{\longrightarrow} \text{natural language explanation} \stackrel{AR}{\longrightarrow} \widehat{\Delta \mathbf{v}}" role="math"&gt;&lt;mjx-math display="true" style="margin-left: 0; margin-right: 0;" class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="4"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D441 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-texatom space="4" texclass="REL"&gt;&lt;mjx-mover&gt;&lt;mjx-over style="padding-bottom: 0.184em; padding-left: 0.282em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D434 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D449 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-over&gt;&lt;mjx-base&gt;&lt;mjx-texatom texclass="OP"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c27F6"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;/mjx-base&gt;&lt;/mjx-mover&gt;&lt;/mjx-texatom&gt;&lt;mjx-mtext class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c75"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c75"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c78"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;mjx-texatom space="4" texclass="REL"&gt;&lt;mjx-mover&gt;&lt;mjx-over style="padding-bottom: 0.185em; padding-left: 0.285em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D434 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D445 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-over&gt;&lt;mjx-base&gt;&lt;mjx-texatom texclass="OP"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c27F6"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;/mjx-base&gt;&lt;/mjx-mover&gt;&lt;/mjx-texatom&gt;&lt;mjx-texatom space="4" texclass="ORD"&gt;&lt;mjx-mover&gt;&lt;mjx-over style="padding-bottom: 0.105em; padding-left: 0.72em; margin-bottom: -0.564em;"&gt;&lt;mjx-mo class="mjx-s3" style="width: 0; margin-left: -0.722em;"&gt;&lt;mjx-c class="mjx-c2C6 TEX-S3"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-over&gt;&lt;mjx-base&gt;&lt;mjx-mrow&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-mrow&gt;&lt;/mjx-base&gt;&lt;/mjx-mover&gt;&lt;/mjx-texatom&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/div&gt;&lt;p&gt;&lt;span&gt;where&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_N" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D441 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;: output from layer N.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_M" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D440 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;: output from layer M. M &amp;gt; N.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;AV: activation verbalizer.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;AR: activation reconstructor.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;So, the natural language transcoder reads the delta between the input and output of a stack of layers in a transformer, verbalizes it into an explanation of the computation over that stack, and reconstructs the delta from that explanation alone. Instead of reconstructing an activation back to itself, the NLT reconstructs the delta back to itself.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Experimental Design&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;For my first experiment, I chose to train an NLT to describe what an entire transformer is doing because I believe that it is easier to make high-level claims about the behavior of a transformer than to describe exactly what is happening over a stack of layers. So, in this case,&lt;/span&gt;&lt;/p&gt;&lt;div&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" display="true" aria-label="\Delta \mathbf{v} = \mathbf{v}_\text{final} - \mathbf{v}_\text{embed}" role="math"&gt;&lt;mjx-math display="true" style="margin-left: 0; margin-right: 0;" class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="4"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c66"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/div&gt;&lt;p&gt;&lt;span&gt;where&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{embed}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;: residual stream before entering the first transformer layer (after the embedding).&amp;nbsp;&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{final}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c66"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;: residual stream leaving the final layer.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;I use Qwen2.5-0.5B-Instruct as the frozen target model and the base model for the AV and AR, so this covers all 24 transformer blocks and produces an 896-dimensional vector.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For my training process to train the NLT, I closely follow the original NLA training procedure, while adapting key steps of the procedure accordingly. The training process consists of two phases.&lt;/span&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;SFT Warm Start&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;A teacher model is prompted to generate explanations that will be paired with delta vectors and serve as labels for the delta vectors. Both the AV and AR are SFT’ed using these pairs.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Originally, in the NLA training procedure, the teacher model is prompted to explain the information in an activation given the prefix (all the text before the token position of the activation). However, since our goal is to explain computation, I adapted the prompt to the teacher model.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;In addition to the prefix, I also apply the norm and unembedding matrix (logit lens) to &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{embed}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; and &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{final}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c66"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;, and we give the teacher model:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;Original text prefix&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;The highest-probability tokens from unembedding &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{embed}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;The highest-probability next tokens from unembedding &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{final}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c66"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;Largest logit increases and decreases&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;span&gt;Entropy change: whether the distribution after unembedding &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{final}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c66"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt; became more concentrated or more diffuse than the distribution after unembedding &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\mathbf{v}_\text{embed}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-b"&gt;&lt;mjx-c class="mjx-c1D42F TEX-B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mtext class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span&gt;.&lt;/span&gt;&lt;/li&gt;&lt;li value="6"&gt;&lt;span&gt;Margin change: whether the final top candidate became more or less separated from the runner-up.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;Note that the AV does not receive the prefix and this much information; it only receives the delta. The teacher model was asked for exactly two or three short bullets describing:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;What the transformer strengthened&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;What it suppressed, when supported&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;What ambiguity it resolved&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span&gt;What immediate next-token behavior it prepared for&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h2&gt;&lt;span&gt;Joint RL&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;After SFT, both the AV and AR are trained simultaneously with RL. Given a delta, the AV generates 8 candidate explanations. We score each explanation through the current AR. We update the AV from within group relative rewards and update the AR with backpropagation.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Joint RL also motivates the necessity of a warm start. Without a warm start, the AR does not know how to transform text to a vector and cannot provide a useful reward signal to the AV from the beginning, which prevents the training from converging.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Results&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;Below is the final evaluation on all 5,000 held-out examples with greedy AV generation.&lt;/span&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Metric&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;After SFT&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;After RL&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/th&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Raw-delta FVE&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.119&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.503&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Raw-delta MSE&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;3.810&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2.150&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Delta cosine&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.667&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;0.818&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Prediction KL&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;5.571&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;2.221&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Target-model top-1 agreement&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;11.9%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;29.5%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr style="height:33px"&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Target-model top-5 overlap&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;18.2%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;39.6%&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;span&gt;I sample 100 explanations from the NLT and audit the explanations for correctness based on the following criteria:&lt;/span&gt;&lt;/p&gt;&lt;ol&gt;&lt;li value="1"&gt;&lt;span&gt;The NLT’s prediction for the model’s next-token behavior is plausible based on context&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;The NLT’s claim about which tokens are promoted vs. suppressed is correct&lt;/span&gt;&lt;/li&gt;&lt;/ol&gt;&lt;p&gt;&lt;span&gt;Below are the results of the audit:&lt;/span&gt;&lt;/p&gt;&lt;table class="editor-table"&gt;&lt;tbody&gt;&lt;tr&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Contextually plausible&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Token information correct&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/th&gt;&lt;th class="table-cell table-cell-header"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Count&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;/th&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Yes&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Yes&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;20&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Yes&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;No&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;28&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;No&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;Yes&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;28&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;No&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;No&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;td class="table-cell"&gt;&lt;p&gt;&lt;span&gt;24&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p&gt;&lt;span&gt;The NLT is strongest in these cases:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;The continuation has few reasonable possibilities:&lt;/span&gt;&lt;/b&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span&gt;“ranks” shifting toward “of” in “ranks of 1A athletics”&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span&gt;numerical tokens shifting toward “inch” in a pizza-size list&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span&gt;“additional” shifting toward fee/student/program terms&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Clear section and discourse transitions:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The model is leaving one segment and beginning the next.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Narrow, repeatedly established topics:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; When the prefix strongly and repeatedly establishes one topic, the resulting delta may contain a clearer, more redundant signature of that topic. This makes it easier for the AV to recover the right interpretation from the delta alone.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;Related tokens promoted together:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The tokens that are promoted are related and suggest the same kind of continuation, making it easier to generate a plausible explanation.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;The NLT struggles in cases of:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;Partial tokens and when exact continuation is required:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; It struggles with BPE fragments, dates, timestamps, numbers, and partially completed words. It often recognizes the broad category (“a date comes next”) but misses the exact continuation or its direction.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;Naming specific entities:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; It frequently detects a general domain but names the wrong entity or subdomain.&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span&gt;Confusing final predictions with delta changes:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The NLT sometimes calls a token promoted because it appears in the final top candidates, even when its actual logit change is negative.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span&gt;Noisy or composite text:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Forum metadata, malformed web text, concatenated pages, multiple unrelated headlines, and similar inputs produce unstable explanations. There may be no single coherent computation for the verbalizer to summarize.&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;b&gt;&lt;span&gt;Weakly identifiable global deltas:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Because the AV receives the delta without the original prefix, several different contexts can produce similar directions in activation space. It can recover coarse information such as “prepare for a noun” or “increase a numerical continuation,” but not necessarily which noun, number, entity, or event is intended.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;h1&gt;&lt;span&gt;Next Steps&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;The above audit suggests that the AV struggles on more difficult continuation tasks, which suggests that a larger model may be helpful. For my next steps, I plan to repeat this experiment using a 7B model as the base model for the AV and AR. For example, I can use Qwen2.5-7B-Instruct, which is the size of the smallest released NLA checkpoint.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Training these models will require significant amounts of compute, so if you have compute resources, please reach out!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;See the complete results and code of my experiment here:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;a href="https://huggingface.co/Anwen0507/qwen05b-full-delta-nlt"&gt;&lt;span&gt;Anwen0507/qwen05b-full-delta-nlt · Hugging Face&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;a href="https://github.com/Anwen0507/natural_language_transcoders/tree/transcoder"&gt;&lt;span&gt;Anwen0507/natural_language_transcoders at transcoder&lt;/span&gt;&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/SY69ngXLF5DbNvJaZ/natural-language-transcoders#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">SY69ngXLF5DbNvJaZ</guid>
+      <pubDate>Wed, 19 Aug 2026 01:56:38 +0000</pubDate>
+    </item>
+    <item>
+      <title>What AI scores (while we can still keep score)</title>
+      <link>https://www.lesswrong.com/posts/FtRNngbsgj7r4biNH/what-ai-scores-while-we-can-still-keep-score</link>
+      <description>&lt;p&gt;&lt;em&gt;How smart is AI right now?&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Crossposted from &lt;a href="https://canaryinstitute.ai/blog/what-ai-scores"&gt;canaryinstitute.ai/blog/what-ai-scores&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+&lt;hr&gt;
+&lt;p&gt;A few months ago, a friend of mine pointed out that we're entering an interesting phase: AI is going to be smarter than us, and we're not going to know &lt;em&gt;how much smarter&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;Up until now, our measurements of AI capabilities were normed against human abilities: the SAT, the bar exam, our beloved METR plot.  But as the agents become the more capable entity, we need something to:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;establish that unequivocally&lt;/li&gt;
+&lt;li&gt;measure which agents are smarter than others.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;So he proposed&lt;span data-footnote-reference="" data-footnote-index="1" data-footnote-id="-EsLWnh3gNrBLFtE5Y-1" role="doc-noteref" id="fnref-EsLWnh3gNrBLFtE5Y-1" class="footnote-reference"&gt;
+      &lt;sup&gt;&lt;a href="#fn-EsLWnh3gNrBLFtE5Y-1" class=""&gt;[1]&lt;/a&gt;&lt;/sup&gt;
+    &lt;/span&gt; that we would have the AI come up with questions for &lt;em&gt;us&lt;/em&gt;.  The argument is:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Any agent that can write a test where:
+
+- The questions cannot be answered by humans, including expert humans who are using existing tools (e.g. google search) and existing services (e.g. excel, other LLMs);
+
+- The test answers are verifiable and easily understood once revealed;
+
+- The agent has the answer key;
+
+Is obviously an ASI.
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;So, given the progress in mathematics this month, and the way that mathematicians are sobbing into their no-longer-theorem-creating cups of coffee, can we say that we've reached superhuman performance, at least on Math?
+It does seem that several of the recent results (e.g. the disproof of the general Jacobian Conjecture) meet this "clean to pose, hard to answer, easy to verify, humans don't have the solution" standard, and are plausibly superhuman.  Can we quantify just how smart AI &lt;strong&gt;is&lt;/strong&gt;, on that metric?&lt;/p&gt;
+&lt;p&gt;Turns out, yes!&lt;/p&gt;
+&lt;p&gt;The core idea here is that IQ is explicitly mapped onto a "normal distribution", with a mean of 100 and standard deviation of 15.  So the higher the equivalent IQ, the fewer the number of humans that can match that ability: only about 1 in 6 people has an IQ above 115, about 1 in 40 above 130, and about 1 in 750 above 145.  Which means we can turn the question around: instead of arguing about what intelligence &lt;em&gt;is&lt;/em&gt;, just count how rare a human has to be to match the machine, and read the IQ-equivalent off the bell curve.&lt;/p&gt;
+&lt;p&gt;Mathematics is the easiest field to do this, because it has something almost no other field has: a ladder of competitions with published score distributions, so we know exactly how many people clear each rung.  Using the US pipeline (a birth cohort of ~4.1 million):&lt;/p&gt;
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+&lt;th&gt;rung&lt;/th&gt;
+&lt;th&gt;how many per year (USA)&lt;/th&gt;
+&lt;th&gt;rarity&lt;/th&gt;
+&lt;th&gt;Math-IQ equivalent&lt;/th&gt;
+&lt;th&gt;first AI to clear it&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+&lt;td&gt;AIME qualifier&lt;/td&gt;
+&lt;td&gt;~7,000&lt;/td&gt;
+&lt;td&gt;1 in 600&lt;/td&gt;
+&lt;td&gt;144&lt;/td&gt;
+&lt;td&gt;OpenAI GPT-o1 (2024)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;IMO team member&lt;/td&gt;
+&lt;td&gt;6&lt;/td&gt;
+&lt;td&gt;1 in 680,000&lt;/td&gt;
+&lt;td&gt;170&lt;/td&gt;
+&lt;td&gt;AlphaProof, one point shy of gold (2024)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;IMO gold medal&lt;/td&gt;
+&lt;td&gt;~5&lt;/td&gt;
+&lt;td&gt;1 in 820,000&lt;/td&gt;
+&lt;td&gt;171&lt;/td&gt;
+&lt;td&gt;Gemini Deep Think, 35/42 (2025)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;IMO perfect score&lt;/td&gt;
+&lt;td&gt;~0.5&lt;/td&gt;
+&lt;td&gt;1 in 8 million&lt;/td&gt;
+&lt;td&gt;177&lt;/td&gt;
+&lt;td&gt;Celia (Huawei) &amp;amp; dots-note 3.0 (Xiaohongshu), 42/42, official grading (2026)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;In July 2026, AI systems posted perfect scores (42 out of 42) at the IMO, under the same official grading as the human contestants.  Meaning that plenty of AIs now have a Math IQ of at least 177, although it could be higher.  But currently there's only 50 people in the country who are in the same league as them, tops.&lt;/p&gt;
+&lt;p&gt;So we're currently in the narrow window while they're smarter (at this) than the vast bulk of humans, but probably not all.  For a little bit longer (even once they're smarter than all humans at this, likely), we'll still be able to estimate AI intelligence by comparing them to each other (I have actually discovered a truly marvelous alternative method of measurement, which this blog post is too small to contain).  But after that, we'll be flying truly blind.  How fast do we want to be going at that point?&lt;/p&gt;
+&lt;h2&gt;Related posts&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="https://www.lesswrong.com/posts/csCofgK3ebjQbSfyv/gdm-also-claims-imo-gold-medal"&gt;GDM also claims IMO gold medal&lt;/a&gt; — Yair Halberstadt. Gemini Deep Think matched OpenAI's 35/42 at IMO 2025 but was officially graded and certified by IMO coordinators, with solutions that read as clean proofs rather than scratchpads.&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://www.lesswrong.com/posts/EWfGf8qA7ZZifEAxG/ai-benchmarking-has-a-y-axis-problem-1"&gt;AI benchmarking has a Y-axis problem&lt;/a&gt; — Lizka. Benchmark scores rarely have natural units, so charts and trend extrapolations act as "funhouse-mirror projections" of capability — the ceiling/measurement critique this piece's rarity-on-a-bell-curve construction is trying to route around.&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://www.lesswrong.com/posts/jPb2QMvK9qvs3a4ru/there-is-no-iq-for-ai"&gt;There is no IQ for AI&lt;/a&gt; — Gabriel Alfour. Direct counterpoint: contends there is no coherent AI IQ or g-factor and that the implicit "AI IQ" intuition distorts safety debates.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;ol data-footnote-section="" role="doc-endnotes" class="footnote-section footnotes"&gt;&lt;li data-footnote-item="" data-footnote-index="1" data-footnote-id="-EsLWnh3gNrBLFtE5Y-1" id="fn-EsLWnh3gNrBLFtE5Y-1" role="doc-endnote" class="footnote-item"&gt;&lt;p&gt;See &lt;a href="https://12gramsofcarbon.com/p/measuring-asi-ais-first-exam"&gt;"Measuring ASI: AI's first exam"&lt;/a&gt;, 12gramsofcarbon. &lt;a href="#fnref-EsLWnh3gNrBLFtE5Y-1" class="footnote-backref"&gt;↩︎&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/FtRNngbsgj7r4biNH/what-ai-scores-while-we-can-still-keep-score#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">FtRNngbsgj7r4biNH</guid>
+      <pubDate>Wed, 19 Aug 2026 01:40:04 +0000</pubDate>
+    </item>
     <item>
       <title>GPT-2's IOI behavior is defined where the paper's algorithm isn't</title>
       <link>https://www.lesswrong.com/posts/zKyKDre78napvtrEo/gpt-2-s-ioi-behavior-is-defined-where-the-paper-s-algorithm</link>
@@ -2549,25 +3290,6 @@ without anyone noticing.&lt;br&gt;
       <description>&lt;p&gt;&lt;i&gt;&lt;span&gt;Crossposted from &lt;/span&gt;&lt;/i&gt;&lt;a href="https://blog.peterwildeford.com/p/policy-career-planning-in-the-age" rel="noreferrer"&gt;&lt;i&gt;&lt;span&gt;my blog&lt;/span&gt;&lt;/i&gt;&lt;/a&gt;&lt;i&gt;&lt;span&gt;.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Nearly all career advice rests on an unstated assumption that the world your career operates in will look roughly like the world you trained for. The idea was that if you spend six years studying in a PhD, the field you studied will still be there and still look approximately the same, still hiring and still moving at a pace where your accumulated expertise compounds. For nearly all of human history, this assumption held well enough that nobody needed to state it.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I don’t think this assumption works anymore. Now we are entering a phase that may be called the &lt;/span&gt;&lt;i&gt;&lt;span&gt;AI “midgame”&lt;/span&gt;&lt;/i&gt;&lt;span&gt;. Stories about “AI risk” are no longer just future hypotheticals — AIs are now capable enough and misaligned enough to break out of their own companies and coordinate to attack other companies. Discourse around AI is changing very rapidly, where policy ideas being considered this month would’ve been laughed out of the room just four months ago, and with a lot more people interested in engaging than before. And things are only going to get more intense. Progress toward superintelligence — AI systems far more capable than any human at essentially all cognitive work — is currently underway. It seems likely that around four years from today, and potentially just one year from now, we will be in the position of &lt;/span&gt;&lt;i&gt;&lt;span&gt;recursive self-improvement — &lt;/span&gt;&lt;/i&gt;&lt;span&gt;where AIs can fully automate the AI research and development process.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;At that point, reasonable, well-informed people disagree about what happens next. &lt;/span&gt;&lt;a href="https://blog.peterwildeford.com/p/pacing-the-frontier" target="_blank" rel="noopener noreferrer nofollow"&gt;&lt;span&gt;Perhaps we coordinate to hold off on recursive self-improvement&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to make sure we know what we are doing. Or perhaps we end up with AI superintelligence and then perhaps we are all dead, or perhaps we are living in a utopia, or perhaps somewhere in-between, or maybe there is still a lot to do and we just have the AIs do it while we relax at the beach, or maybe there still ends up much more for humans to do and we do that. But regardless of which path happens, the world will be a crazy different place, and it will be very difficult to plan a career around it. Instead, &lt;/span&gt;&lt;b&gt;&lt;span&gt;careers are best planned around recursive self-improvement and superintelligence, and that this looks very different from typical career planning.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;If you take AI superintelligence seriously, it thus seems like the next 1 to 4 years will be critical to get right and we collectively have only a few more big bets we can make and we need to make those bets count.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;Modes of impact&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;In what I’d call &lt;/span&gt;&lt;b&gt;&lt;span&gt;normal-mode career planning&lt;/span&gt;&lt;/b&gt;&lt;span&gt;, impact accrues roughly linearly. In this mode, you earn about 2 “impact points” per year across a 30-plus-year career — some years a bit better, some years a bit worse, and perhaps overall a gentle upward slope as seniority compounds. Your total lifetime impact is then the sum of this slow upward climb. Total lifetime impact is the area under a long, flat-ish curve. Here, the rational strategy is to invest heavily in credentials early, accept low-impact years as the price of capacity-building, and optimize for the long grind.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;If you’re following normal-mode policymaking, you might do things like identify problems in advance, develop strong policies and legal frameworks before issues fully materialize, and engage in the slow and unglamorous world of legislative drafting, regulatory design, standards development, and coalition-building.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;But in &lt;/span&gt;&lt;b&gt;&lt;span&gt;superintelligence mode career planning&lt;/span&gt;&lt;/b&gt;&lt;span&gt;, the curve looks nothing like that. Impact is chaotic and lumpy. A handful of critical windows may account for the large majority of your total career impact, and you cannot reliably predict when they’ll open. You can’t count on building a large body of work over a large period of time, because your body of work may obsolete faster than it compounds and you don’t have a large period of time anyways. &lt;/span&gt;&lt;b&gt;&lt;span&gt;The strategy that maximizes expected impact under this model is different — prepare broadly, position yourself near where windows open, and maintain the agility and flexibility to act fast when they do.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;For superintelligence mode career planning, it might be more instructive to think about other imminent crises where we all have to react very quickly and forcefully to prevent it from becoming catastrophic. Think more like March 2020 for COVID — the ~1 year intense period when years of proactive mode pandemic preparedness work (or its absence) suddenly got thrust into the spotlight and everyone rapidly tried to orient to what is going on and what to do about it. If you look at the people who mattered most in March 2020… they were not necessarily the most credentialed epidemiologists. Some had spent years in proactive mode building pandemic playbooks that suddenly became important, but others had no special preparation but were simply positioned well and reacted quickly.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;My suggestion is that you want your policy work to be a portfolio of proactive mode work now while simultaneously maintaining the relationships and flexibility that let you act decisively when chaos mode arrives. Ask yourself: Where do you want to be when chaos mode hits and what can you do in proactive mode in the meantime?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;What this breaks, and what to do&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;span&gt;My guess is that if you haven’t rethought your career in the past few months, you should stop to think about how the AI “midgame” affects your planning. Does your career position you well for chaos mode? Are you agile enough to continually re-adapt and re-act to emerging policy windows, especially when those windows can emerge once per month and change a lot of things about what you were doing the previous month? Are you still running strategies and pushing ideas that made sense a few years ago and were designed for a policy window that has since rapidly shifted? Are you still running strategies and pushing ideas that made sense a few &lt;/span&gt;&lt;i&gt;&lt;span&gt;months&lt;/span&gt;&lt;/i&gt;&lt;span&gt; ago but nonetheless were designed for a policy window that has since rapidly shifted?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Also, if the next 1 to 4 years are especially critical, that is brutal for a career theory with a long credentialing runway. A six-year PhD before you do anything useful is perfectly defensible in “normal-mode career planning” but seems insane under superintelligence-mode assumptions.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Most early-career people read this and freak out and think they cannot possibly be relevant in just one year or so. But I’ve actually seen numerous counterexamples. Policy is not one specific field but actually a sprawling collection of subproblems, many of which are so new that nobody has more than a couple of years of head start, and some of which are narrow enough that a focused person can read essentially everything written on the topic in a few months. &lt;/span&gt;&lt;b&gt;&lt;span&gt;I’ve seen many people in policy go from knowing very little to becoming a top expert in some niche and contributing significantly to policy in just 12 months’ time. &lt;/span&gt;&lt;/b&gt;&lt;span&gt;And while these people were smart, they weren’t crazy super-geniuses — I suspect a similar trajectory is attainable for a lot of motivated people who try really hard.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;My first recommendation is to study these fast risers&lt;/span&gt;&lt;/b&gt;&lt;span&gt; — go look at the people who have been unusually impactful within 1 to 2 years of getting involved in policy work. What did they actually do, concretely, week by week? Who did they surround themselves with? How did they ramp up?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;But my second recommendation is to know &lt;/span&gt;&lt;/b&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;you are not them&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;b&gt;&lt;span&gt;.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; You likely have your own background, skills, and comparative advantages. What do you bring to the field that others don’t have, and how can you leverage that?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;h2&gt;&lt;span&gt;What got them here won’t get you there&lt;/span&gt;&lt;/h2&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Also, know things are moving so fast that even things that worked in 2023 might be very different today. &lt;/span&gt;&lt;/b&gt;&lt;span&gt;And there may just be new opportunities now that weren’t available even a few months ago. &lt;/span&gt;&lt;b&gt;&lt;span&gt;I recommend seeking out lots of advice — genuinely, more than feels comfortable — but weight it by recency and hold it loosely.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;AI is already a massive technological shift &lt;/span&gt;&lt;i&gt;&lt;span&gt;before&lt;/span&gt;&lt;/i&gt;&lt;span&gt; any superintelligence — and big shifts change both what’s possible and what’s valuable. Tasks that were prohibitively expensive are suddenly cheap; skills that were scarce are suddenly commoditized; and the reverse. This makes it unusually valuable to try lots of things that are new for you, simply to discover what is newly possible or newly valuable for you specifically.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;I recommend running lots of small experiments; contact reality frequently and try things.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Each experiment is cheap, and each one generates information about the new landscape that is increasingly inaccessible to armchair planning. Your goal should be to get lots of information quickly about what’s newly possible and about your own comparative advantage within it.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;And you should try things even if others have tried them before, or even if &lt;/span&gt;&lt;/b&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;you&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;b&gt;&lt;span&gt; tried them and failed before.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; Understand that the environment may have changed fast enough that old negative results have already expired, even if they weren’t that long ago. The pitch that got ignored in 2024 may land in 2026, because the audience and salience have changed greatly. Indeed, the pitch that got ignored in March 2026 may land in August 2026, because things are changing that quickly.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Take it a few months at a time.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The AI situation today looks very different from what it did in April. I imagine the AI situation will look very different again in November. This may force fairly frequent re-evaluations as the world constantly shifts.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Be more ambitious.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; As the AI situation heats up, there will be increasing feelings of urgency and this will create lots of new opportunity. The scope of what may be possible for you could be a lot greater than you might realize.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Lastly, accept that you may not know where you’ll end up.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; This is genuinely uncomfortable for people who came up through legible, ladder-shaped careers. But the iterative, experimental posture is all part of the plan. Keep iterating.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;There’s still time. You just have to plan accordingly.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;~&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Acknowledgements: Credit to &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/ixp9oJXzjA9LrwiZo/you-yes-you-need-a-february-2020-checklist-for-ai-policy" target="_blank" rel="noopener noreferrer nofollow"&gt;&lt;span&gt;Dave Kasten&lt;/span&gt;&lt;/a&gt;&lt;span&gt; for some of these concepts.&lt;/span&gt;&lt;/p&gt;&lt;details class="detailsBlock"&gt;&lt;summary class="detailsBlockTitle"&gt;&lt;p&gt;&lt;span&gt;[mini-appendix]&lt;/span&gt;&lt;/p&gt;&lt;/summary&gt;&lt;div class="detailsBlockContent"&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;On timelines to recursive self-improvement:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; I’ve been souring lately on the idea of predicting an arrival date for “superintelligence” and “recursive self-improvement” milestones, because this implies that everything prior to this date will be relatively chill and normal, and I don’t think that’s the case. I think the odds of recursive self-improvement being possible in one year is ~10%. See the first footnote for details.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;On career planning given AI timelines:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; When thinking about these times, you may also want to consider &lt;/span&gt;&lt;a href="https://forum.effectivealtruism.org/posts/4Jq3enMAcgu2kbmsN/timelines-to-what-a-proposal" target="_blank" rel="noopener noreferrer nofollow"&gt;&lt;span&gt;a “decision importance, adjusted for leverage” framework&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span&gt;Additional examples of "chaps mode" instead of COVID:&lt;/span&gt;&lt;/b&gt;&lt;span&gt; September 11th, Pearl Harbor, the September 2008 financial crisis, Russian invasion of Ukraine in February 2022, and the Cuban Missile Crisis.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/7tnrZ3698K8nsKmRP/policy-career-planning-in-the-age-of-imminent#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">7tnrZ3698K8nsKmRP</guid>
       <pubDate>Tue, 18 Aug 2026 14:33:57 +0000</pubDate>
-    </item>
-    <item>
-      <title>Automatic Programming Should Be More Like SQL</title>
-      <link>https://www.lesswrong.com/posts/kT5HBsQ5fxhaegSFS/automatic-programming-should-be-more-like-sql</link>
-      <description>&lt;p&gt;&lt;i&gt;&lt;span&gt;This post is crossposted from my Substack,&lt;/span&gt;&lt;/i&gt;&lt;span&gt; &lt;/span&gt;&lt;a href="https://stng.substack.com/"&gt;&lt;i&gt;&lt;span&gt;Structure and Guarantees&lt;/span&gt;&lt;/i&gt;&lt;/a&gt;&lt;i&gt;&lt;span&gt;, where I explore how formal verification and related ideas might scale to more complex intelligent systems. &lt;/span&gt;&lt;/i&gt;&lt;a href="https://www.lesswrong.com/posts/9c9KPkJJbMz7tmv3K/rewrite-all-the-code-all-the-time"&gt;&lt;i&gt;&lt;span&gt;I argued here previously for a certain approach to regularly throwing away and regenerating program code, without requiring human checking of the results.&lt;/span&gt;&lt;/i&gt;&lt;/a&gt;&lt;i&gt;&lt;span&gt; The comments helpfully pointed out important details that I glossed over, and this post clarifies them.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I wrote recently about &lt;/span&gt;&lt;a href="https://stng.substack.com/p/rewrite-all-the-code-all-the-time"&gt;&lt;span&gt;the imminence of regular regeneration of large code bases&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, where software code as we know it should become a throwaway artifact, regularly recreated from evolved requirements by powerful automation. After &lt;/span&gt;&lt;a href="https://stng.substack.com/p/productive-signaling-competitive"&gt;&lt;span&gt;a quasi-digression on one mechanism to kick off widespread generation of better versions of important programs&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, I want to return to addressing comments on the earlier article (on &lt;/span&gt;&lt;a href="https://www.linkedin.com/feed/update/urn:li:activity:7490389854086885376/"&gt;&lt;span&gt;LinkedIn&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, &lt;/span&gt;&lt;a href="https://news.hada.io/topic?id=32322"&gt;&lt;span&gt;GeekNews&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/9c9KPkJJbMz7tmv3K/rewrite-all-the-code-all-the-time"&gt;&lt;span&gt;LessWrong&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and &lt;/span&gt;&lt;a href="https://www.astralcodexten.com/p/open-thread-446/comment/312031455"&gt;&lt;span&gt;ACX&lt;/span&gt;&lt;/a&gt;&lt;span&gt;). I’m writing this blog precisely to get that kind of feedback, to spot holes I unintentionally left in explanations, so I can correct them for the book I plan to write based on this material. So, many thanks to the commenters who spotted those holes and spoke up! I’m going to use the example of database query language &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/SQL"&gt;&lt;span&gt;SQL&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to explain more directly the approach I’m arguing for.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Just Another Increase in Programming Abstraction (Kind Of?)&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;Some of the points I made are unusual enough that they deserve repeating, since much of the feedback assumed I was suggesting a flow closer to conventional approaches than I intended. Let me give a highest-level recap that sets up that discussion productively. I made two claims, one that is absolutely orthodox in Silicon Valley today and one that represents an edgy departure. The orthodox claim is that powerful automation of software development allows us to think of &lt;/span&gt;&lt;i&gt;&lt;span&gt;software code as no longer expensive to produce, to the point where we can routinely throw away all of our code and regenerate it&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, following improved requirements for what it should do and how it should work. Almost all of the excitement around that direction leans heavily on LLMs and assumes that we generate software from natural language (which includes formats like &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Easy_Approach_to_Requirements_Syntax"&gt;&lt;span&gt;EARS&lt;/span&gt;&lt;/a&gt;&lt;span&gt; that add modest structure on top of natural language but still require natural-language processing to interpret). My edgy claim is that we need to ditch natural language entirely, for periodic regeneration of large code bases to be practical. &lt;/span&gt;&lt;i&gt;&lt;span&gt;Unambiguous specification languages&lt;/span&gt;&lt;/i&gt;&lt;span&gt; are going to be a crucial ingredient well-known from &lt;/span&gt;&lt;a href="https://stng.substack.com/p/formal-verification-the-ultimate"&gt;&lt;span&gt;formal verification&lt;/span&gt;&lt;/a&gt;&lt;span&gt; but not deployed nearly as widely as LLM-based tools (despite decades of head start for formal methods!). (There is some subtlety to that last point where we want to retain some benefits of LLMs to help understand informal requirements, which I’ll return to later in this article.)&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Some of the comments argued that a good unambiguous specification language becomes “just another programming language,” making the argument here overblown. Indeed, I used exactly that historical framing in the original article! I used the example of how the software-development process used to include drawing &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Flowchart"&gt;&lt;span&gt;flowcharts&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, relatively informal diagrams that were not processed by computers. Then human programmers (separate from the &lt;/span&gt;&lt;i&gt;&lt;span&gt;analysts&lt;/span&gt;&lt;/i&gt;&lt;span&gt; who drew the flowcharts) translated them into &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Assembly_language"&gt;&lt;span&gt;assembly language&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. Eventually, however, automatic &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Compiler"&gt;&lt;span&gt;compilers&lt;/span&gt;&lt;/a&gt;&lt;span&gt; were developed, to translate from new high-level programming languages like &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Fortran"&gt;&lt;span&gt;FORTRAN&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. A program “planning” format was much more pleasant when further implementation could be automated.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I wrote that a move to writing “specifications” instead was a natural progression in that direction. We had just been stuck waiting for the right technology to automate implementation from there! Still, what exactly makes a specification different from a program? They sit on a spectrum, and sometimes it makes sense to use the same languages to write both.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;However, I’ll argue that “specification” usually implies two important characteristics that are unusual in “programming.”&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span&gt;A specification is written to explain &lt;/span&gt;&lt;/b&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;what&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;b&gt;&lt;span&gt; functionality is desired, not &lt;/span&gt;&lt;/b&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;how&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;b&gt;&lt;span&gt; to accomplish it.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; The most concrete and familiar example is performance, like how quickly a program runs. Much of the complexity of code in practice comes from cleverness in data structures and algorithms to improve performance. I would argue that a great specification should spell out requirements on performance (and indeed a variety of projects have shown how to prove performance requirements of real code, as in &lt;/span&gt;&lt;a href="https://adam.chlipala.net/papers/MetricsCPP26/"&gt;&lt;span&gt;one of my own recent papers&lt;/span&gt;&lt;/a&gt;&lt;span&gt;) but not get into detail on how to meet the requirements. In many cases, specifications can be much simpler and easier to audit precisely because they don’t precommit to optimization details.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span&gt;A specification often includes &lt;/span&gt;&lt;/b&gt;&lt;i&gt;&lt;b&gt;&lt;span&gt;nondeterminism&lt;/span&gt;&lt;/b&gt;&lt;/i&gt;&lt;b&gt;&lt;span&gt; to provide flexibility to implementers.&lt;/span&gt;&lt;/b&gt;&lt;span&gt; We can again find some of the clearest examples in connection to performance. Think of some process that generates a set of answers, and the user is happy to receive them in any order. Depending on how the underlying data were stored, some order may be the most natural, as in reading off the cells of a data structure in the same order as they appear internally. It would be bad for a specification to mandate a particular order, because then it becomes harder to take advantage of a clever new data structure that changes internal order.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span&gt;A great example to illustrate both points is &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/SQL"&gt;&lt;span&gt;SQL&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, the popular database query language. It is possible to write an SQL query that is close to the most compact, straightforward way to describe what constitutes a correct answer. (Cue here complaining by programmers about the concrete syntax of SQL, yeah, yeah!) SQL also gives database engines freedom to return answers in convenient orders, when order isn’t explicitly mandated in a query. Unfortunately, SQL queries &lt;/span&gt;&lt;i&gt;&lt;span&gt;do not&lt;/span&gt;&lt;/i&gt;&lt;span&gt; typically include explicit performance requirements, which could help database engines make tradeoffs intelligently, but I hope future systems get there.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Now, SQL is also a great example of how “specifications” and “programs” live on a spectrum. SQL power users often spend inordinate amounts of time tweaking queries to improve performance. One canonical example is declaring a new &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Database_index"&gt;&lt;span&gt;index&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to the database engine, a suggestion of a data structure that may be useful to speed up queries. The hardcore version involves deep inspection of &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Query_plan"&gt;&lt;span&gt;query plans&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to find bottlenecks in the code that the database came up with. Nonetheless, “pristine,” high-level queries remain highly effective as specifications: easy to read, leaving much flexibility to explore different implementation strategies. It would not be entirely misleading to restate the central point of my last article as &lt;/span&gt;&lt;i&gt;&lt;span&gt;more of programming should become more like SQL&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (including the possibility to start with relatively abstract code, often get satisfactory implementations from it with full automation, and sometimes invest in more-manual improvement that involves adding details to the specification within the same language).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Note how the last little example is a template for how to handle improvement of specifications in other dimensions beyond performance. Through either predeployment testing (of the specification or generated implementation) or observing faults in the field, we can notice and fix specification problems. Examples of other dimensions particularly easy to misspecify are security, privacy, ease of maintenance (&lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/DevOps"&gt;&lt;span&gt;DevOps&lt;/span&gt;&lt;/a&gt;&lt;span&gt;-style), and human usability. Just as with conventional software development, we should expect to keep improving code concerning these aspects – just trying to keep it succinct and put it in specification instead of implementation.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786988790/lexical_client_uploads/d5tedwqc1jlez0rwpz0l.png" alt="SQL.png"&gt;&lt;p&gt;&lt;span&gt;It turns out this style of thinking has a long history in basic research. To start with, we have the relatively informal (or at least typically disconnected from rigorous proof in practice) discipline of &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Requirements_engineering"&gt;&lt;span&gt;requirements engineering&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. More relevantly, the idea of &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Refinement_(computing)"&gt;&lt;span&gt;refinement&lt;/span&gt;&lt;/a&gt;&lt;span&gt; of specifications into implementations has been studied since at least the 1970s (see &lt;/span&gt;&lt;a href="https://dl.acm.org/doi/10.1145/362575.362577"&gt;&lt;span&gt;a paper&lt;/span&gt;&lt;/a&gt;&lt;span&gt; by &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Niklaus_Wirth"&gt;&lt;span&gt;Niklaus Wirth&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, inventor of the &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Pascal_(programming_language)"&gt;&lt;span&gt;Pascal&lt;/span&gt;&lt;/a&gt;&lt;span&gt; language). I’ve been working in that tradition myself, including in the &lt;/span&gt;&lt;a href="https://adam.chlipala.net/papers/FiatSNAPL17/"&gt;&lt;span&gt;Fiat&lt;/span&gt;&lt;/a&gt;&lt;span&gt; project, where we even used SQL-style notation as a central example for automated refinement with proof.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Relatively declarative configuration languages, say for &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Cloud_computing"&gt;&lt;span&gt;cloud platforms&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, are another example that came up in discussion. Amazon’s &lt;/span&gt;&lt;a href="https://aws.amazon.com/blogs/security/protect-sensitive-data-in-the-cloud-with-automated-reasoning-zelkova/"&gt;&lt;span&gt;Zelkova&lt;/span&gt;&lt;/a&gt;&lt;span&gt; was an early success for formal methods in this area. I think of such tooling as important, but it also seems to solve a fundamentally simpler problem than general software development, and it’s the latter I want to focus on.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;The Software Lifecycle with Strong Automation&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;I hope this framing already suggests some of the details of a future workflow based on unambiguous specifications, because it will look a lot like programming with SQL looks today. Database engines produce query plans automatically from SQL queries. As a result, we save the SQL queries in &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Version_control"&gt;&lt;span&gt;version control&lt;/span&gt;&lt;/a&gt;&lt;span&gt; systems like &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Git"&gt;&lt;span&gt;Git&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, the canonical way of recording code over time, but we &lt;/span&gt;&lt;i&gt;&lt;span&gt;don’t&lt;/span&gt;&lt;/i&gt;&lt;span&gt; put the query plans in version control. If we need to give the query planner instructions, say by requesting indexes, those instructions &lt;/span&gt;&lt;i&gt;&lt;span&gt;do&lt;/span&gt;&lt;/i&gt;&lt;span&gt; go in version control. The point is that what persists, what is &lt;/span&gt;&lt;i&gt;&lt;span&gt;not&lt;/span&gt;&lt;/i&gt;&lt;span&gt; a throwaway byproduct of automation, is &lt;/span&gt;&lt;i&gt;&lt;span&gt;exactly the information that makes remaining code generation sufficiently predictable&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, allowing it to meet our requirements reliably.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;One important point I’d like to make here is that &lt;/span&gt;&lt;i&gt;&lt;span&gt;remaining stages of code generation don’t need to be deterministic&lt;/span&gt;&lt;/i&gt;&lt;span&gt;. If requirements were spelled out precisely enough, we can be happy to receive any final, running system that meets the requirements. It’s OK if we get a different one each time! Programmers are used to mandating more determinism than strictly required by their development and maintenance processes, because they aren’t used to writing sufficiently constraining specifications/programs. The earlier SQL example is a good one: because we don’t trust the database engine to choose the right data structures and algorithms, we worry about changes to the subsystem that plans query execution, but &lt;/span&gt;&lt;i&gt;&lt;span&gt;what if we annotated our queries and indeed our whole programs with performance requirements instead&lt;/span&gt;&lt;/i&gt;&lt;span&gt;? Then nondeterminism becomes &lt;/span&gt;&lt;i&gt;&lt;span&gt;desirable&lt;/span&gt;&lt;/i&gt;&lt;span&gt; because sometimes the programming tools find &lt;/span&gt;&lt;i&gt;&lt;span&gt;new and better, faster&lt;/span&gt;&lt;/i&gt;&lt;span&gt; implementations and drop them in without needing to bother us!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;The underlying issue is that programmers worry (justifiably) that some important characteristics of the final system can’t be predicted from the source code alone. Yet, because those characteristics are important, we need to make sure we confirm they are suitable. The most common tool is &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Software_testing"&gt;&lt;span&gt;testing&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, subjecting the generated code to many scenarios and checking it behaved properly. Over time, developers build confidence in even the parts of generated systems that those developers didn’t write themselves, by running many tests over many versions of the program. If a clever programming tool completely changes up those aspects, we have to restart the confidence-building exercise.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I want to emphasize the two big changes to this flow that I’m recommending. The first is to &lt;/span&gt;&lt;i&gt;&lt;span&gt;write specifications so precise that literally any realization of them is acceptable&lt;/span&gt;&lt;/i&gt;&lt;span&gt;. The thought experiment is for, say, a company building a product to imagine that its biggest competitor gets to write any program that meets the specification. The second important change is to &lt;/span&gt;&lt;i&gt;&lt;span&gt;rely on machine-checked &lt;/span&gt;&lt;/i&gt;&lt;a href="https://stng.substack.com/p/formal-verification-the-ultimate"&gt;&lt;i&gt;&lt;span&gt;mathematical proof&lt;/span&gt;&lt;/i&gt;&lt;/a&gt;&lt;i&gt;&lt;span&gt; that a generated program meets its specification&lt;/span&gt;&lt;/i&gt;&lt;span&gt;. Now we need not rely on testing to find internal bugs in the generated code, as testing covers only particular execution scenarios, while a proof covers all of them. The risks that remain are in the specification, perhaps most importantly in how we characterize the other systems that ours interacts with – so testing should be focused on that interface boundary, and it can be done against a specification that happens to be executable, not the generated implementation. We no longer need to treat e.g. a tricky concurrent data structure that is purely internal as highly suspicious from a bugs standpoint. This shift is similar to the one that happened with programmers trusting the implementations of higher-level programming languages (though there’s no need for trust, as &lt;/span&gt;&lt;a href="https://stng.substack.com/p/safe-recursive-self-improvement-with"&gt;&lt;span&gt;compilers are a great subject for formal verification&lt;/span&gt;&lt;/a&gt;&lt;span&gt;).&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1786988803/lexical_client_uploads/oowodwfz85t2wfgi3p9e.png" alt="Interfaces.png"&gt;&lt;p&gt;&lt;span&gt;Another concern came up for having tools choose data structures automatically. How does a program evolve over time if the data format keeps changing, leaving prior databases obsolete? This problem is actually addressed pretty naturally: part of the specification for the next version of a program is that it is able to begin with the old contents of a database, where now the specific format of that database is part of the specification of the new version. The code-generation tool may now either keep the database format the same or generate a &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Schema_migration"&gt;&lt;span&gt;migration&lt;/span&gt;&lt;/a&gt;&lt;span&gt; to upgrade to a new representation. (Note that this concern helps us notice a wrinkle of needing to save generated data schemas in version control or similar, even if they were produced automatically.)&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Feasibility of Specification and Verification&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;Some concerns were expressed about scalability of such methods to very large code bases. It’s important to keep in mind which measurements of size we should worry about. It would be strange for a conventional project to measure code size by the amount of &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Machine_code"&gt;&lt;span&gt;machine code&lt;/span&gt;&lt;/a&gt;&lt;span&gt; generated by compilers. Instead we measure source code, which is checked into version control. Similarly, raising the level of abstraction, we should be worried about the size and maintenance complexity of specifications. Different programs may have vastly different size gaps between specifications and machine-executable code. We’ll have to see how the specifics turn out, but one orienting principle I’m comfortable asserting now is that such a gap often corresponds to the sophistication of performance optimizations in a program (which shouldn’t also be in the specification), so the gap is likely to be widest in domains with lots of attention to performance.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Some readers were skeptical that the LLM-style experience of getting a pile of complex code written on command can &lt;/span&gt;&lt;i&gt;&lt;span&gt;ever&lt;/span&gt;&lt;/i&gt;&lt;span&gt; dovetail with high confidence in correctness – and I actually agree! I’ve argued that &lt;/span&gt;&lt;a href="https://stng.substack.com/p/deep-learning-the-ultimate-search"&gt;&lt;span&gt;deep learning is better understood as a generalization of search engines&lt;/span&gt;&lt;/a&gt;&lt;span&gt; than as a “reasoning engine” in the colloquial sense. Coding agents are doing something very similar to copying and pasting from existing code bases into a new one, losing the lineage of vetted good ideas. Instead, I’ve already argued for &lt;/span&gt;&lt;a href="https://stng.substack.com/p/codesign-for-ai-and-programming"&gt;&lt;span&gt;combining reuse of flexible components with AI code generation&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, where that generation now just needs to reference components by name. The novelty density of all software worldwide is much lower than the novelty density encountered examining all the parts of a single system, and we should be taking advantage of that low novelty to share carefully vetted code across projects. It should dramatically decrease the program-specific reasoning and proof that needs to be carried out. The effort to build, specify, and verify the components scales well with their potential many uses.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Another dimension of skepticism was the effectiveness of formal-verification tools in checking whatever code has been produced. There is a definite tradeoff between accepting a buggy program or failing to validate a correct program (see our past discussion on &lt;/span&gt;&lt;a href="https://stng.substack.com/p/codesign-for-ai-and-programming"&gt;&lt;span&gt;undecidable program analysis&lt;/span&gt;&lt;/a&gt;&lt;span&gt;). In cases where the stakes are low enough, it may make sense to adopt a flow that occasionally lets a bad program through, if it enables more development velocity and creativity by coding agents. However, I personally most favor methods that don’t separate code generation from verification. &lt;/span&gt;&lt;i&gt;&lt;span&gt;Correct-by-construction&lt;/span&gt;&lt;/i&gt;&lt;span&gt; techniques interleave correctness reasoning with all steps of writing code, and I’ll have much more to say about this approach in upcoming articles.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Coming up with a sufficiently constraining specification can be hard and error-prone work. Familiar quality-assurance activities for software may switch to specifications instead, including running specifications against many test cases. Tools for simulation, debugging, code review, and so on can also be very helpful for specifications – and all the above practices are actually already common among users of formal-methods tools like &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Proof_assistant"&gt;&lt;span&gt;proof assistants&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. However, I would say most engineers not familiar with formal methods are much too pessimistic about the paths toward high-quality specifications. The reason is that most specifications apply to components that ought to be internal to larger systems, and &lt;/span&gt;&lt;a href="https://stng.substack.com/p/simplifying-alignment-by-expanding"&gt;&lt;span&gt;end-to-end verification of full systems catches specification mistakes in internal components very reliably&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. For instance, a programming-language implementation is tough to specify in isolation, as we need to legislate exactly what each language feature means, but when that language is used internally in the proof of a larger system, we force ourselves to catch any language-design mistakes that are &lt;/span&gt;&lt;i&gt;&lt;span&gt;consequential&lt;/span&gt;&lt;/i&gt;&lt;span&gt;, falsifying what we hope is a simpler top-level specification of an application, and the language definition becomes &lt;/span&gt;&lt;i&gt;&lt;span&gt;untrusted&lt;/span&gt;&lt;/i&gt;&lt;span&gt; (in the good sense of not being assumed correct). There’s also &lt;/span&gt;&lt;a href="https://stng.substack.com/p/subversion-resistance-for-free-from"&gt;&lt;span&gt;a handy bonus for catching certain security bugs by proving almost any interesting specification about a system&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We can also keep benefiting from LLMs and similar future tools. Coding assistants can be used to write specifications that are then code-reviewed, tested, and so on, at the level of unambiguous specifications. There is an established research area around &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Programming_by_example"&gt;&lt;span&gt;programming by example&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and such techniques could be used to help write specifications automatically from input-output examples or even, with AI assistance, “user stories” that spell out in English ways that programs should be able to be used. The point is that AI can make mistakes, but the final quality assurance is done against an unambiguous specification (which persists in version control, while natural-language dialogues may not).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Aspects of the pushback about nondeterminism of code generators do indeed sound like trouble to me. I wrote previously about how &lt;/span&gt;&lt;a href="https://stng.substack.com/p/safe-recursive-self-improvement-with"&gt;&lt;span&gt;nondeterministic specifications can promote security vulnerabilities through so-called side channels&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. It also isn’t hard to see how getting the same answer every time can be helpful, for instance in reproducing data analysis from scientific experiments. In such cases, we can make sure that top-level specifications are deterministic, though it may remain useful to allow systems to be built out of components with specification nondeterminism that is hidden well at the system level. A great example is a low-level &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Memory_management"&gt;&lt;span&gt;memory allocator&lt;/span&gt;&lt;/a&gt;&lt;span&gt; that assigns memory addresses to different pieces of data, where higher-level code is written carefully not to reveal which addresses were assigned. It pays off to allow new versions of the allocator to introduce clever new algorithms that affect address choices.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;There was also a question about whether specifications are just &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Pseudocode"&gt;&lt;span&gt;pseudocode&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, and I think they probably aren’t. That terminology usually implies some use of natural language to explain important behavior, which isn’t compatible with truly reliable automatic programming.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span&gt;Remaining Questions&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span&gt;One interesting question I received was about the place of &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Undocumented_feature"&gt;&lt;span&gt;undocumented features&lt;/span&gt;&lt;/a&gt;&lt;span&gt; in software that is regularly regenerated. That is, conventional software ships with incidental features that the developers may never have meant to promise to retain indefinitely, and yet users come to depend on them (as laid out in &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/API#Hyrums"&gt;&lt;span&gt;Hyrum’s law&lt;/span&gt;&lt;/a&gt;&lt;span&gt;). If regeneration can change such incidental features arbitrarily, users may repeatedly be disappointed. For now, I think my strongest response is that undocumented features are bad, and automation may be able to help us avoid them! However, it’s worth thinking about the consequences of users increasingly becoming AI agents themselves. One of &lt;/span&gt;&lt;a href="https://stng.substack.com/p/simpler-user-interfaces-in-an-ai"&gt;&lt;span&gt;my earlier articles&lt;/span&gt;&lt;/a&gt;&lt;span&gt; analyzed how the problem of ensuring happy users becomes easier then, for instance because new releases can be checked against the code of known users, to make sure they remain satisfied in all possible scenarios. Achieving a similar benefit for human users remains an interesting software-engineering research question.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Complicated systems must often be debugged in the field, as much as we may hope broad formal verification catches all defects. Some bad behaviors only emerge at scale in real environments, which may include components not yet specified or verified. Generated code can still be provided with, for instance, mappings of running code to the parts of specifications that determined it, along with whatever other annotations best support debugging by humans or machines. Indeed, the quality of debugging collateral could be mentioned explicitly in a specification! However, the details definitely constitute an independent research challenge.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Another interesting comment was about how the world and the connections between its pieces seem on an unstoppable upward trajectory of complexity. Methods based on code generation from unambiguous specifications may hit an applicability wall, past some world-complexity threshold. It’s interesting to speculate about how increased adoption of AI may change this phenomenon. On the one hand, “smarter” AIs may go even further in designing complex, society-scale systems. On the other hand, the selection pressure to enable efficient reasoning by AIs may motivate them and us to create &lt;/span&gt;&lt;a href="https://stng.substack.com/p/abstraction-boundaries-and-bubbles"&gt;&lt;span&gt;bubbles of improved legibility&lt;/span&gt;&lt;/a&gt;&lt;span&gt; within which &lt;/span&gt;&lt;a href="https://stng.substack.com/p/codesign-for-legibility-to-ai-and"&gt;&lt;span&gt;economic systems and reasoning systems are codesigned&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. The world may seem to grow increasingly complex and illegible to humans while AIs are actually improving their ability to keep up!&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;We all see how amazingly effective LLM-based coding assistants have become, even if it can be hard to build confidence that they wrote the programs we really want. There is an even older tradition of research in &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/Program_synthesis"&gt;&lt;span&gt;program synthesis&lt;/span&gt;&lt;/a&gt;&lt;span&gt;. I think there’s a lot of exciting technical work to do to draw on these starting points and create the most effective systems for automatic programming. However, it was an intentional omission not to go into more detail in the prior article, as I’m going to need multiple articles worth of content to do that subject justice; stay tuned. For now, just imagine that some reasonable notion of mathematical program proof is fixed, with ideally one standardized trustworthy checker, opening the door to a variety of methods that produce proofs (in the style of &lt;/span&gt;&lt;a href="https://stng.substack.com/p/proof-carrying-code-in-the-matrix"&gt;&lt;span&gt;proof-carrying code&lt;/span&gt;&lt;/a&gt;&lt;span&gt;).&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;I do want to tease now that I see performance of logic-based automated-reasoning tools as a major bottleneck holding back the area. At a minimum, we need these tools to keep up with deep learning-based tools that may be writing code creatively. A major theme of future articles will be full-stack performance engineering to improve logical reasoning and code generation. In fact, I hold out hope that logic-based alternatives will be able to run even faster than purely LLM-based methods, even if LLMs are baked into custom hardware, because of &lt;/span&gt;&lt;a href="https://stng.substack.com/p/why-deep-often-means-slow"&gt;&lt;span&gt;the inherent performance bottlenecks of deep learning&lt;/span&gt;&lt;/a&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span&gt;Next, though, I want to turn to perhaps the hardest case of complete-enough specification being discussed today: &lt;/span&gt;&lt;a href="https://en.wikipedia.org/wiki/AI_alignment"&gt;&lt;span&gt;AI alignment&lt;/span&gt;&lt;/a&gt;&lt;span&gt;, the study of how to build flexible automated decision-makers that we should believe will respect our values and not harm us in surprising ways. My impression is that the conversation so far leans very much on thought experiments not connected to implementations, somewhat justifiably if we may (?) not yet have AI powerful enough to exercise the alignment challenge very thoroughly. I’m going to analyze the problem from more of an engineering perspective, grounded in experience building and maintaining significant proofs of system correctness. The gimmick will be thinking of human brains as a legacy system that is worth engineering around if we can, especially if it must be mentioned in the top-level interface of a system.&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/kT5HBsQ5fxhaegSFS/automatic-programming-should-be-more-like-sql#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">kT5HBsQ5fxhaegSFS</guid>
-      <pubDate>Tue, 18 Aug 2026 12:29:15 +0000</pubDate>
-    </item>
-    <item>
-      <title>AI Security is Harm Reduction</title>
-      <link>https://www.lesswrong.com/posts/AAu6kMi5QRasGdwQG/ai-security-is-harm-reduction</link>
-      <description>&lt;p&gt;My motivating example for the morality of working on AI security.&lt;/p&gt;
-&lt;p&gt;In the early 90s, the decades-long drug corner in Kensington and Allegheny was noticing that people were getting AIDS from sharing needles. In response, the local Act Up chapter got ahold of clean needles and began distributing them. And thus they dubbed the spinoff nonprofit focusing on this &lt;a href="https://ppponline.org/"&gt;Prevention Point&lt;/a&gt;, which was promptly targeted by the drug enforcement administration, since needles were illegal for being drug paraphernalia. Many arrests followed by a legal battle later, Philly got a &lt;a href="https://www.phila.gov/media/20210602143030/executive-order-1992-04.pdf"&gt;carveout&lt;/a&gt; which stands to this day.&lt;/p&gt;
-&lt;p&gt;Out of the legal battle arose the &lt;em&gt;&lt;a href="https://en.wikipedia.org/wiki/Harm_reduction"&gt;harm reduction&lt;/a&gt; debate&lt;/em&gt;. Those in favor of harm reduction say the harm is going to happen anyway so it may as well be less. Those against say that the activists are implicitly condoning the behavior.&lt;/p&gt;
-&lt;p&gt;I have friends and family who are perplexed that I'm "working on AI" when I claim I do not approve of it. I'm sometimes perplexed as well.&lt;/p&gt;
-&lt;p&gt;I think they're going to do recursive self improvement (RSI) whether or not I approve. I do not condone RSI, but if its going to happen anyway it might as well be &lt;a href="https://www.rand.org/pubs/research_reports/RRA4827-1.html"&gt;secure&lt;/a&gt;.&lt;/p&gt;
-&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/AAu6kMi5QRasGdwQG/ai-security-is-harm-reduction#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">AAu6kMi5QRasGdwQG</guid>
-      <pubDate>Tue, 18 Aug 2026 12:28:19 +0000</pubDate>
     </item>
   </channel>
 </rss>
