@@ -5,7 +5,7 @@
     <link>https://it-notes.dragas.net</link>
     <description>Scattered IT Notes - by Stefano Marinelli</description>
     <language>en</language>
-    <lastBuildDate>Sun, 23 Aug 2026 13:36:37 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 23 Aug 2026 14:30:27 +0000</lastBuildDate>
     <item>
       <title>Aggressive caching for a Mastodon reverse proxy: what to cache, what to never cache, and why content negotiation will eventually betray you</title>
       <link>https://it-notes.dragas.net/2026/06/05/aggressive_caching_for_a_mastodon_reverse_proxy/</link>
@@ -1413,13 +1413,16 @@ chmod -R g-rwx,o-rwx /boot
 &lt;/code&gt;&lt;/pre&gt;
 
 &lt;p&gt;Add the keyfile to &lt;code&gt;/etc/crypttab&lt;/code&gt;:&lt;/p&gt;
-&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;echo &amp;quot;cryptswap   $SWAP_DEVICE   /boot/volume.key   luks&amp;quot; &amp;gt;&amp;gt; /etc/crypttab
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;echo &amp;quot;cryptswap   $SWAP_DEVICE   /boot/volume.key   luks,x-initrd.attach&amp;quot; &amp;gt;&amp;gt; /etc/crypttab
 &lt;/code&gt;&lt;/pre&gt;
 
-&lt;p&gt;Include the keyfile and crypttab in the initramfs. Create &lt;code&gt;/etc/dracut.conf.d/10-crypt.conf&lt;/code&gt;:&lt;/p&gt;
-&lt;pre class="highlight"&gt;&lt;code&gt;install_items+=&amp;quot; /boot/volume.key /etc/crypttab &amp;quot;
+&lt;p&gt;The &lt;code&gt;x-initrd.attach&lt;/code&gt; option is important for hibernation. It tells dracut that this encrypted device must be activated from the initramfs. Without it, dracut's host-only mode may filter the swap entry out of the copy of &lt;code&gt;crypttab&lt;/code&gt; stored in the initramfs.&lt;/p&gt;
+&lt;p&gt;Force the crypt module and include the keyfile by creating &lt;code&gt;/etc/dracut.conf.d/10-crypt.conf&lt;/code&gt;:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code&gt;force_add_dracutmodules+=&amp;quot; crypt &amp;quot;
+install_items+=&amp;quot; /boot/volume.key &amp;quot;
 &lt;/code&gt;&lt;/pre&gt;
 
+&lt;p&gt;Dracut will include the relevant &lt;code&gt;crypttab&lt;/code&gt; entry because it is marked with &lt;code&gt;x-initrd.attach&lt;/code&gt;.&lt;/p&gt;
 &lt;h2&gt;Basic System Configuration&lt;/h2&gt;
 &lt;p&gt;Configure keyboard layout and hardware clock. Adjust the keymap and timezone to match your location:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;cat &amp;lt;&amp;lt; EOF &amp;gt;&amp;gt; /etc/rc.conf
@@ -1466,7 +1469,7 @@ zfs set org.zfsbootmenu:keysource=&amp;quot;zroot/ROOT/${ID}&amp;quot; zroot
 
 &lt;h3&gt;The Critical Step: Hibernation Support&lt;/h3&gt;
 &lt;p&gt;Now we need to configure hibernation resume. This is the key insight that makes this setup work: normally, the encrypted ZFS root mounts first, and then it unlocks the swap partition. But when resuming from hibernation, the kernel needs to read the hibernation image from swap &lt;em&gt;before&lt;/em&gt; mounting the root filesystem - otherwise, the saved state would be lost.&lt;/p&gt;
-&lt;p&gt;To solve this, we tell ZFSBootMenu to unlock the swap partition early, before mounting ZFS, by specifying its LUKS UUID.&lt;/p&gt;
+&lt;p&gt;To solve this, we store the required kernel parameters in the ZFS dataset properties. ZFSBootMenu passes them to the selected Void Linux kernel and initramfs. Dracut then unlocks the swap partition early, using the keyfile embedded in the initramfs, before attempting to resume the system.&lt;/p&gt;
 &lt;p&gt;Get the UUID of your swap partition:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;blkid &amp;quot;$SWAP_DEVICE&amp;quot;
 &lt;/code&gt;&lt;/pre&gt;
@@ -1531,8 +1534,24 @@ xbps-install -S intel-ucode
 xbps-install -S linux-firmware-amd
 &lt;/code&gt;&lt;/pre&gt;
 
-&lt;p&gt;After installing microcode updates, regenerate the boot images and exit:&lt;/p&gt;
+&lt;p&gt;After installing microcode updates, regenerate the boot images:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;xbps-reconfigure -fa
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Verify that the generated initramfs contains everything required to unlock the swap partition during early boot:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;KERNEL_VERSION=$(ls /lib/modules | sort -V | tail -1)
+INITRAMFS=&amp;quot;/boot/initramfs-${KERNEL_VERSION}.img&amp;quot;
+
+lsinitrd -m &amp;quot;$INITRAMFS&amp;quot; | grep -w crypt &amp;gt;/dev/null ||
+  { echo &amp;quot;ERROR: crypt module is missing from initramfs&amp;quot;; exit 1; }
+
+lsinitrd &amp;quot;$INITRAMFS&amp;quot; | grep -F 'boot/volume.key' &amp;gt;/dev/null ||
+  { echo &amp;quot;ERROR: swap keyfile is missing from initramfs&amp;quot;; exit 1; }
+
+lsinitrd &amp;quot;$INITRAMFS&amp;quot; | grep -F 'etc/crypttab' &amp;gt;/dev/null ||
+  { echo &amp;quot;ERROR: crypttab is missing from initramfs&amp;quot;; exit 1; }
+
+echo &amp;quot;LUKS resume support successfully verified in $INITRAMFS&amp;quot;
 &lt;/code&gt;&lt;/pre&gt;
 
 &lt;h2&gt;Desktop Installation (Optional)&lt;/h2&gt;
@@ -1599,15 +1618,18 @@ reboot
 &lt;h2&gt;Post-Installation&lt;/h2&gt;
 &lt;p&gt;If everything went well, after entering your ZFS encryption password, you'll be greeted by the SDDM login screen.&lt;/p&gt;
 &lt;h2&gt;Testing Hibernation&lt;/h2&gt;
-&lt;p&gt;To verify that hibernation works correctly, you can clock the "Hibernate" button or:&lt;/p&gt;
+&lt;p&gt;To verify that hibernation works correctly, you can click the "Hibernate" button or:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;loginctl hibernate
 &lt;/code&gt;&lt;/pre&gt;
 
-&lt;p&gt;The system should power off. When you turn it back on, ZFSBootMenu will prompt for the password, unlock the swap partition, detect the hibernation image, and resume your session exactly where you left off.&lt;/p&gt;
-&lt;p&gt;If resume fails, check that:
-1. The LUKS UUID in the ZFS commandline property matches your swap partition
-2. The swap partition is large enough for your RAM
-3. The dracut configuration includes the crypttab and keyfile&lt;/p&gt;
+&lt;p&gt;The system should power off. When you turn it back on, ZFSBootMenu will prompt for the ZFS passphrase and load the selected boot environment. Void's dracut initramfs will then unlock the swap partition, detect the hibernation image, and resume your session exactly where you left off.&lt;/p&gt;
+&lt;p&gt;If resume fails, check that:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;The LUKS UUID in the ZFS commandline property matches your swap partition&lt;/li&gt;
+&lt;li&gt;The swap partition is large enough for your RAM&lt;/li&gt;
+&lt;li&gt;The &lt;code&gt;crypttab&lt;/code&gt; entry includes &lt;code&gt;x-initrd.attach&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;The initramfs contains the crypt module, &lt;code&gt;/boot/volume.key&lt;/code&gt;, and &lt;code&gt;/etc/crypttab&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
 &lt;h2&gt;Conclusion&lt;/h2&gt;
 &lt;p&gt;You now have a fully functional Void Linux system with native ZFS, full disk encryption, and working hibernation. The system is rolling, lightweight, and easy to maintain. Enjoy!&lt;/p&gt;</description>
       <guid isPermaLink="true">https://it-notes.dragas.net/2025/12/22/void-linux-zfs-hibernation-guide/</guid>
