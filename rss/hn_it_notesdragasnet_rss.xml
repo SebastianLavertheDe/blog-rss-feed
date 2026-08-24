@@ -5,7 +5,7 @@
     <link>https://it-notes.dragas.net</link>
     <description>Scattered IT Notes - by Stefano Marinelli</description>
     <language>en</language>
-    <lastBuildDate>Mon, 24 Aug 2026 07:06:48 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 24 Aug 2026 08:54:06 +0000</lastBuildDate>
     <item>
       <title>Aggressive caching for a Mastodon reverse proxy: what to cache, what to never cache, and why content negotiation will eventually betray you</title>
       <link>https://it-notes.dragas.net/2026/06/05/aggressive_caching_for_a_mastodon_reverse_proxy/</link>
@@ -1220,10 +1220,12 @@ service samba_server start
 &lt;li&gt;&lt;a href="https://docs.zfsbootmenu.org/en/latest/guides/void-linux/uefi.html"&gt;Void Linux (UEFI) from ZFSBootMenu&lt;/a&gt; - which doesn't address swap. Using a zvol for swap (not the best solution) prevents hibernation and resume. Our approach uses a separate encrypted swap partition that enables proper resume.&lt;/li&gt;
 &lt;li&gt;&lt;a href="https://docs.voidlinux.org/installation/guides/fde.html"&gt;Void Linux Full Disk Encryption&lt;/a&gt; - excellent for btrfs or ext4, but we want ZFS. We'll borrow the swap configuration approach from here.&lt;/li&gt;
 &lt;li&gt;&lt;a href="https://compactbunker.org/p/install-void-linux/"&gt;Install Void Linux with a desktop environment + Flatpaks&lt;/a&gt; - for the desktop portion.&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://docs.voidlinux.org/config/graphical-session/gnome.html"&gt;GNOME on Void Linux&lt;/a&gt; - for the GNOME and GDM setup.&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://github.com/void-linux/void-mklive/blob/master/mkiso.sh"&gt;Void Linux live image builder&lt;/a&gt; - for the XFCE package selection and LightDM configuration used by the official image.&lt;/li&gt;
 &lt;/ul&gt;
 &lt;p&gt;If your setup differs from what's described here (NVMe disk, UEFI boot, Secure Boot disabled), consult the linked guides for explanations and variations.&lt;/p&gt;
 &lt;h3&gt;Installation Script (Optional)&lt;/h3&gt;
-&lt;p&gt;If you want to reproduce this setup quickly, I maintain a script that automates the procedure described in this guide: disk partitioning, ZFS pool and dataset creation, encrypted swap for hibernation resume, dracut configuration, and ZFSBootMenu EFI setup. An optional KDE Plasma desktop installation is also supported.&lt;/p&gt;
+&lt;p&gt;If you want to reproduce this setup quickly, I maintain a script that automates the procedure described in this guide: disk partitioning, ZFS pool and dataset creation, encrypted swap for hibernation resume, dracut configuration, and ZFSBootMenu EFI setup. It can install KDE Plasma, GNOME, XFCE, or a minimal system without a desktop. KDE remains the default.&lt;/p&gt;
 &lt;p&gt;The script is interactive and will ask for the required parameters (target disk, timezone and keymap, passphrases, desktop options). &lt;a href="https://brew.bsd.cafe/stefano/void-zfs-hibernation"&gt;Requirements, usage instructions, and known limitations are documented in the repository README&lt;/a&gt;&lt;/p&gt;
 &lt;p&gt;That said, I still recommend going through the manual process at least once. Understanding each step is part of the value of this setup, especially when troubleshooting or adapting it to different hardware.&lt;/p&gt;
 &lt;h2&gt;Boot Environment&lt;/h2&gt;
@@ -1527,7 +1529,7 @@ efibootmgr -c -d &amp;quot;$DISK&amp;quot; -p &amp;quot;$BOOT_PART&amp;quot; \
 &lt;p&gt;Void Linux is modular, so you may need to install additional packages for your specific hardware. For the Intel microcode, you need the non-free repo:
 For example:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;# For Intel CPUs
-xbps-install -S void-repo-nonfree 
+xbps-install -S void-repo-nonfree
 xbps-install -S intel-ucode
 
 # For AMD CPUs/GPUs
@@ -1554,22 +1556,63 @@ lsinitrd &amp;quot;$INITRAMFS&amp;quot; | grep -F 'etc/crypttab' &amp;gt;/dev/nu
 echo &amp;quot;LUKS resume support successfully verified in $INITRAMFS&amp;quot;
 &lt;/code&gt;&lt;/pre&gt;
 
-&lt;h2&gt;Desktop Installation (Optional)&lt;/h2&gt;
-&lt;p&gt;If all you need is a minimal system or a server, you're done and ready to reboot. For a complete desktop environment, continue with the following steps.&lt;/p&gt;
-&lt;h3&gt;Install Core Desktop Packages&lt;/h3&gt;
-&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;xbps-install -S vim nano dbus elogind polkit xorg xorg-fonts xorg-video-drivers xorg-input-drivers dejavu-fonts-ttf terminus-font NetworkManager pipewire alsa-pipewire wireplumber xdg-user-dirs unzip gzip xz 7zip
+&lt;h2&gt;Choose an Installation Profile&lt;/h2&gt;
+&lt;p&gt;At this point, you can keep the system minimal or install KDE Plasma, GNOME, or XFCE. The desktop profiles share the same networking, audio, login management, and user setup; only the desktop packages and display manager differ.&lt;/p&gt;
+&lt;h3&gt;Minimal System&lt;/h3&gt;
+&lt;p&gt;For a server or a console-only installation, enable &lt;code&gt;dhcpcd&lt;/code&gt; and skip the desktop sections below:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;xbps-install -S dhcpcd
+ln -s /etc/sv/dhcpcd /etc/runit/runsvdir/default/
+exit
 &lt;/code&gt;&lt;/pre&gt;
 
-&lt;h3&gt;Install KDE Plasma&lt;/h3&gt;
+&lt;p&gt;Then continue from &lt;a href="#exit-and-reboot"&gt;Exit and Reboot&lt;/a&gt;.&lt;/p&gt;
+&lt;h2&gt;Desktop Installation&lt;/h2&gt;
+&lt;h3&gt;Install Core Desktop Packages&lt;/h3&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;xbps-install -S vim nano dbus elogind polkit sudo xorg xorg-fonts xorg-video-drivers xorg-input-drivers dejavu-fonts-ttf terminus-font NetworkManager pipewire alsa-pipewire wireplumber xdg-user-dirs unzip gzip xz 7zip
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h3&gt;Install the Desktop Environment&lt;/h3&gt;
+&lt;p&gt;Choose one of the following three options.&lt;/p&gt;
+&lt;p&gt;For KDE Plasma:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;xbps-install -S kde-plasma dolphin konsole firefox kdegraphics-thumbnailers ffmpegthumbs vlc ark kwrite discover kf6-purpose
 &lt;/code&gt;&lt;/pre&gt;
 
+&lt;p&gt;For GNOME:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;xbps-install -S gnome firefox
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;The &lt;code&gt;gnome&lt;/code&gt; package includes GDM. GNOME starts a Wayland session by default, while the Xorg session remains available from the login screen.&lt;/p&gt;
+&lt;p&gt;For XFCE:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;xbps-install -S xfce4 lightdm lightdm-gtk-greeter firefox gnome-themes-standard gnome-keyring network-manager-applet gvfs-afc gvfs-mtp gvfs-smb udisks2 xfce4-pulseaudio-plugin
+
+mkdir -p /etc/lightdm
+echo xfce &amp;gt; /etc/lightdm/.session
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;This is the same set of integration packages used by Void's XFCE image. XFCE runs as a conventional Xorg session through LightDM.&lt;/p&gt;
 &lt;h3&gt;Enable Services&lt;/h3&gt;
-&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;ln -s /etc/sv/NetworkManager /etc/runit/runsvdir/default/
-ln -s /etc/sv/dbus /etc/runit/runsvdir/default/
-ln -s /etc/sv/udevd /etc/runit/runsvdir/default/
+&lt;p&gt;Enable the services shared by all three desktop profiles:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;ln -s /etc/sv/dbus /etc/runit/runsvdir/default/
+ln -s /etc/sv/elogind /etc/runit/runsvdir/default/
 ln -s /etc/sv/polkitd /etc/runit/runsvdir/default/
-ln -s /etc/sv/sddm /etc/runit/runsvdir/default/
+ln -s /etc/sv/NetworkManager /etc/runit/runsvdir/default/
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Disable services that would compete with NetworkManager or &lt;code&gt;elogind&lt;/code&gt;:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;rm -f /etc/runit/runsvdir/default/{dhcpcd,wpa_supplicant,wicd,connmand,acpid}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Finally, enable the display manager that belongs to the desktop you installed.&lt;/p&gt;
+&lt;p&gt;For KDE Plasma:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;ln -s /etc/sv/sddm /etc/runit/runsvdir/default/
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;For GNOME:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;ln -s /etc/sv/gdm /etc/runit/runsvdir/default/
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;For XFCE:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;ln -s /etc/sv/lightdm /etc/runit/runsvdir/default/
 &lt;/code&gt;&lt;/pre&gt;
 
 &lt;h3&gt;Configure PipeWire Audio&lt;/h3&gt;
@@ -1592,17 +1635,20 @@ xbps-install -S flatpak
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 &lt;/code&gt;&lt;/pre&gt;
 
-&lt;h3&gt;Create a Regular User and exit&lt;/h3&gt;
+&lt;h3&gt;Create a Regular User and Exit&lt;/h3&gt;
 &lt;p&gt;For desktop use, create a non-root user with appropriate group memberships.
 Replace &lt;code&gt;username&lt;/code&gt; with your desired username.&lt;/p&gt;
-&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;useradd -m username
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;echo '%wheel ALL=(ALL:ALL) ALL' &amp;gt; /etc/sudoers.d/wheel
+chmod 440 /etc/sudoers.d/wheel
+visudo -cf /etc/sudoers.d/wheel
+
+useradd -m -G video,wheel,plugdev,kvm,audio,network username
 passwd username
-usermod username -G video,wheel,plugdev,kvm,audio,network
 exit
 &lt;/code&gt;&lt;/pre&gt;
 
-&lt;h3&gt;Fix for NetworkManager&lt;/h3&gt;
-&lt;p&gt;xchroot will bind mount /etc/resolv.conf and leave an empty file. Network Manager won't like it. So let's clean it up:&lt;/p&gt;
+&lt;h3&gt;Fix NetworkManager's resolv.conf&lt;/h3&gt;
+&lt;p&gt;&lt;code&gt;xchroot&lt;/code&gt; will bind mount &lt;code&gt;/etc/resolv.conf&lt;/code&gt; and leave an empty file. NetworkManager won't like it, so let's clean it up:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;umount -l /mnt/etc/resolv.conf 2&amp;gt;/dev/null || true
 
 rm -f /mnt/etc/resolv.conf
@@ -1616,10 +1662,20 @@ reboot
 &lt;/code&gt;&lt;/pre&gt;
 
 &lt;h2&gt;Post-Installation&lt;/h2&gt;
-&lt;p&gt;If everything went well, after entering your ZFS encryption password, you'll be greeted by the SDDM login screen.&lt;/p&gt;
+&lt;p&gt;If everything went well, after entering your ZFS encryption password, you'll reach the login screen for the desktop you selected:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;KDE Plasma uses SDDM.&lt;/li&gt;
+&lt;li&gt;GNOME uses GDM, with Wayland selected by default and Xorg available as an alternative.&lt;/li&gt;
+&lt;li&gt;XFCE uses LightDM and Xorg.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The minimal profile boots to a console login and uses &lt;code&gt;dhcpcd&lt;/code&gt; for networking.&lt;/p&gt;
 &lt;h2&gt;Testing Hibernation&lt;/h2&gt;
-&lt;p&gt;To verify that hibernation works correctly, you can click the "Hibernate" button or:&lt;/p&gt;
+&lt;p&gt;On KDE, GNOME, or XFCE, you can use the desktop's Hibernate action or run:&lt;/p&gt;
 &lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;loginctl hibernate
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;On a minimal installation, use:&lt;/p&gt;
+&lt;pre class="highlight"&gt;&lt;code class="language-bash"&gt;ZZZ -Z
 &lt;/code&gt;&lt;/pre&gt;
 
 &lt;p&gt;The system should power off. When you turn it back on, ZFSBootMenu will prompt for the ZFS passphrase and load the selected boot environment. Void's dracut initramfs will then unlock the swap partition, detect the hibernation image, and resume your session exactly where you left off.&lt;/p&gt;
