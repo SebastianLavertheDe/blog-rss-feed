@@ -5,7 +5,782 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Thu, 27 Aug 2026 16:18:47 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 28 Aug 2026 01:25:53 +0000</lastBuildDate>
+    <item>
+      <title>Why do OpenAI's GPT-2 weights beat mine?  Part four: digging into dropout</title>
+      <link>https://www.gilesthomas.com/2026/08/why-do-openai-gpt2-weights-beat-mine-4-ift-dropout</link>
+      <description>&lt;p&gt;I'm still digging into a mystery about the models I've been training; although
+an increasing number of them beat the OpenAI GPT-2 small weights on the narrow
+technical measure of the loss they get on a test set, they're
+&lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro"&gt;not as good at an instruction-fine-tuning test&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;While reading about MoE models, I came across this paragraph in the
+&lt;a href="https://arxiv.org/pdf/2101.03961"&gt;Switch Transformers paper&lt;/a&gt;:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Our paper considers the common NLP approach
+  of pre-training on a large corpus followed by fine-tuning on smaller downstream tasks such
+  as summarization or question answering. One issue that naturally arises is overfitting since
+  many fine-tuning tasks have very few examples. During fine-tuning of standard
+  Transformers, Raffel et al. (2019) use dropout (Srivastava et al., 2014) at each layer to prevent
+  overfitting.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;So far, when running my IFT test, I'd been aiming to use the same dropout setting
+for the fine tune as the model concerned had used in its original
+pre-training.  That was just because it seemed natural.&lt;/p&gt;
+
+&lt;p&gt;But the goal of dropout is to prevent overfitting when training over multiple epochs
+-- or, at least, that's how most of what I've read explains why we
+don't need it on modern single-epoch training runs over large datasets.&lt;/p&gt;
+
+&lt;p&gt;If that's
+the case, though, when we do multiple epochs for a fine-tune with a more restricted dataset --
+exactly what I was doing for the IFT test -- it might make sense
+to use dropout, regardless of whether or not the model was pre-trained with it.
+The fine-tuning setup already tries to avoid overfitting by bailing out when a validation
+loss starts rising, but dropout might still help it avoid overfitting prematurely.&lt;/p&gt;
+
+&lt;p&gt;On the other hand, something felt a little wrong about fine-tuning a model with
+dropout if its pre-training had happened without it.  A model pre-trained with dropout have been trained
+on billions of tokens, and so the model will have spent a lot of effort learning
+to overcome the issues that dropout causes, but one trained without it won't have that benefit.  Suddenly exposing it to dropout in a much
+shorter fine-tuning run felt rather like asking someone who rarely drinks alcohol to take a
+few shots of whisky; I felt that the models might not be prepared for the effects.&lt;/p&gt;
+
+&lt;p&gt;As I looked into this more, I noticed another surprising thing -- there was an error in the
+configuration that I was using when fine-tuning the OpenAI models, both small and
+medium.  They were originally trained with dropout (or so it's believed --
+&lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the paper&lt;/a&gt; doesn't
+say, but "&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;"
+says that they were, and &lt;a href="https://huggingface.co/docs/transformers/v4.48.2/en/model_doc/gpt2#transformers.GPT2Config"&gt;this config on the Hugging Face GPT-2 code&lt;/a&gt;
+agrees).&lt;/p&gt;
+
+&lt;p&gt;But that actually made my original puzzle of why they outperformed my models on the IFT
+test seem even more perplexing, at least in the light of this idea.  If dropout
+was a good thing for fine-tuning, then so far they had been penalised by &lt;em&gt;not&lt;/em&gt; using it -- that is,
+they were even further ahead of my own models than I thought they were.&lt;/p&gt;
+
+&lt;p&gt;It was time to take a careful look.&lt;/p&gt;
+&lt;h3 id="the-fine-tunes"&gt;The fine-tunes&lt;/h3&gt;
+
+&lt;p&gt;I fixed the config for the OpenAI weights so that my setup had dropout set to 0.1 for
+them, then carefully revisited the config for all of my own models, and made sure that those
+ones matched reality (which they did).&lt;/p&gt;
+
+&lt;p&gt;Now, the IFT test that I've been running has two phases:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;Firstly, for each model, I run &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/2a9a25fb0488dcbadb7d17738ead3bbde4ebb539/ift_generate_test_responses.py"&gt;&lt;code&gt;ift_generate_test_responses.py&lt;/code&gt;&lt;/a&gt;.
+This script trains the specified model on an IFT dataset until validation loss
+starts rising.  It then uses the model from before that loss started going up to
+generate responses to a test set, and saves those responses to disk.  I made a small change
+to it so that the dropout used in the fine-tuning phase was a required command-line
+parameter, with three options: &lt;code&gt;model&lt;/code&gt; -- that is, what the model
+was pre-trained with -- &lt;code&gt;on&lt;/code&gt;, which forced it to 0.1, or &lt;code&gt;off&lt;/code&gt;, to force it to 0.&lt;/li&gt;
+&lt;li&gt;Next, I pass all of the saved test responses for all models into a second script,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/2a9a25fb0488dcbadb7d17738ead3bbde4ebb539/ift_judge.py"&gt;&lt;code&gt;ift_judge.py&lt;/code&gt;&lt;/a&gt;,
+which &lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;sends them to an LLM judge&lt;/a&gt;
+so that each model can get a score.  The script averages all scores across all
+questions for each model.  Check the link for more details of how that script works
+and tries to achieve consistency across models and responses.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Now, the nice thing about the judge script was that it didn't really care whether
+the result files it got came from different models or the same one; it just printed
+out a mapping of result files to scores.  So I realised I could use it to do
+a comparison of all models with all possible dropout settings.&lt;/p&gt;
+
+&lt;p&gt;For all of the models, I ran the &lt;code&gt;ift_generate_test_responses.py&lt;/code&gt; three times, once
+with each of the dropout settings: &lt;code&gt;model&lt;/code&gt;, &lt;code&gt;on&lt;/code&gt;, and &lt;code&gt;off&lt;/code&gt;.  Then I sent all of the
+resulting result files -- all models, and all dropout options for each -- to the LLM judge in
+one go, to see what it came up with.&lt;/p&gt;
+
+&lt;h3 id="the-results"&gt;The results&lt;/h3&gt;
+
+&lt;p&gt;Here are the results, consolidated into one table.  For each model, I have:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Its loss on my test set -- the technical measure of quality I mentioned near the
+start.  They're sorted by that column.&lt;/li&gt;
+&lt;li&gt;Whether or not the base training run -- the pre-train -- had dropout.&lt;/li&gt;
+&lt;li&gt;The number of fine-tuning epochs before validation loss started rising when the
+IFT run used a dropout setting identical to the pre-training (&lt;code&gt;model&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;The score that the model thus trained got from the LLM judge.&lt;/li&gt;
+&lt;li&gt;The fine-tuning epochs with dropout forced to be &lt;code&gt;off&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;The score for the dropout-off model.&lt;/li&gt;
+&lt;li&gt;The fine-tuning epochs for dropout forced to be &lt;code&gt;on&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;And finally the score for the resulting model from that.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;Base dropout&lt;/th&gt;
+  &lt;th&gt;&lt;code&gt;model&lt;/code&gt; epochs&lt;/th&gt;
+  &lt;th&gt;&lt;code&gt;model&lt;/code&gt; score&lt;/th&gt;
+  &lt;th&gt;&lt;code&gt;off&lt;/code&gt; epochs&lt;/th&gt;
+  &lt;th&gt;&lt;code&gt;off&lt;/code&gt; score&lt;/th&gt;
+  &lt;th&gt;&lt;code&gt;on&lt;/code&gt; epochs&lt;/th&gt;
+  &lt;th&gt;&lt;code&gt;on&lt;/code&gt; score&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
+  &lt;td&gt;3.231442&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;42.40&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;43.75&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;42.40&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained one long epoch&lt;/td&gt;
+  &lt;td&gt;3.324953&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;19.77&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;19.77&lt;/td&gt;
+  &lt;td&gt;19&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;7.17&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained two normal epochs&lt;/td&gt;
+  &lt;td&gt;3.326482&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;19.72&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;19.72&lt;/td&gt;
+  &lt;td&gt;16&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;12.92&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.418784&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;18.69&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;18.69&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;13.20&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.420089&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;21.46&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;21.46&lt;/td&gt;
+  &lt;td&gt;20&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;5.25&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;3.476802&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.74&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;13.22&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.74&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
+  &lt;td&gt;3.499677&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;23.49&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;26.00&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;23.49&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.538161&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.77&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.77&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;14.06&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;10.76&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;10.76&lt;/td&gt;
+  &lt;td&gt;19&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;7.36&lt;/strong&gt;&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;3.673623&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;19.71&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;17.72&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;19.71&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.683835&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;13.53&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;15.74&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+  &lt;td&gt;13.53&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;15.15&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;14.19&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;15.15&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.724507&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;14.02&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;14.33&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;14.02&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.729900&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;11.25&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;11.34&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;11.25&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;3.771478&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;12.02&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;14.67&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;12.02&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;3.943522&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;8.85&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;12.31&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;8.85&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;4.134991&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.56&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;15.04&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.56&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;4.166892&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.43&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;&lt;strong&gt;14.99&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+  &lt;td&gt;17.43&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;It's quite an intimidating wall of numbers, but there's a bunch of interesting stuff there.&lt;/p&gt;
+
+&lt;p&gt;Firstly: I've put the IFT score for each model where it was trained with the &lt;em&gt;opposite&lt;/em&gt; of
+its pre-training dropout in bold.  Let's look at the non-bold numbers first, though.&lt;/p&gt;
+
+&lt;h3 id="sanity-checks"&gt;Sanity checks&lt;/h3&gt;
+
+&lt;p&gt;If you scan down through the models, you'll see that the non-bold IFT scores -- that is,
+the one where the IFT test was done with the &lt;code&gt;model&lt;/code&gt; dropout, and then the one where it
+was done with dropout set explicitly to the same value as the &lt;code&gt;model&lt;/code&gt; one -- are identical
+in every case.  That is a really reassuring sanity check.  Remember, each of those numbers
+came from a different run of the &lt;code&gt;ift_generate_test_responses.py&lt;/code&gt; script -- but because
+there is a fixed random seed, they should have been identical.  They were presented to &lt;code&gt;ift_judge.py&lt;/code&gt; in the same way as a separate model's response.
+The fact that it came up with identical scores tells us that it judged them as being
+equal, which is solid evidence for its consistency in judging results in this run
+(which is something that can be hard to guarantee with an LLM).&lt;/p&gt;
+
+&lt;p&gt;Similarly, if you look through the numbers of training epochs, the &lt;code&gt;model&lt;/code&gt; epochs
+for each one matches the epochs with the dropout forced to match the model's pre-training
+setting, which is also reassuring -- it's certainly what you'd expect given a
+fixed random seed.&lt;/p&gt;
+
+&lt;h3 id="epoch-counts"&gt;Epoch counts&lt;/h3&gt;
+
+&lt;p&gt;Looking just at the &lt;code&gt;on&lt;/code&gt; and &lt;code&gt;off&lt;/code&gt; epochs columns, you can see something else
+interesting.  With dropout forced to be on, the number of fine-tuning epochs is
+always higher than the number of epochs with no dropout, except in the case of
+the OpenAI medium weights and "Cloud FineWeb, 8x B200 160 GiB", where it's the same.
+That makes intuitive sense, I think.  If you're discarding 10% of your activations when
+training a model, you'd expect it to take longer to converge.&lt;/p&gt;
+
+&lt;p&gt;But now let's look at the size of those changes.  If you compare the increase in the
+number of epochs needed to train with dropout forced to be on, you can see that the
+change is &lt;em&gt;much&lt;/em&gt; larger for those models that were pre-trained without dropout.
+The first of them, for example, "JAX, overtrained one long epoch", went up from 3 epochs
+to 19!  That's way larger than, say, the change from 5 to 7 for "JAX, no MHA bias, with dropout".&lt;/p&gt;
+
+&lt;p&gt;That was the first indication that something interesting was happening when using
+dropout to fine-tune models that had been pre-trained without it.&lt;/p&gt;
+
+&lt;p&gt;One question is whether so many epochs on a small dataset might just be a bad idea,
+regardless of whether the early-stopping from validation loss helps avoid overfitting.
+However, way back I did some &lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests#epochs-of-fine-tuning"&gt;investigations&lt;/a&gt;
+into the effect of the number of epochs of training, and found that while varying it
+changed the results somewhat -- as you'd expect -- the effect was surprisingly
+small, and didn't change anything about the fundamental mystery of why the GPT-2
+weights were so much better than mine.  So I think we can put that aside for now.&lt;/p&gt;
+
+&lt;h3 id="the-scores"&gt;The scores&lt;/h3&gt;
+
+&lt;p&gt;Now let's dig into those scores.  We can divide them into two groups; models that
+were helped by adding dropout, and models that were harmed.&lt;/p&gt;
+
+&lt;p&gt;In the "helped" group, we have these:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;"JAX, no MHA bias, with dropout", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and gained 4.52 points when the IFT run used dropout.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;, which was pre-trained &lt;strong&gt;without&lt;/strong&gt; dropout and gained 0.29 points.&lt;/li&gt;
+&lt;li&gt;"Cloud FineWeb, 8x A100 40 GiB", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and gained 1.99 points.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;, which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and gained 0.96 points.&lt;/li&gt;
+&lt;li&gt;"Local FineWeb-Edu extended train", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and gained 2.52 points.&lt;/li&gt;
+&lt;li&gt;"Local FineWeb-Edu train", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and gained 2.44 points.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;In the "harmed" group, we have:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;"OpenAI weights: medium", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and lost 1.35 points.&lt;/li&gt;
+&lt;li&gt;"JAX, overtrained one long epoch", which was pre-trained &lt;strong&gt;without&lt;/strong&gt; dropout and lost 12.6 points.&lt;/li&gt;
+&lt;li&gt;"JAX, overtrained two normal epochs", which was pre-trained &lt;strong&gt;without&lt;/strong&gt; dropout and lost 6.8 points.&lt;/li&gt;
+&lt;li&gt;"JAX, with MHA bias, no dropout", which was pre-trained &lt;strong&gt;without&lt;/strong&gt; dropout and lost 5.49 points.&lt;/li&gt;
+&lt;li&gt;"JAX, no MHA bias, no dropout", which was pre-trained &lt;strong&gt;without&lt;/strong&gt; dropout and lost 16.21 points.&lt;/li&gt;
+&lt;li&gt;"OpenAI weights: small", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and lost 2.51 points.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;, which was pre-trained &lt;strong&gt;without&lt;/strong&gt; dropout and lost 3.4 points.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;, which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and lost 2.21 points.&lt;/li&gt;
+&lt;li&gt;"Cloud FineWeb, 8x H100 80 GiB", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and lost 0.31 points.&lt;/li&gt;
+&lt;li&gt;"Cloud FineWeb, 8x A100 80 GiB", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and lost 0.09 points.&lt;/li&gt;
+&lt;li&gt;"Cloud FineWeb, 8x B200 160 GiB", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and lost 2.65 points.&lt;/li&gt;
+&lt;li&gt;"Local FineWeb train", which was pre-trained &lt;strong&gt;with&lt;/strong&gt; dropout and lost 3.46 points.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;There are some patterns there, and I think that putting them into a table
+sorted by the score increase/decrease is a good way to visualise them:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Base dropout&lt;/th&gt;
+  &lt;th&gt;Score change&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;4.52&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;2.52&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;2.44&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;1.99&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;0.96&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;0.29&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;-0.09&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;-0.31&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;-1.35&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;-2.21&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;-2.51&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;-2.65&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;-3.4&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;-3.46&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;-5.49&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained two normal epochs&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;-6.8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained one long epoch&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;-12.6&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;-16.21&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;One thing is pretty clear: with two exceptions, the models that were pre-trained
+with dropout are at the top, and the models that were pre-trained without are at
+the bottom.&lt;/p&gt;
+
+&lt;p&gt;Of the exceptions,
+&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt; is so close to "Local FineWeb train" that perhaps its
+position could be due to some kind of noise.  &lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt; is much more puzzling, however.
+It's a real outlier in terms of the models that were pre-trained with no dropout,
+with its &lt;em&gt;improvement&lt;/em&gt; of 0.29 compared to the next closest, with a decrease of 3.4.&lt;/p&gt;
+
+&lt;p&gt;But if we disregard that outlier for the time being, the pattern actually does fit rather
+well into my original suspicion about the risks of switching on dropout when fine-tuning
+a model that was pre-trained without it.  They really don't handle it very well!&lt;/p&gt;
+
+&lt;p&gt;On the other hand, it rather does put the kibosh on the idea that I based on
+the quote near the start of this post -- that fine-tuning with dropout is a good
+way to help the model learn with less risk of overfitting.  In my particular case -- these
+specific models, this particular fine-tuning task, with this IFT data -- dropout
+seems to generally have a negative effect on the fine-tuning results.  Even of those that were
+pre-trained with dropout, more than half got worse results when fine-tuned with it.&lt;/p&gt;
+
+&lt;p&gt;Another interesting thing that stands out from the table above is that the JAX
+models are at the top and the bottom.  The model that was pre-trained with dropout
+was the one that gained the most from fine-tuning with it (or, contrariwise, lost
+out the most if fine-tuned without it).  The models that were pre-trained without
+were the ones that were most harmed by being fine-tuned with.&lt;/p&gt;
+
+&lt;p&gt;If you look further up, at the original table of results, you'll see that the JAX
+models all did better than my other ones (which were trained using PyTorch) in terms of loss on
+my test set (the second column).  I've
+been chalking that up to two things: the JAX models would have started their pre-training
+with different random initial weights, and they were all trained in full-fat float32
+(unlike the PyTorch models, which used &lt;a href="https://docs.pytorch.org/docs/2.13/amp.html"&gt;AMP&lt;/a&gt;).
+Given that I &lt;a href="/2026/04/llm-from-scratch-32h-interventions-full-fat-float32"&gt;found&lt;/a&gt; that
+AMP had a negligible impact on training loss, I've been thinking that the "initial weights"
+aspect was the more important -- by chance, they happened to start in a place on
+the loss landscape with a route to a better minimum during training.&lt;/p&gt;
+
+&lt;p&gt;I don't think there's anything in these results that pushes against that theory, but
+it does suggest that there's some kind of "fragility" in the minima they have found;
+changing dropout from what they were pre-trained with seems to knock them out of their exceptional positions.&lt;/p&gt;
+
+&lt;p&gt;And finally, of course, the mystery around &lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;'s
+anomalous position remains.  I honestly don't have any theories at all about that one
+right now.  Interestingly, it was trained with an identical configuration to our
+other (but less extreme) exception, &lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;.  The difference
+is that the first was trained on my local RTX 3090, using gradient accumulation to
+get a global batch size of 96, while the second was trained on a cloud machine
+with 8x A100 GPUs with 40 GiB each, which (using DDP) got a global batch across all
+GPUs of 96 without gradient accumulation.   There's something going on there, but
+I'm not sure what.&lt;/p&gt;
+
+&lt;p&gt;Anyway, for now, I think it's time to wrap this one up.&lt;/p&gt;
+
+&lt;h3 id="conclusion"&gt;Conclusion&lt;/h3&gt;
+
+&lt;p&gt;The idea I started this post with -- that using dropout for the fine-tuning part
+of all of these IFT tests might be a good idea to avoid issues from the multi-epoch
+nature of the fine-tuning -- doesn't seem to hold up.  Dropout in the fine-tuning
+turned out to be more often harmful than helpful, regardless of whether a model was originally pre-trained
+with dropout or not.&lt;/p&gt;
+
+&lt;p&gt;However, exactly &lt;em&gt;how&lt;/em&gt; harmful it was seemed to be pretty strongly correlated with
+whether the model was originally pre-trained with dropout, the oddity of &lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;
+aside.&lt;/p&gt;
+
+&lt;p&gt;I think that while working further on solving this mystery, I should stick to not
+using dropout.  Because adding it on for the OpenAI models made their performance
+worse, I think that's principled -- it's quite the opposite of making a choice
+to try to sweep the mystery I'm trying to solve under the carpet :-)&lt;/p&gt;
+
+&lt;p&gt;So that means that my task in future posts in &lt;a href="/gpt-2-mysteries"&gt;this series&lt;/a&gt; is to explain this table (to go back to the format
+I've been using for the previous posts) -- the dropout &lt;code&gt;off&lt;/code&gt; numbers from the table above,
+with rank added:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;IFT epochs&lt;/th&gt;
+  &lt;th&gt;IFT score&lt;/th&gt;
+  &lt;th&gt;IFT rank&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
+  &lt;td&gt;3.231442&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;43.75&lt;/td&gt;
+  &lt;td&gt;1&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained one long epoch&lt;/td&gt;
+  &lt;td&gt;3.324953&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;19.77&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained two normal epochs&lt;/td&gt;
+  &lt;td&gt;3.326482&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;19.72&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.418784&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;18.69&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.420089&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;21.46&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;3.476802&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;13.22&lt;/td&gt;
+  &lt;td&gt;15&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
+  &lt;td&gt;3.499677&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;26.00&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.538161&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.77&lt;/td&gt;
+  &lt;td&gt;14&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;10.76&lt;/td&gt;
+  &lt;td&gt;18&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;3.673623&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;17.72&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.683835&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;15.74&lt;/td&gt;
+  &lt;td&gt;8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;14.19&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.724507&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.33&lt;/td&gt;
+  &lt;td&gt;12&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.729900&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;11.34&lt;/td&gt;
+  &lt;td&gt;17&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;3.771478&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.67&lt;/td&gt;
+  &lt;td&gt;11&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;3.943522&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;12.31&lt;/td&gt;
+  &lt;td&gt;16&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;4.134991&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;15.04&lt;/td&gt;
+  &lt;td&gt;9&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;4.166892&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;14.99&lt;/td&gt;
+  &lt;td&gt;10&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;The OpenAI small model still has a 4.54-point lead over the best of my own models,
+"JAX, no MHA bias, no dropout".&lt;/p&gt;
+
+&lt;p&gt;Previously I'd considered data quality as a possibility, and felt it was an unlikely
+cause.  I now think I may have been premature in that, and it's worth looking into.
+Those two "Local FineWeb-Edu" models near the bottom were trained with sub-optimal
+hyperparameters and -- while they don't do super-well in this test -- they do much
+better than their raw test loss numbers might suggest.&lt;/p&gt;
+
+&lt;p&gt;But while thinking about dropout, it occurred to me that there were other
+levers that I'd pulled in my &lt;a href="/2026/04/llm-from-scratch-32m-interventions-conclusion"&gt;interventions into my original base model&lt;/a&gt;
+that might be worth investigating &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Weight tying -- I honestly can't think of a reason why it might make a model better
+for this kind of task, but it certainly is true that the OpenAI weights use it --
+while none of the ones of mine that I've been testing do.  That feels worth a quick look, especially
+given that I have a copy of a model that I trained using it lying around.&lt;/li&gt;
+&lt;li&gt;AMP.  Apart from "JAX, no MHA bias, with dropout", all of the JAX models -- trained without AMP -- did pretty well
+in this test (though not close to the OpenAI models).  And again I have a PyTorch model
+that was trained without AMP on my disk somewhere, so I may as well throw it in and see how it does.&lt;/li&gt;
+&lt;li&gt;The learning rate.  All of these fine-tunes are happening with a fixed learning rate of
+0.00005.  While I really don't want to do some kind of sweep across multiple values
+for all of these models, perhaps there's some way I can try to relate the fine-tuning
+learning rate to what the models are "used to" from pre-training and see if that helps?&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;So, plenty of further possibilities for this investigation.  Stay tuned!&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;Other interventions that I decided not to check, at least at this point:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;QKV bias: all of my PyTorch models in the table apart from the two &lt;code&gt;stacked-interventions&lt;/code&gt;
+ones use it, so that's been thoroughly tested.&lt;/li&gt;
+&lt;li&gt;Weight decay: again, we have a mixture of values for that in the table and there's no
+obvious pattern.&lt;/li&gt;
+&lt;li&gt;Gradient clipping: likewise.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/08/why-do-openai-gpt2-weights-beat-mine-4-ift-dropout</guid>
+      <pubDate>Thu, 27 Aug 2026 19:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Adding diagrams to my static site generator with D2</title>
       <link>https://www.gilesthomas.com/2026/08/adding-d2</link>
@@ -3989,361 +4764,6 @@ almost entirely embeddings and the output head.&lt;/p&gt;
 </description>
       <guid isPermaLink="true">/2026/07/llm-parameter-counts</guid>
       <pubDate>Fri, 10 Jul 2026 21:30:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>poppy the training box, part 1: the beginnings</title>
-      <link>https://www.gilesthomas.com/2026/07/poppy-the-training-box-1-the-beginnings</link>
-      <description>&lt;p&gt;For a while I've been planning to put together a separate machine for local LLM
-training.  Until now, I've been using my desktop PC, &lt;code&gt;perry&lt;/code&gt;.  I have an RTX 3090
-installed, and can get useful training runs done (most recently,
-&lt;a href="/2026/07/llm-from-scratch-34b-building-and-training-gpt-2-small-in-jax"&gt;a 163M-parameter GPT-2 small style LLM in JAX&lt;/a&gt;),
-but there are a couple of problems.&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;perry&lt;/code&gt; is my daily driver.  If he's doing a training run, then everything is
-just a little bit sluggish as CPU and GPU alike are busy.&lt;/li&gt;
-&lt;li&gt;Although I don't play games often, it's annoying to have the option ruled out
-for days at a time.&lt;/li&gt;
-&lt;li&gt;While the GPU is busy with a training run, I can't do other experiments in parallel
--- for example, to scope out what the next step might be.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;And relatedly to all of those: the two-day limit to the training runs I've been doing is something I set
-because that's the maximum amount of time I'm willing to have &lt;code&gt;perry&lt;/code&gt; tied up.  It
-would be really interesting to try longer training runs!&lt;/p&gt;
-
-&lt;p&gt;I also have longer-term plans; a multi-GPU box would be interesting to put together --
-not just to have more power locally, but so that I could test larger-scale cloud
-multi-GPU
-training runs before starting to pay for expensive machines.  US$15.92 an hour to rent a machine
-isn't a &lt;em&gt;lot&lt;/em&gt; of money, but it adds up, especially if you're spending it while debugging
-parallelism issues.&lt;/p&gt;
-
-&lt;p&gt;And finally, I've always been interested in putting together a custom water-cooling
-loop in a PC.  I've been building my own machines since 1995 or so, but never got round
-to that side of things.  It sounds fun!&lt;/p&gt;
-
-&lt;p&gt;But despite all of those future plans, this is a fairly normal machine-building post -- how I repurposed an old PC,
-plugged in a second-hand RTX 3090 from eBay, tested it all, accidentally trained an LLM
-for 11 days, and almost cooked a CPU.&lt;/p&gt;
-
-&lt;p&gt;Over time, I expect
-to be posting more -- and more interesting -- build details.  Let's think of this as
-establishing the baseline.&lt;/p&gt;
-&lt;h2 id="poppy"&gt;&lt;code&gt;poppy&lt;/code&gt;&lt;/h2&gt;
-
-&lt;p&gt;Back before I moved to Lisbon, we had a holiday home here.  When we came over, I'd
-bring my laptop, but that was always somewhat unsatisfactory -- limited CPU power for
-work, limited GPU for my occasional gaming.&lt;/p&gt;
-
-&lt;p&gt;During Covid, we started staying in the holiday home for longer periods -- and this became
-too big of an annoyance to ignore.  So in 2020 I put together a small form-factor PC, which I
-named &lt;code&gt;poppy&lt;/code&gt;.  The constraints were:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Small enough to fit in a carry-on bag.  I was building the machine in London, and wanted
-to be able to bring her to Portugal easily, and to be able to bring her back if
-I wanted to.&lt;/li&gt;
-&lt;li&gt;Portable enough to quickly move around the flat.  In the holiday home, the dining
-room was my study, so I wanted to be able to keep &lt;code&gt;poppy&lt;/code&gt; there normally, but
-move her when we had guests for dinner.&lt;/li&gt;
-&lt;li&gt;Powerful enough to be able to run the games I was playing -- at the time I was a
-big fan of &lt;a href="https://www.ubisoft.com/en-us/game/assassins-creed/odyssey"&gt;Assassin's Creed Odyssey&lt;/a&gt;,
-which didn't need a flagship card, but wasn't lightweight either.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;The build was a bit fiddly, like all SFF PCs.  You can see the component list
-and build notes &lt;a href="https://pcpartpicker.com/b/J2Wbt6"&gt;here on PCPartPicker&lt;/a&gt;, but in short she had:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;An AMD Ryzen 5 3600 3.6GHz 6-Core CPU&lt;/li&gt;
-&lt;li&gt;A Noctua NH-L9a-AM4 CPU cooler&lt;/li&gt;
-&lt;li&gt;A Gigabyte X570 I AORUS PRO WIFI Mini ITX Motherboard&lt;/li&gt;
-&lt;li&gt;32 GiB Corsair Vengeance DDR4 RAM&lt;/li&gt;
-&lt;li&gt;2x Samsung 970 Evo 500 GB NVMe SSDs&lt;/li&gt;
-&lt;li&gt;A Zotac GTX 1660 Super 6 GiB GPU&lt;/li&gt;
-&lt;li&gt;A Lian Li PC-TU100 Mini ITX case&lt;/li&gt;
-&lt;li&gt;A Corsair SF450 450W SFF PSU&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;She looked like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/poppy-the-training-box-1-the-beginnings/poppy-original.jpg" alt="poppy in her original form" title="poppy in her original form" /&gt;&lt;/p&gt;
-
-&lt;p&gt;(Gosh, I'd forgotten how... vivid our wallpaper was in that dining room.)&lt;/p&gt;
-
-&lt;p&gt;For scale -- that case is slightly taller than two cans of coke stacked on top of
-each other.  So, pretty small.&lt;/p&gt;
-
-&lt;p&gt;When we moved to Lisbon full-time, I brought &lt;code&gt;perry&lt;/code&gt; with me from London, and while he's been upgraded
-several times since (including adding an RTX 3090 &lt;a href="/2024/02/llm-quantisation-weirdness"&gt;in late 2023&lt;/a&gt;),
-he's been my daily driver since.  So &lt;code&gt;poppy&lt;/code&gt; sat in the corner of my study, sad and unused :-(&lt;/p&gt;
-
-&lt;p&gt;It was time to bring her out again.  Initial plan: get her up and running in a new,
-larger case, with a PSU that could potentially handle three graphics cards.&lt;/p&gt;
-
-&lt;h2 id="getting-her-up-and-running-in-a-new-case"&gt;Getting her up and running in a new case&lt;/h2&gt;
-
-&lt;p&gt;Initially, I found that she wouldn't switch on: a quick check suggested that the
-problem was the PSU.  I'd had problems with SFF PSUs in the past, and given that
-the plan was to give her a new one, I just got one, along with a new, larger case
--- specifically:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;An &lt;a href="https://pcpartpicker.com/product/GwtLrH/asrock-phantom-gaming-pg-1600g-1600-w-80-gold-certified-fully-modular-atx-power-supply-pg-1600g"&gt;ASRock Phantom Gaming PG-1600G 1600W&lt;/a&gt;,
-which would have power in spades -- an RTX 3090 goes up to about 370W at full
-draw, so that should hopefully handle three of them plus a CPU without problems
-even if one or two of the GPUs had power spikes.&lt;/li&gt;
-&lt;li&gt;A &lt;a href="https://pcpartpicker.com/product/LbHqqs/fractal-design-north-xl-mesh-atx-full-tower-case-fd-c-nor1x-01"&gt;Fractal Design North XL&lt;/a&gt;.
-&lt;code&gt;perry&lt;/code&gt; was already in a North (not the XL variant) and I love the case; the XL
-one looked like a good option if I was going to be cramming more GPUs in there,
-and had plenty of space for water-cooling.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;A few days later, the parts arrived.  Here's a family photo:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/poppy-the-training-box-1-the-beginnings/family-photo.jpg" alt="perry, poppy and Cornélia" title="perry, poppy and Cornélia" /&gt;&lt;/p&gt;
-
-&lt;p&gt;&lt;code&gt;perry&lt;/code&gt; is to the left, &lt;code&gt;poppy&lt;/code&gt; centre, sitting on top of her new case, and Cornélia (wearing her Flower of Shame)
-is to the right.  For scale, Cornélia is quite a large cat.  (I appreciate that that is not
-immensely helpful.)&lt;/p&gt;
-
-&lt;p&gt;Time to put the old motherboard and the new PSU into the new case.  Here's what
-it looked like:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/poppy-the-training-box-1-the-beginnings/poppy-initial-internals.jpg" alt="poppy internals, old graphics card" title="poppy internals, old graphics card" /&gt;&lt;/p&gt;
-
-&lt;p&gt;The Mini-ITX motherboard in a case designed for full ATX looks comically like a postage
-stamp.&lt;/p&gt;
-
-&lt;p&gt;I switched her on, and luckily enough, everything worked!  Must have been a PSU issue.&lt;/p&gt;
-
-&lt;p&gt;The OS that she had was a more than three-year-old version of Arch, so I wiped
-the drives and installed the most recent version with my normal config, and it was
-time for a quick test.&lt;/p&gt;
-
-&lt;h2 id="an-llm-training-run-because-of-course-it-is"&gt;An LLM training run, because of course it is&lt;/h2&gt;
-
-&lt;p&gt;One of the nice things about having done all of this LLM training stuff recently is
-that you have a ready-made burn-in test for new hardware :-)   I didn't have my
-&lt;a href="/2026/07/llm-from-scratch-34b-building-and-training-gpt-2-small-in-jax"&gt;JAX training code&lt;/a&gt; yet,
-but I did have the &lt;a href="/2026/04/llm-from-scratch-32k-interventions-training-our-best-model-locally-gradient-accumulation"&gt;PyTorch one&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Now, with her GTX 1660 Super GPU, &lt;code&gt;poppy&lt;/code&gt; was clearly not going to be able to train
-an LLM of the size I could with &lt;code&gt;perry&lt;/code&gt;'s RTX 3090.  I did some fiddling around with
-the model and training run parameters, and found that I could fit in a cut-down version
-of GPT-2 small with this setup:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Vocab size: 50257 -- this was fixed because I was using the GPT-2 tokeniser.&lt;/li&gt;
-&lt;li&gt;Context length: down from 1024 to 512&lt;/li&gt;
-&lt;li&gt;Embedding dimensions: down from 768 to 512&lt;/li&gt;
-&lt;li&gt;Number of heads: down from 12 to 8&lt;/li&gt;
-&lt;li&gt;Number of layers: down from 12 to 8&lt;/li&gt;
-&lt;li&gt;QKV bias: no (different to GPT-2, but the same as my own best local model).&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I trained it with a microbatch size of 4, gradient accumulation over 16 steps, and
-all other hyperparameters the same as my normal training runs on &lt;code&gt;perry&lt;/code&gt;.  The number
-of training tokens went down -- the model had 76,933,120 parameters, so I needed to
-train for just over 20x that -- about 1.5B instead of the 3.2B I've been training my other
-models on.&lt;/p&gt;
-
-&lt;p&gt;I kicked that off, and out of interest, I kicked off another training run on &lt;code&gt;perry&lt;/code&gt;
-with the same setup to see what happened.&lt;/p&gt;
-
-&lt;p&gt;The &lt;code&gt;perry&lt;/code&gt; training run went normally -- GPU running at full blast, 368W, and it completed
-in about 9 hours.  That's less than 1/4 of the time my normal training runs take, which
-makes sense because time taken for this kind of thing scales roughly linearly with both the size of the model and
-the number of tokens, and both of those were about half the normal size.&lt;/p&gt;
-
-&lt;p&gt;&lt;code&gt;poppy&lt;/code&gt; was a bit more interesting.  In &lt;code&gt;nvtop&lt;/code&gt;, the GPU usage showed up as 100%, but
-with an "effective" utilisation of 53%.  The power draw matched the latter, being
-67W out of a total possible 125W.  I'm not quite sure what was causing that -- clearly
-there was a bottleneck somewhere.  Not really worth digging into, though, given that I
-was going to replace the card shortly.&lt;/p&gt;
-
-&lt;p&gt;Anyway, that took 963,257 seconds to run.  That's 267.57 hours, or just over 11 days.&lt;/p&gt;
-
-&lt;p&gt;Yikes.&lt;/p&gt;
-
-&lt;p&gt;What's kind of interesting there is that this training run not only took much longer
-(which is only to be expected), but that it used more electricity.  67W over 267.57 hours
-is just short of 18kWh, whereas 368W over 9 hours is about 3.3kWh.&lt;/p&gt;
-
-&lt;p&gt;Buy an RTX 3090, save the planet!&lt;/p&gt;
-
-&lt;p&gt;I decided to run my normal evals to confirm that what had come out the other end
-was sane.  When asked to complete "Every effort moves you", &lt;code&gt;perry&lt;/code&gt;'s model said:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Every effort moves you and your friends. The key is keeping you informed. But, you still need to be cautious about&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;And &lt;code&gt;poppy&lt;/code&gt;'s said:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Every effort moves you forward. Every week, you make adjustments to a certain level—just as soon as you leave your&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Those were actually rather good, I thought!  And looking at my normal loss test
-confirmed that the models really weren't that bad; &lt;code&gt;perry&lt;/code&gt;'s got 3.855702, and
-&lt;code&gt;poppy&lt;/code&gt;'s 3.855981.  That was actually better than the 3.943522 I'd got on &lt;code&gt;perry&lt;/code&gt;
-before &lt;a href="/2026/02/llm-from-scratch-32a-interventions-baseline-model"&gt;I went down my rabbit hole of optimising hyperparameters&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;So, that was an interesting test -- I was talking to ChatGPT about it at the time
-and it called it "maybe an art project", which I thought was amusing if a bit arch.&lt;/p&gt;
-
-&lt;p&gt;Time to do something a bit more useful.&lt;/p&gt;
-
-&lt;h2 id="an-rtx-3090"&gt;An RTX 3090&lt;/h2&gt;
-
-&lt;p&gt;Finding an RTX 3090 for a decent price from a trustworthy-seeming vendor is kind of
-hard right now.  But it's still the sweet spot for price-performance if you're looking
-to train models locally, so I set up an alert on eBay, and eventually one popped up
-in Bulgaria.  I bought it, and a few days later, this turned up:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/poppy-the-training-box-1-the-beginnings/new-rtx-3090.jpg" alt="Shiny new RTX 3090" title="Shiny new RTX 3090" /&gt;&lt;/p&gt;
-
-&lt;p&gt;It's actually not as ugly as it looks in that photo -- it's considerably uglier.  The
-stuff that looks a bit like crinkled aluminium foil is really white plastic with a
-kind of crystalline texture.
-Made me glad that I'd gone for the mesh-sided case rather than the glass one.&lt;/p&gt;
-
-&lt;p&gt;Well, I hadn't bought it for the looks.  I removed the old GTX 1660, and put in the
-new card, switched it on, and:&lt;/p&gt;
-
-&lt;p&gt;&lt;video controls&gt;
-  &lt;source src="/post-assets/poppy-the-training-box-1-the-beginnings/disco-3090.mp4" type="video/mp4"&gt;
-&lt;/video&gt;&lt;/p&gt;
-
-&lt;p&gt;Wow, a disco in my PC.  Lovely.&lt;/p&gt;
-
-&lt;h2 id="testing-phase-1"&gt;Testing, phase 1&lt;/h2&gt;
-
-&lt;p&gt;It was time to kick off another training run to see if it worked.  This time, I did
-my normal GPT-2 small sized train with optimised hyperparameters.  It ran for about ten
-minutes, and then &lt;code&gt;poppy&lt;/code&gt; switched herself off.&lt;/p&gt;
-
-&lt;p&gt;That didn't look good.&lt;/p&gt;
-
-&lt;p&gt;I spent some time digging around trying to work out why my new graphics card was broken,
-and then happened to be sending the video above to a friend, and spotted something.&lt;/p&gt;
-
-&lt;p&gt;Check out the Noctua fan -- the beige and brown one you can see behind the cooler
-mount, above the graphics card.  It wasn't spinning.  That's the CPU cooler fan and
-should always be spinning, even if slowly, when the machine is on.&lt;/p&gt;
-
-&lt;p&gt;I log basic metrics for all of my PCs to a central InfluxDB instance, so I checked that
-out and:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/poppy-the-training-box-1-the-beginnings/cpu-temp-spike.jpg" alt="Crispy CPU" title="Crispy CPU" /&gt;&lt;/p&gt;
-
-&lt;p&gt;A CPU temperature spike up to about 115°C!  Not good.  Clearly an emergency thermal
-shutdown from the CPU.&lt;/p&gt;
-
-&lt;p&gt;I initially thought that I must have knocked the fan cable loose
-while plugging in the new GPU -- plausible, though they were quite far apart -- but
-unplugging then reseating it, then powering up the machine still didn't start the fan spinning.
-And it was not visible in the BIOS.&lt;/p&gt;
-
-&lt;p&gt;I then zoomed out a bit in Grafana; I only keep 30 days' worth of metrics,
-and it had been more than a month since I did my original burn-in test, so I didn't
-have anything for that.  But I did have this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/poppy-the-training-box-1-the-beginnings/long-term-high-cpu-temp.jpg" alt="Long-term spicy CPU" title="Long-term spicy CPU" /&gt;&lt;/p&gt;
-
-&lt;p&gt;&lt;code&gt;poppy&lt;/code&gt; had been idle for all of that time, and was averaging CPU temps of over
-70°C.  The dropoff prior to running the test was because she'd had a chance to
-cool down while I installed the GPU.  Having spent ages setting up my InfluxDB
-monitoring stuff so that I have metrics for everything, I should probably actually look at them every
-now and then, because the fan had obviously not been doing anything for a month or so.&lt;/p&gt;
-
-&lt;p&gt;Well, thank goodness for Amazon next-day delivery.  I bought a new
-&lt;a href="https://www.amazon.es/-/pt/dp/B009NQM7V2"&gt;Noctua NF-A9x14 PWM&lt;/a&gt; (praying that
-the problem was the fan and not the header on the motherboard), and when it arrived,
-I put it in.&lt;/p&gt;
-
-&lt;h2 id="testing-phase-2"&gt;Testing, phase 2&lt;/h2&gt;
-
-&lt;p&gt;This time, when I powered her on, the fan was spinning.  Phew.  I left her running
-for an hour, and the CPU temperature stabilised at 35.5°C.  Next, I kicked off a
-version of my standard LLM training run with the number of tokens reduced so that
-it would run for an hour.&lt;/p&gt;
-
-&lt;p&gt;During that, the CPU temperature went up to a moderately-toasty
-76°C -- not ideal, but remember that with the broken fan, she was running that hot
-at idle.  It seemed a bit odd that it was that hot at 10% CPU usage, but given that one
-core was running at 100%, it didn't seem totally off.  The heatsink and fan are designed
-for SFF PCs anyway, and those tend to run somewhat hot.&lt;/p&gt;
-
-&lt;p&gt;The GPU temperature also went up to 70°C and stabilised there, while
-power draw was stably about 368W out of 370W, and GPU utilisation at 100%.
-That was particularly pleasing because Nvidia cards throttle at 83°C or so by default, so if I was getting
-a lower temperature at full power, the fans clearly had some headroom for cooling.&lt;/p&gt;
-
-&lt;p&gt;Once that was completed, it was time for another full training run for a burn-in.&lt;/p&gt;
-
-&lt;h2 id="one-of-these-days-ill-do-something-that-doesnt-involve-training-an-llm-i-promise"&gt;One of these days I'll do something that doesn't involve training an LLM, I promise&lt;/h2&gt;
-
-&lt;p&gt;I kicked off my normal run.  CPU and GPU temperatures stabilised at the same level as
-they had with the one-hour test, which was promising, so it was just a question of
-waiting...&lt;/p&gt;
-
-&lt;p&gt;...until I got this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 144,531.113 seconds&lt;/span&gt;
-&lt;span class="go"&gt;Tokens seen: 3,260,252,160&lt;/span&gt;
-&lt;span class="go"&gt;Throughput: 22,557 tokens/second&lt;/span&gt;
-&lt;span class="go"&gt;Final train loss: 3.530&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;About 40 hours, which is pretty much standard -- certainly the same as I'd expect
-from &lt;code&gt;perry&lt;/code&gt;.  The smoke test:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Every effort moves you and your customers to the best possible extent.&lt;/span&gt;
-&lt;span class="go"&gt;Our expertise and expertise have led to our ability to&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Don't you just love it when your LLM tries to sell you something? &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;
-But anyway, loss on the test set was 3.548880, which is essentially the same as
-the same training run on &lt;code&gt;perry&lt;/code&gt; too.&lt;/p&gt;
-
-&lt;p&gt;Success!&lt;/p&gt;
-
-&lt;h2 id="all-done-for-now"&gt;All done for now&lt;/h2&gt;
-
-&lt;p&gt;So, now &lt;code&gt;poppy&lt;/code&gt; is a properly-configured training machine -- one RTX 3090, a CPU
-that runs a bit hot but at least doesn't do emergency shutdowns, and a case and
-a PSU with enough space for more GPUs.&lt;/p&gt;
-
-&lt;p&gt;I think that the next step will be to move on to water cooling.  In order to support
-more than one GPU, I'll need a new motherboard and probably a new CPU, so I don't think
-there's any point in watercooling the latter, despite its toastiness -- I'd just be buying
-a waterblock for it that I'd throw away in the not-too-distant future.&lt;/p&gt;
-
-&lt;p&gt;Instead, I'll get the block for the GPU, and set up a loop to cool just that.
-Who knows -- maybe I can get rid of that horrendous RGB stuff at the same time!&lt;/p&gt;
-
-&lt;p&gt;We live in hope.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;Also, that "expertise and expertise" tiny model smell.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/07/poppy-the-training-box-1-the-beginnings</guid>
-      <pubDate>Thu, 09 Jul 2026 01:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
