@@ -5,7 +5,107 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Sat, 29 Aug 2026 17:37:55 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 29 Aug 2026 20:44:09 +0000</lastBuildDate>
+    <item>
+      <title>Technical note: transfer files over an ethernet patch cable</title>
+      <link>https://maurycyz.com/misc/etherfiles/</link>
+      <description>&lt;!-- mksite: start of content --&gt;
+&lt;p&gt;
+
+It's possible to just connect two computers together with Ethernet and do a bit of IP configuration:
+&lt;/p&gt;&lt;p&gt;
+&lt;pre&gt;
+&lt;h-c&gt;# On &lt;h-s&gt;sender&lt;/h-s&gt;...&lt;/h-c&gt;
+
+&lt;h-n&gt;ip address add&lt;/h-n&gt; dev &lt;h-s&gt;eth0&lt;/h-s&gt; &lt;h-v&gt;fd42:dead:beef::1/48&lt;/h-v&gt;
+&lt;h-n&gt;ip link&lt;/h-n&gt; set dev &lt;h-s&gt;eth0&lt;/h-s&gt; &lt;h-v&gt;up&lt;/h-v&gt;
+
+&lt;h-c&gt;# On &lt;h-v&gt;receiver&lt;/h-v&gt;...&lt;/h-c&gt;
+
+&lt;h-n&gt;ip address add&lt;/h-n&gt; dev &lt;h-s&gt;eth0&lt;/h-s&gt; &lt;h-v&gt;fd42:dead:beef::2/48&lt;/h-v&gt;
+&lt;h-n&gt;ip link&lt;/h-n&gt; set dev &lt;h-s&gt;eth0&lt;/h-s&gt; &lt;h-v&gt;up&lt;/h-v&gt;
+&lt;/pre&gt;
+&lt;/p&gt;&lt;p&gt;
+After a few seconds, pings should work:
+&lt;/p&gt;&lt;p&gt;
+&lt;pre&gt;
+&lt;h-c&gt;# On &lt;h-v&gt;receiver&lt;/h-v&gt;...&lt;/h-c&gt;
+
+/ # &lt;h-n&gt;ping&lt;/h-n&gt; &lt;h-v&gt;fd42:dead:beef::1&lt;/h-v&gt;
+64 bytes from fd42:dead:beef::1: icmp_seq=1 ttl=64 time=0.649 ms
+64 bytes from fd42:dead:beef::1: icmp_seq=2 ttl=64 time=0.376 ms
+64 bytes from fd42:dead:beef::1: icmp_seq=3 ttl=64 time=0.414 ms
+64 bytes from fd42:dead:beef::1: icmp_seq=4 ttl=64 time=0.340 ms
+&lt;/pre&gt;
+&lt;/p&gt;&lt;p&gt;
+... and so should this:
+&lt;/p&gt;&lt;p&gt;
+&lt;pre&gt;
+&lt;h-c&gt;# On &lt;h-v&gt;receiver&lt;/h-v&gt;...&lt;/h-c&gt;
+
+&lt;h-n&gt;socat&lt;/h-n&gt; - TCP6-LISTEN:&lt;h-v&gt;1234&lt;/h-v&gt; | &lt;h-n&gt;dd&lt;/h-n&gt; &lt;h-s&gt;status&lt;/h-s&gt;=&lt;h-v&gt;progress&lt;/h-v&gt; &lt;h-n&gt;&amp;gt;&lt;/h-n&gt; &lt;h-s&gt;big_file.tar.gz&lt;/h-s&gt;
+
+&lt;h-c&gt;# On &lt;h-s&gt;sender&lt;/h-s&gt;...&lt;/h-c&gt;
+
+&lt;h-n&gt;socat&lt;/h-n&gt; - 'TCP6-CONNECT:&lt;h-v&gt;[fd42:dead:beef::2]&lt;/h-v&gt;:&lt;h-v&gt;1234&lt;/h-v&gt;' &lt;h-n&gt;&amp;lt;&lt;/h-n&gt; &lt;h-s&gt;big_file.tar.gz&lt;/h-s&gt;
+&lt;/pre&gt;
+&lt;/p&gt;&lt;p&gt;
+&lt;note-box&gt;
+These commands assume you are using Linux, but this trick works everywhere.
+&lt;/note-box&gt;
+&lt;/p&gt;&lt;p&gt;
+A nothing-special patch cable and ethernet jack should have no problem hitting ~900 Mbits/second, which is 6.7 GB per minute.
+Fancy network cards will allow speeds orders of magnitude faster, but it's already much faster than USB flash or cloud storage. 
+&lt;/p&gt;&lt;p&gt;
+&lt;h1&gt;&lt;em&gt;Other options&lt;/em&gt;&lt;/h1&gt;
+&lt;/p&gt;&lt;p&gt;
+... for transferring a file larger than 10 GB or so between two machines a few meters apart.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Cloud storage&lt;/em&gt;: upload it to a server and download it from the other machine.
+&lt;/p&gt;&lt;p&gt;
+In most cases, this will be glacially slow, both because of slow internet connections and cloud providers throttling traffic.
+Worse, the file has to be transferred over the network twice which doubles the time it takes.
+&lt;/p&gt;&lt;p&gt;
+Also, it can be expensive unless you already have a suitable server.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Direct TCP&lt;/em&gt; over LAN is better, but WiFi is still quite slow and with random dropouts:
+those multi-gigabit speed claims are dubious at best and certainly won't be reached in a typical home networking environment (walls, interference, long distances, etc)
+&lt;/p&gt;&lt;p&gt;
+However, if your house is wired for gigabit Ethernet, this can work great. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Removable storage&lt;/em&gt; is quite slow unless you are willing to spend a lot of money.
+&lt;/p&gt;&lt;p&gt;
+Even if you do, it's often limited by the cable:
+USB theoretically supports high speeds... with a (near mythical) perfect cable and pristine connectors.
+&lt;/p&gt;&lt;p&gt;
+I have only single cable and peripheral pair that actually reaches gigabit speeds, which has an MSRP of ~2300$.
+(and that only works if plugged into the right USB port at the right angle)
+&lt;/p&gt;&lt;p&gt;
+Also, it has the same problem as cloud storage, having to copy data on and off the drive effectively halves the speed.
+Unlike Ethernet, directly connecting two computers together won't work because USB is based around a host/device distinction.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Really&lt;/em&gt;, Ethernet is the only common connection that can reliably reach gigabit speeds between two random devices using inexpensive cables.
+It's also truly differential (with transformers!) which makes it resistant to RFI and ground level shifts.
+&lt;/p&gt;&lt;p&gt;
+I think it's underappreciated for non-internet applications and doesn't even need a local network:
+point to point wiring is perfectly fine. 
+&lt;/p&gt;&lt;p&gt;
+It also doesn't need a TCP/IP stack:
+raw link-layer frames are perfectly fine even on a switched LAN.
+This makes for a very simple way to move data to and from a microcontroller.
+&lt;/p&gt;&lt;p&gt;
+&lt;h1&gt;&lt;em&gt;Related&lt;/em&gt;:&lt;/h1&gt;
+&lt;link-box&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;a href=/misc/etherfiles/ethtransfer.sh&gt;ethtransfer.sh&lt;/a&gt;: A simple shell script for file copies&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/link-box&gt;
+&lt;/p&gt;
+&lt;!-- mksite: end of content --&gt;
+				</description>
+      <guid isPermaLink="true">http://maurycyz.com/misc/etherfiles/</guid>
+      <pubDate>Sat, 29 Aug 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Uranium from Příbram (Czechia)</title>
       <link>https://maurycyz.com/misc/rocks3/</link>
@@ -615,297 +715,6 @@ However, due to my rather terrible southern horizon, this part of the sky only r
 				</description>
       <guid isPermaLink="true">http://maurycyz.com/astro/ngc7497/</guid>
       <pubDate>Thu, 16 Jul 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Making cooled clothing:</title>
-      <link>https://maurycyz.com/projects/cooled/</link>
-      <description>&lt;!-- mksite: start of content --&gt;
-&lt;p&gt;
-
-Summer gets really hot, and it's not going to &lt;a href=https://gml.noaa.gov/ccgg/trends/mlo.html&gt;get better&lt;/a&gt; anytime soon.
-At my place, it isn't actively dangerous &lt;i&gt;yet&lt;/i&gt;, but it's still unpleasant. 
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;A normal air conditioner&lt;/em&gt; uses a low boiling-point liquid:
-something like liquid propane can boil down to -42 C.
-Just like water, it's evaporation absorbs a lot of heat and the remaining liquid will become very cold.
-&lt;!-- snip --&gt;
-&lt;/p&gt;
-&lt;p&gt;
-Of course, releasing the gas would be wasteful and dangerous,
-so the vapor is collected and compressed:
-This increases the boiling point, allowing it to condense back into a liquid.
-&lt;/p&gt;&lt;p&gt;
-To complete the cycle, the condensed refrigerant is cooled to ambient in a radiator before being passed through a flow restriction to reduce it's pressure:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=vapor.svg&gt;
-&lt;center&gt;A fridge or AC (depending on the size of the box)&lt;/center&gt;
-&lt;!--
-  Why did I draw a diagram of a heat pump even though this post isn't about them?
-  Who knows...
---&gt;
-&lt;/p&gt;&lt;p&gt;
-While excellent for cooling a building, there's no way to fit this inside a shirt:
-the compressor and hot-side radiator are bulky and require a source of electricity.
-&lt;/p&gt;&lt;p&gt;
-&lt;!--  Peltier cooling --&gt;
-&lt;em&gt;Thermometric cooling sounds great&lt;/em&gt;:
-replace the plumbing with a semiconductor junction.
-&lt;/p&gt;&lt;p&gt;
-Except they don't work particularly well.
-Most coolers produce several times more heat than they remove:
-this causes them to overheat unless they have a huge radiator.
-&lt;/p&gt;&lt;p&gt;
-... on top of their massive power draw and high cost...
-&lt;/p&gt;&lt;p&gt;
-They do find some use in ultra-small scale applications, but suck for everything else.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Evaporative cooling&lt;/em&gt; is the single most common hot day "hack":
-just a bit of water and some airflow for instant "AC".
-&lt;/p&gt;&lt;p&gt;
-... but it only works at low humidity.
-In most climates (including mine) it's entirely useless when you'd need it the most.
-&lt;/p&gt;&lt;p&gt;
-&lt;!-- Phase change cooling --&gt;
-&lt;em&gt;Ok, but what if I could leave the fridge at home and take the cold with me&lt;/em&gt;?
-&lt;/p&gt;&lt;p&gt;
-Melting one gram of ice will bottle up a whole 333 joules of heat while it stays at a constant temperature.
-&lt;/p&gt;
-&lt;!--
-&lt;details&gt;
-&lt;summary&gt;Tangent about batteries&lt;/summary&gt;
-&lt;p&gt;
-Intrestingly, 330 J/g is the same order of magnitude as the energy density of Li-poly batteries.
-&lt;/p&gt;&lt;p&gt;
-Which makes it very hard for a battery powered refrigeration system to beat ice:
-while a good system can remove 2-3 W of heat for every watt of electrical power,
-the batteries are only going to be a small fraction of the total weight.
-&lt;/p&gt;&lt;p&gt;
-A typical battery pack can manage around 700 J/g, which assuming the coefficent of performance is 2, would mean the system can 1.4 kJ heat per g of battery.
-This means that at least 23% of the system's total weight must be batteries to beat an ice pack.
-&lt;/p&gt;
-&lt;/details&gt;
---&gt;
-&lt;p&gt;
-... but 0 C is just too cold:
-direct skin contact is painful, so the ice needs to be insulated from the body.
-On a hot day, it's &amp;gt;30 &amp;deg;C below ambient, so it must also be insulated from the environment.
-&lt;/p&gt;&lt;p&gt;
-What's needed is a (cheap, safe) material with a freezing point around ~20 C &amp;mdash;
-which is low enough to stay cool, without being difficult to transport or use.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Pure glycerin&lt;/em&gt; looks promising:
-&lt;/p&gt;&lt;p&gt;
-It's melting point is 17.8 &amp;deg;C and heat-of-fusion is around 200 J/g.
-&lt;/p&gt;&lt;p&gt;
-However, commercial grades contain a few percent water, which pushes the freezing point below regular ice...
-and I don't know of any easy way to purify it. (which is why the factory doesn't bother)
-&lt;/p&gt;&lt;p&gt;
-&lt;em id=sulfate&gt;Sodium sulfate&lt;/em&gt; is a very boring chemical:
-&lt;/p&gt;&lt;p&gt;
-It's non-corrosive, non-reactive, and less salty than regular salt.
-&lt;/p&gt;&lt;p&gt;
-... but it can form "decahydrate" crystals which are ~ 55% water by mass.
-Above 32 &amp;deg;C, the decahydrate decomposes into water and regular sodium sulfate.
-When cooled, this mixture reforms hydrated crystals.
-&lt;/p&gt;&lt;p&gt;
-Thermodynamically, releasing trapped water is the same as melting ice:
-melting one gram of decahydrate absorbs 252 J of heat.
-&lt;/p&gt;&lt;p&gt;
-32 &amp;deg;C is just slightly too warm for personal cooling but, just like ice, 
-its "freezing point" can be reduced by adding regular salt:
-the eutectic mixture gets down to around 18 C.
-&lt;/p&gt;&lt;p&gt;
-Perfect.
-&lt;/p&gt;&lt;p&gt;
-As a bonus, this stuff can be frozen by leaving it in a basement, or any other deep hole in the ground:
-no electricity required.
-&lt;/p&gt;
-&lt;h1 id=formula&gt;&lt;em&gt;18 C "ice"&lt;/em&gt; mixture:&lt;/h1&gt;
-&lt;p&gt;&lt;/p&gt;
-&lt;table&gt;
-&lt;tr&gt;&lt;th&gt;Quantity (by mass)&lt;/th&gt;&lt;th&gt;&lt;/th&gt;&lt;/tr&gt;
-&lt;tr&gt;&lt;td&gt;1000 g or ml&lt;/td&gt;&lt;td&gt;Water&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;&lt;td&gt;320 g&lt;/td&gt;&lt;td&gt;Sodium sulfate (anhydrous)&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;&lt;td&gt;75 g&lt;/td&gt;&lt;td&gt;Table salt&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;&lt;td&gt;10 g&lt;/td&gt;&lt;td&gt;Polysaccharide thickener [optional]&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;&lt;td&gt;10 g&lt;/td&gt;&lt;td&gt;Borax [optional]&lt;/td&gt;&lt;/tr&gt;
-&lt;/table&gt;
-&lt;p&gt;
-The preparation is mostly just "mix and heat", but I do recommend adding the thickener last because it makes the salt dissolve slower:
-&lt;/p&gt;
-&lt;style&gt;
-ol ::marker {color: var(--em-color);}
-li {margin-top: 0.5em;}
-&lt;/style&gt;
-&lt;ol&gt;
-&lt;li&gt;
-  Heat the water, sodium sulfate and salt until the solution is saturated (small crystals should form on its surface)
-  Use a covered container to minimize evaporation.
-&lt;/li&gt;
-&lt;li&gt;
-  Mix the borax and thickener as powders and slowly add them to the hot solution.
-  (if you have an immersion blender, this is a great chance to use it)
-&lt;/li&gt;
-&lt;li&gt;
-  Lightly boil for ~15 minutes.
-&lt;/li&gt;
-&lt;li&gt;
-  Let cool to room temperature.
-  It should solidify into a solid gel, which can easily be handled without spilling.
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/p&gt;
-These measurements are slightly above the solubility limit in hot water, so there will be some residual salt:
-this doesn't cause problems.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The thickener&lt;/em&gt; can either be Carboxymethyl cellulose (CMC) or Xanthan gum: use whichever is easiest/cheapest to buy.
-Guar gum and alginates should work, but I have no idea what a good ratio is.
-&lt;/p&gt;&lt;p&gt;
-It's job is to prevent the crystals of decahydrate from settling or forming a hard mass.
-Otherwise, the different components could separate out with repeated thermal cycling.
-&lt;/p&gt;&lt;p&gt;
-Xanthan gum is rather clumpy: I find it helps to mix it with another dry powder before adding...
-but don't use sodium sulfate because that also likes to clump.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The borax&lt;/em&gt; helps with crystal nucleation and prevents mold growth.
-It's allowed as a food additive in the EU (E285) &lt;b&gt;at 0.4 %&lt;/b&gt;, so accidental exposure shouldn't be a problem.
-Very large exposures can cause damage, but it doesn't accumulate.
-&lt;/p&gt;&lt;p&gt;
-Even so, I've occasionally had the mixture refuse to crystallize at 18 &amp;deg;C during its first cycle:
-if that happens, aggressive mixing or further cooling should fix it.
-If supercooling is a recurring problem, try increasing the borax concentration to around 5%.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;I recommend adding a water soluble dye&lt;/em&gt;:
-this makes it easier to find leaks and tell apart different batches in case one has a problem.
-&lt;/p&gt;&lt;p&gt;
-&lt;h1&gt;&lt;em&gt;Packaging&lt;/em&gt;:&lt;/h1&gt;
-&lt;/p&gt;&lt;p&gt;
-I initially tried using plastic sandwich bags, but they always leaked.
-Double and triple bagging slows the inevitable, but still resulted in a mess.
-&lt;/p&gt;&lt;p&gt;
-A better option is heat-sealable polyethylene bags:
-these are able to hold liquids and can withstand quite a bit pressure.
-By being a little creative with the sealer, it's also possible to create partitioned bags like this:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/projects/cooled/seal.jpg&gt;
-&lt;/p&gt;&lt;p&gt;
-These are great because they can be as big as you want without the goo falling to the bottom.
-&lt;/p&gt;&lt;p&gt;
-Sealing wet plastic is somewhat questionable, and I've had a few leaks.
-These can be fixed with hot-melt glue (one of the few things that will bond to polyethylene)
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;On their own&lt;/em&gt;, these bags work excellently as seat cushions, but aren't much good while standing. 
-&lt;/p&gt;&lt;p&gt;
-To make them wearable, the heat sealed edges can be directly sewn to a strip fabric:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/projects/cooled/strip.jpg&gt;
-&lt;center&gt;Ugly, but it works&lt;/center&gt;
-&lt;/p&gt;&lt;p&gt;
-I attached this strip to simple shoulder straps to hold the packs against my chest.
-For stronger cooling, additional straps can be hold them tightly.
-&lt;/p&gt;&lt;p&gt;
-I recommend wearing a t-shirt under the ice packs to stop them from getting nasty,
-and putting on some a light colored, loose-fitting clothes over everything to protect them from sunlight.
-&lt;/p&gt;&lt;p&gt;
-&lt;h1&gt;&lt;em&gt;Test results&lt;/em&gt; &amp; design notes:&lt;/h1&gt;
-&lt;/p&gt;&lt;p&gt;
-To get an idea of how well the salt works, I built a simple "calorimeter" that melts a sample while I measured the amount of power needed:
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/projects/cooled/cal.svg&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;For the first test&lt;/em&gt;, I prepared a sodium sulfate brine at 90 C and chilled it down to 25 C.
-Re-heating the salt to 32 C, it absorbed around 171 J/g
-&lt;/p&gt;&lt;p&gt;
-... 67% of the theoretical for sodium sulfate decahydrate.
-&lt;/p&gt;&lt;p&gt;
-The problem is that even a saturated solution doesn't have enough sodium sulfate:
-it's maximum solubility is 0.50 g/mL @ 32.2 C.
-Near boiling, it drops down to 0.41 g/mL.
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-41g Na&lt;sub&gt;2&lt;/sub&gt;SO&lt;sub&gt;4&lt;/sub&gt; + 100g water = brine (hot)
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-On paper, this is enough sodium sulfate to form a 52% decahydrate slurry...
-but that's assuming the left over water is pure &amp;mdash;
-in reality, the product is a mixture of decahydrate and saturated brine:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-78g Na&lt;sub&gt;2&lt;/sub&gt;SO&lt;sub&gt;4&lt;/sub&gt; + 100g water = decahydrate
-28g Na&lt;sub&gt;2&lt;/sub&gt;SO&lt;sub&gt;4&lt;/sub&gt; + 100g water = brine (25 C)
-
-let:
-  x       = decahydrate fraction
-  (x - 1) = brine fraction
-
-41 = 78 x + 28 (x - 1)
-41 = 78 x + 28x - 28
-41 - 28 = 78 x + 28x 
-41 - 28 = (78 + 28)x
-(41 - 28)/(78 - 28) = x
-x = 0.48 &lt;h-c&gt;[67% is within experimental error]&lt;/h-c&gt;
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-This is a inherent problem with any Na&lt;sub&gt;2&lt;/sub&gt;SO&lt;sub&gt;4&lt;/sub&gt; based thermal storage:
-Even if you do make pure decahydrate, instead of melting, it would decompose into brine and anhydrous sodium sulfate.
-The dry salt has a tendency to settle out, which prevents it from reforming decahydrate.
-&lt;/p&gt;&lt;p&gt;
-A water-rich mixture prevents separation... at the cost of ~50% of the heat capacity.
-The leftover brine isn't necessary a bad thing:
-since there's always liquid water, the pack stays flexible and the gelling agent can stay dissolved.
-&lt;/p&gt;&lt;p&gt;
-As a bonus, such a mixture is easy to make:
-no filtering, continuous mixing or grinding needed.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Adding the 7.5% sodium chloride&lt;/em&gt; reduces the heat capacity to around 90 J/g:
-&lt;/p&gt;&lt;p&gt;
-&lt;pre&gt;
-Sample weight: 11 g
-Sample temp: 12 C -&gt; 22 C
-Calorimeter temp: 24 C
-Heater: 5 A @ 1.8 V for 2m 47s
-
-Energy delivered: 1.5 kJ
-Heat used to warm sample: 500 J (assuming specific heat is similar to water)
-Excess cooling: 1 kJ = 90 J/g
-&lt;/pre&gt;
-&lt;/p&gt;&lt;p&gt;
-This means the cold mixture is ~36% decahydrate and roughly 30% as effective as pure ice, 
-The full formula with additives performs similarly. 
-&lt;/p&gt;&lt;p&gt;
-Solubility with multiple salts is complicated, so I don't have any theoretical values.
-However, my result is similar to the published heat-of-fusion for low temperature decahydrate mixtures:
-most papers claim somewhere between 60-140 [J/g].
-&lt;/p&gt;&lt;p&gt;
-Replacing the sodium chloride with a salt that can also form hydrates (i.e. sodium carbonate) could improve this,
-but all the options I could find are at (least slightly) caustic or/and expensive.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Also, adding another salt reintroduces the separation problem&lt;/em&gt;:
-&lt;/p&gt;&lt;p&gt;
-Decahydrate can sink to the bottom, forming a layer with low chloride concentration that won't melt.
-Fortunately, since the mixture never fully freezes, preventing this is easy enough with a thickener.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;In a less scientific "hot day" test&lt;/em&gt;,
-two 600g, 1cm thick packs stayed cold for around an hour when worn as described.
-Using data from the lab tests, they have a combined 108 kJ of cooling capacity and remove 30 W of heat.
-&lt;/p&gt;&lt;p&gt;
-Long excursions will require spares, but considering that the material costs pennies, this isn't a big problem.
-&lt;/p&gt;&lt;p&gt;
-&lt;h1&gt;&lt;em&gt;Related&lt;/em&gt;:&lt;/h1&gt;
-&lt;/p&gt;
-&lt;link-box&gt;
-  &lt;ul&gt;
-    &lt;li&gt;DOI: &lt;a href=https://ieeexplore.ieee.org/document/10177562&gt;10.1109/ITHERM55368.2023.10177562&lt;/a&gt;: A reference with a very similar mixture (paywalled, but easily pirate-able)&lt;/li&gt;
-    &lt;li&gt;&lt;a href="https://www.youtube.com/watch?v=qv0IJM3BV9Y"&gt;https://www.youtube.com/watch?v=qv0IJM3BV9Y&lt;/a&gt;: The vapor compression route&lt;/li&gt;
-    &lt;li&gt;&lt;a href="https://www.youtube.com/watch?v=Nqxjfp4Gi0k"&gt;https://www.youtube.com/watch?v=Nqxjfp4Gi0k&lt;/a&gt;: More eutectic NaSO4/NaCl&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/link-box&gt;
-&lt;p&gt;
-&lt;/p&gt;
-&lt;!-- mksite: end of content --&gt;
-				</description>
-      <guid isPermaLink="true">http://maurycyz.com/projects/cooled/</guid>
-      <pubDate>Sun, 12 Jul 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
