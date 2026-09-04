@@ -5,7 +5,47 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 04 Sep 2026 13:22:20 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 04 Sep 2026 17:32:00 +0000</lastBuildDate>
+    <item>
+      <title>Support Local Variables</title>
+      <link>https://bernsteinbear.com/blog/support-local-variables/?utm_source=rss</link>
+      <description>&lt;p&gt;Discovering and supporting all of the wild semantics for local variables in
+Ruby was so interesting that the ZJIT team decided to write a paper about it:
+&lt;a href="/assets/img/support-local-variables.pdf"&gt;Support Local Variables&lt;/a&gt; (PDF). It’s
+also the first bit of academic literature that documents and explains ZJIT.&lt;/p&gt;
+
+&lt;p&gt;It’s published at VMIL 2026, where someone on our team will be presenting it.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abstract&lt;/strong&gt;&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Ruby is a dynamically typed and object-oriented programming language. Its
+primary implementation, CRuby, contains a bytecode virtual machine and a
+mature lazy basic block versioning (LBBV) just-in-time (JIT) compiler
+called YJIT.&lt;/p&gt;
+
+  &lt;p&gt;In order to both implement more advanced optimizations than YJIT supports
+and also encourage more outside contributions, we present a new
+method-based JIT called ZJIT. Like YJIT, ZJIT compiles from bytecode to
+machine code. Unlike YJIT, ZJIT has multiple global and local
+optimization passes.&lt;/p&gt;
+
+  &lt;p&gt;ZJIT’s high-level intermediate representation is in static single
+assignment (SSA) form. In order to optimize Ruby’s local variables, ZJIT
+lifts local variables into SSA values. This is a departure from how
+other Ruby compilers handle locals: other JIT compilers either leave local
+variables as memory loads and stores or do advanced partial evaluation to
+recover SSA values from memory.&lt;/p&gt;
+
+  &lt;p&gt;While implementing locals, we (re-)discovered what features make local
+variables in Ruby especially challenging to compile correctly and
+efficiently. We demonstrate these features and illustrate how we solved
+these problems in ZJIT.&lt;/p&gt;
+&lt;/blockquote&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/support-local-variables/</guid>
+      <pubDate>Fri, 04 Sep 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Another partial SSI trick with canonicalize</title>
       <link>https://bernsteinbear.com/blog/more-partial-ssi/?utm_source=rss</link>
@@ -4012,372 +4052,6 @@ paper&lt;/a&gt; (PDF)),
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/value-numbering/</guid>
       <pubDate>Sat, 04 Apr 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Using Perfetto in ZJIT</title>
-      <link>https://bernsteinbear.com/blog/zjit-perfetto/?utm_source=rss</link>
-      <description>&lt;p&gt;&lt;em&gt;Originally published on &lt;a href="https://railsatscale.com/2026-03-27-using-perfetto-in-zjit/"&gt;Rails At Scale&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
-
-&lt;p&gt;Look! A trace of slow events in a benchmark! Hover over the image to see it get bigger.&lt;/p&gt;
-
-&lt;style&gt;
-img {
-    max-width: 100%;
-}
-img:hover {
-  transform: scale(2);
-  transition: transform 0.1s ease-in;
-}
-img:not(:hover) {
-  transition: transform 0.1s ease-out;
-}
-&lt;/style&gt;
-
-&lt;figure&gt;
-
-  &lt;p&gt;&lt;img src="/assets/img/perfetto-demo.png" alt="" /&gt;&lt;/p&gt;
-
-  &lt;figcaption&gt;
-A sneak preview of what the trace looks like.
-&lt;/figcaption&gt;
-&lt;/figure&gt;
-
-&lt;p&gt;Now read on to see what the slow events are and how we got this pretty picture.&lt;/p&gt;
-
-&lt;h2 id="the-rules"&gt;The rules&lt;/h2&gt;
-
-&lt;p&gt;The first rule of just-in-time compilers is: you stay in JIT code. The second
-rule of JIT is: you STAY in JIT code!&lt;/p&gt;
-
-&lt;p&gt;When control leaves the compiled code to run in the interpreter—what the ZJIT
-team calls either a “side-exit” or a “deopt”, depending on who you talk
-to—things slow down. In a well-tuned system, this should happen pretty
-rarely. Right now, because we’re still bringing up the compiler and runtime
-system, it happens more than we would like.&lt;/p&gt;
-
-&lt;p&gt;We’re reducing the number of exits over time.&lt;/p&gt;
-
-&lt;h2 id="lies-damned-lies-and-statistics"&gt;Lies, damned lies, and statistics&lt;/h2&gt;
-
-&lt;p&gt;We can track our side-exit reduction progress with &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-stats&lt;/code&gt;, which,
-on process exit, prints out a tidy summary of the counters for all of the bad
-stuff we track. It’s got side-exits. It’s got calls to C code. It’s got calls
-to slow-path runtime helpers. It’s got everything.&lt;/p&gt;
-
-&lt;p&gt;Here is a chopped-up sample of stats output for the Lobsters benchmark,
-which is a large Rails app:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ WARMUP_ITRS=0 MIN_BENCH_ITRS=20 MIN_BENCH_TIME=0 ruby --zjit-stats benchmarks/lobsters/benchmark.rb
-...
-***ZJIT: Printing ZJIT statistics on exit***
-...
-Top-20 side exit reasons (100.0% of total 12,549,876):
-                   guard_type_failure: 6,020,734 (48.0%)
-                  guard_shape_failure: 5,556,147 (44.3%)
-  block_param_proxy_not_iseq_or_ifunc:   445,358 ( 3.5%)
-                   unhandled_hir_insn:   215,168 ( 1.7%)
-                        compile_error:   181,474 ( 1.4%)
-...
-compiled_iseq_count:                               5,581
-failed_iseq_count:                                     2
-compile_time:                                    1,443ms
-...
-guard_type_count:                            133,425,094
-guard_type_exit_ratio:                              4.5%
-guard_shape_count:                            49,386,694
-guard_shape_exit_ratio:                            11.3%
-...
-code_region_bytes:                            31,571,968
-side_exit_size_ratio:                              33.1%
-zjit_alloc_bytes:                             19,329,659
-total_mem_bytes:                              50,901,627
-...
-ratio_in_zjit:                                     82.8%
-$
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;(I’ve cut out significant chunks of the stats output and replaced them with
-&lt;code class="language-plaintext highlighter-rouge"&gt;...&lt;/code&gt; because it’s overwhelming the first time you see it.)&lt;/p&gt;
-
-&lt;p&gt;The first thing you might note is that the thing I just described as terrible
-for performance is happening &lt;em&gt;over twelve million times&lt;/em&gt;. The second thing you
-might notice is that despite this, we’re staying in JIT code seemingly a high
-percentage of the time. Or are we? Is 80% high? Is a 4.5% class guard miss
-ratio high? What about 11% for shapes? It’s hard to say.&lt;/p&gt;
-
-&lt;p&gt;The counters are great because they’re &lt;em&gt;quick&lt;/em&gt; and they’re reasonably stable
-proxies for performance. There’s no substitute for painstaking measurements on
-a quiet machine but if the counter for Bad Slow Thing goes down (and others do
-not go up), we’re probably doing a good job.&lt;/p&gt;
-
-&lt;p&gt;But they’re not great for building intuition. For intuition, we want more
-tangible feeling numbers. We want to see things.&lt;/p&gt;
-
-&lt;h2 id="building-intuition"&gt;Building intuition&lt;/h2&gt;
-
-&lt;p&gt;The third thing is that you might ask yourself “self, where are these exits
-coming from?” Unfortunately, counters cannot tell you that. For that, we
-want stack traces. This lets us know where in the guest (Ruby) code triggers
-an exit.&lt;/p&gt;
-
-&lt;p&gt;Ideally also we would want some notion of time: we would want to know not just
-where these events happen but also when. Are the exits happening early, at
-application boot? At warmup? Even during what should be steady state
-application time? Hard to say.&lt;/p&gt;
-
-&lt;p&gt;So we need more tools. Thankfully, &lt;a href="https://perfetto.dev/"&gt;Perfetto&lt;/a&gt; exists.
-Perfetto is a system for visualizing and analyzing traces and profiles that your
-application generates. It has both a web UI and a command-line UI.&lt;/p&gt;
-
-&lt;p&gt;We can emit traces for Perfetto and visualize them there.&lt;/p&gt;
-
-&lt;h2 id="a-look-at-perfetto"&gt;A look at Perfetto&lt;/h2&gt;
-
-&lt;p&gt;Take a look at this &lt;a href="https://ui.perfetto.dev/#!/?url=https://bernsteinbear.com/assets/misc/perfetto-36885.fxt"&gt;sample ZJIT Perfetto
-trace&lt;/a&gt;
-generated by running Ruby with &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-trace-exits&lt;/code&gt;&lt;sup id="fnref:sampled" role="doc-noteref"&gt;&lt;a href="#fn:sampled" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;. What do you see?&lt;/p&gt;
-
-&lt;p&gt;I see a couple arrows on the left. Arrows indicate “instant” point-in-time
-events. Then I see a mess of purple to the right of that until the end of the
-trace.&lt;/p&gt;
-
-&lt;p&gt;Hover over an arrow. Find out that each arrow is a side-exit. Scream silently.&lt;/p&gt;
-
-&lt;p&gt;But it’s a friendly arrow. It tells you what the side-exit reason is. If you
-click it, it even tells you the stack trace in the pop-up panel on the bottom.
-If we click a couple of them, maybe we can learn more.&lt;/p&gt;
-
-&lt;p&gt;We can also zoom by mousing over the track, holding Ctrl, and scrolling. That
-will get us look closer. But there are so many…&lt;/p&gt;
-
-&lt;p&gt;Fortunately, Perfetto also provides a SQL interface to the traces. We can write
-a query to aggregate all of the side exit events from the &lt;code class="language-plaintext highlighter-rouge"&gt;slice&lt;/code&gt; table and
-line them up with the topmost method from the backtrace arguments in the &lt;code class="language-plaintext highlighter-rouge"&gt;args&lt;/code&gt;
-table:&lt;/p&gt;
-
-&lt;div class="language-sql highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;SELECT&lt;/span&gt;
-  &lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="k"&gt;AS&lt;/span&gt; &lt;span class="n"&gt;reason&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-  &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;display_value&lt;/span&gt; &lt;span class="k"&gt;AS&lt;/span&gt; &lt;span class="k"&gt;method&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
-  &lt;span class="k"&gt;COUNT&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="k"&gt;AS&lt;/span&gt; &lt;span class="k"&gt;count&lt;/span&gt;
-&lt;span class="k"&gt;FROM&lt;/span&gt; &lt;span class="n"&gt;slice&lt;/span&gt; &lt;span class="n"&gt;s&lt;/span&gt;
-&lt;span class="k"&gt;JOIN&lt;/span&gt; &lt;span class="n"&gt;args&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="k"&gt;ON&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg_set_id&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;arg_set_id&lt;/span&gt; &lt;span class="k"&gt;AND&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="k"&gt;key&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s1"&gt;'0'&lt;/span&gt;
-&lt;span class="k"&gt;GROUP&lt;/span&gt; &lt;span class="k"&gt;BY&lt;/span&gt; &lt;span class="n"&gt;s&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;display_value&lt;/span&gt;
-&lt;span class="k"&gt;ORDER&lt;/span&gt; &lt;span class="k"&gt;BY&lt;/span&gt; &lt;span class="k"&gt;count&lt;/span&gt; &lt;span class="k"&gt;DESC&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This pulls up a query box at the bottom showing us that there are a couple big
-hotspots:&lt;/p&gt;
-
-&lt;figure&gt;
-
-  &lt;p&gt;&lt;img src="/assets/img/perfetto-method-query.png" alt="" /&gt;&lt;/p&gt;
-
-  &lt;figcaption&gt;
-Query results showing in columns left to right: reason for side-exit, method
-that exited, and count. The top three are above 1k but it quickly falls off
-after that.
-&lt;/figcaption&gt;
-
-&lt;/figure&gt;
-
-&lt;p&gt;It even has a helpful option to export the results Markdown table so I can
-paste (an edited version) into this blog post:&lt;/p&gt;
-
-&lt;div style="overflow-x: auto; font-size: 0.75em; margin-left: max(-10em, calc(-50vw + 50%)); margin-right: max(-10em, calc(-50vw + 50%));"&gt;
-
-  &lt;table&gt;
-    &lt;thead&gt;
-      &lt;tr&gt;
-        &lt;th&gt;reason&lt;/th&gt;
-        &lt;th&gt;method&lt;/th&gt;
-        &lt;th&gt;count&lt;/th&gt;
-      &lt;/tr&gt;
-    &lt;/thead&gt;
-    &lt;tbody&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardShape(ShapeId(2475))&lt;/td&gt;
-        &lt;td&gt;ActiveModel::AttributeRegistration::ClassMethods#attribute_types&lt;/td&gt;
-        &lt;td&gt;5119&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardShape(ShapeId(2099268))&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::ConnectionAdapters::AbstractAdapter#extended_type_map_key&lt;/td&gt;
-        &lt;td&gt;2295&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardType(FalseClass)&lt;/td&gt;
-        &lt;td&gt;ActiveModel::Type::Value#cast&lt;/td&gt;
-        &lt;td&gt;1025&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardShape(ShapeId(2099698))&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::Associations#association_instance_get&lt;/td&gt;
-        &lt;td&gt;904&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;BlockParamProxyNotIseqOrIfunc&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::AttributeMethods::Read#_read_attribute&lt;/td&gt;
-        &lt;td&gt;902&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardShape(ShapeId(526450))&lt;/td&gt;
-        &lt;td&gt;Rack::Request::Env#get_header&lt;/td&gt;
-        &lt;td&gt;636&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardType(Class[class_exact*:Class@VALUE(0x128c60100)])&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::Base._reflections&lt;/td&gt;
-        &lt;td&gt;622&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardType(ObjectSubclass[class_exact:Story])&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::Associations#association&lt;/td&gt;
-        &lt;td&gt;565&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardShape(ShapeId(2098982))&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::Reflection::AssociationReflection#polymorphic?&lt;/td&gt;
-        &lt;td&gt;510&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardType(StringSubclass[class_exact:ActiveSupport::SafeBuffer])&lt;/td&gt;
-        &lt;td&gt;ActionView::OutputBuffer#&amp;lt;&amp;lt;&lt;/td&gt;
-        &lt;td&gt;500&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardShape(ShapeId(2475))&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::AttributeMethods::PrimaryKey::ClassMethods#primary_key&lt;/td&gt;
-        &lt;td&gt;492&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardType(ObjectSubclass[class_exact:ActiveModel::Type::String])&lt;/td&gt;
-        &lt;td&gt;ActiveModel::Type::Value#deserialize&lt;/td&gt;
-        &lt;td&gt;442&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardShape(ShapeId(2098982))&lt;/td&gt;
-        &lt;td&gt;ActiveRecord::Reflection::AssociationReflection#deprecated?&lt;/td&gt;
-        &lt;td&gt;376&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;GuardType(ObjectSubclass[class_exact:Bundler::Dependency])&lt;/td&gt;
-        &lt;td&gt;Gem::Dependency#matches_spec?&lt;/td&gt;
-        &lt;td&gt;355&lt;/td&gt;
-      &lt;/tr&gt;
-      &lt;tr&gt;
-        &lt;td&gt;UnhandledHIRInvokeBuiltin&lt;/td&gt;
-        &lt;td&gt;Time#initialize&lt;/td&gt;
-        &lt;td&gt;346&lt;/td&gt;
-      &lt;/tr&gt;
-    &lt;/tbody&gt;
-  &lt;/table&gt;
-
-&lt;/div&gt;
-
-&lt;p&gt;Looks like we should figure out why we’re having shape misses so much and that will
-clear up a lot of exits. (Hint: it’s because once we make our first guess about
-what we think the object shape will be, we don’t re-assess… &lt;strong&gt;yet&lt;/strong&gt;.)&lt;/p&gt;
-
-&lt;p&gt;This has been a taste of Perfetto. There’s probably a lot more to explore.
-Please join the &lt;a href="https://zjit.zulipchat.com"&gt;ZJIT Zulip&lt;/a&gt; and let us know if you have any cool
-tracing or exploring tricks.&lt;/p&gt;
-
-&lt;p&gt;Now I’ll explain how you too can use Perfetto from your system. Adding support
-to ZJIT was pretty straightforward.&lt;/p&gt;
-
-&lt;h2 id="implementation"&gt;Implementation&lt;/h2&gt;
-
-&lt;p&gt;The first thing is that you’ll need some way to get trace data out of your
-system. We write to a file with a well-known location
-(&lt;code class="language-plaintext highlighter-rouge"&gt;/tmp/perfetto-PID.fxt&lt;/code&gt;), but you could do any number of things. Perhaps you
-can stream events over a socket to another process, or to a server that
-aggregates them, or store them internally and expose a webserver that serves
-them over the internet, or… anything, really.&lt;/p&gt;
-
-&lt;p&gt;Once you have that, you need a couple lines of code to emit the data. Perfetto
-accepts a number of formats. For example, in his &lt;a href="https://thume.ca/2023/12/02/tracing-methods/"&gt;excellent blog post&lt;/a&gt;,
-Tristan Hume opens with such a simple snippet of code for logging Chromium
-Trace JSON-formatted events (lightly modified by me):&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="n"&gt;event_name&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
-&lt;span class="n"&gt;timestamp&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
-&lt;span class="n"&gt;duration&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;...&lt;/span&gt;
-&lt;span class="n"&gt;f&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="nb"&gt;open&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;'trace.json'&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="s"&gt;'a'&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;write&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"[&lt;/span&gt;&lt;span class="se"&gt;\n&lt;/span&gt;&lt;span class="s"&gt;"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-
-&lt;span class="c1"&gt;# ... emit some events here ...
-&lt;/span&gt;
-&lt;span class="c1"&gt;# Log a single event
-&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;write&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;'{"name": "%s", "ts": %d, "dur": %d, "cat": "hi", "ph": "X", "pid": 1, "tid": 1, "args": {}},&lt;/span&gt;&lt;span class="se"&gt;\n&lt;/span&gt;&lt;span class="s"&gt;'&lt;/span&gt; &lt;span class="o"&gt;%&lt;/span&gt;
-  &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;event_name&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;timestamp&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;duration&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
-
-&lt;span class="c1"&gt;# ... emit some events here ...
-&lt;/span&gt;
-&lt;span class="c1"&gt;# ... at process exit, close the file ...
-&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;write&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"]"&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="c1"&gt;# this closing ] isn't actually required
-&lt;/span&gt;&lt;span class="n"&gt;f&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;close&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This snippet is great. It shows, end-to-end, writing a stream of one event. It
-is a &lt;em&gt;complete&lt;/em&gt; (X) event, as opposed to either:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;two discrete timestamped &lt;em&gt;begin&lt;/em&gt; (B) and &lt;em&gt;end&lt;/em&gt; (E) events that book-end
-something, or&lt;/li&gt;
-  &lt;li&gt;an &lt;em&gt;instant&lt;/em&gt; (i) event that has no duration, or&lt;/li&gt;
-  &lt;li&gt;a couple other event types in the &lt;a href="https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview"&gt;Chromium Trace Event Format doc&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;It was enough to get me started. Since it’s JSON, and we have a lot of side
-exits, the trace quickly ballooned to 8GB large for a several second benchmark.
-Not great. Now, part of this is our fault—we should side exit less—and part
-of it is just the verbosity of JSON.&lt;/p&gt;
-
-&lt;p&gt;Thankfully, Perfetto ingests more compact binary formats, such as the &lt;a href="https://fuchsia.dev/fuchsia-src/reference/tracing/trace-format"&gt;Fuchsia
-trace format&lt;/a&gt;.
-In addition to being more compact, FXT even supports string interning. After
-modifying the tracer to emit FXT, we ended with closer to 100MB for the same
-benchmark.&lt;/p&gt;
-
-&lt;p&gt;We can reduce further by &lt;em&gt;sampling&lt;/em&gt;—not writing every exit to the trace, but
-instead every &lt;em&gt;K&lt;/em&gt; exits (for some (probably prime) K). This is why we provide
-the &lt;code class="language-plaintext highlighter-rouge"&gt;--zjit-trace-exits-sample-rate=K&lt;/code&gt; option.&lt;/p&gt;
-
-&lt;p&gt;Check out the &lt;a href="https://github.com/ruby/ruby/blob/eb8051185122d4b7bc9c6a6df694a85f34ced681/zjit/src/stats.rs#L988"&gt;trace writer&lt;/a&gt; implementation from the point this article
-was written.&lt;/p&gt;
-
-&lt;h2 id="tracing-more-things"&gt;Tracing more things&lt;/h2&gt;
-
-&lt;p&gt;We could trace:&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;When methods get compiled&lt;/li&gt;
-  &lt;li&gt;How big the generated code is&lt;/li&gt;
-  &lt;li&gt;How long each compile phase takes&lt;/li&gt;
-  &lt;li&gt;When (and where) invalidation events happen&lt;/li&gt;
-  &lt;li&gt;When (and where) allocations happen from JITed code&lt;/li&gt;
-  &lt;li&gt;Garbage collection events&lt;/li&gt;
-  &lt;li&gt;and more!&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
-
-&lt;p&gt;Visualizations are awesome. Get your data in the right format so you can ask
-the right questions easily. Thanks for Perfetto!&lt;/p&gt;
-
-&lt;p&gt;Also, looks like visualizations are now available in Perfetto canary. Time to
-go make some fun histograms…&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:sampled" role="doc-endnote"&gt;
-      &lt;p&gt;This is also sampled/strobed, so not every exit is in there. This
-is just 1/K of them for some K that I don’t remember. &lt;a href="#fnref:sampled" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/zjit-perfetto/</guid>
-      <pubDate>Fri, 27 Mar 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
