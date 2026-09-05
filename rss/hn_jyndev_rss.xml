@@ -7,7 +7,7 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Sat, 05 Sep 2026 05:28:19 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 05 Sep 2026 10:18:18 +0000</lastBuildDate>
     <item>
       <title>we have a year to fix security everywhere</title>
       <link>https://jyn.dev/a-year-to-fix-security/</link>
@@ -15,7 +15,8 @@
 Cheap models capable of dangerous hacking are now available to anyone, without the normal safeguards for refusing malicious actions.
 We need to fix vulnerabilities across the industry so that we aren't caught unawares.
 And for one of the first times in computing history, we have the ability to!
-We can use frontier LLMs that move faster than a human to find and fix these issues in the time we have left.&lt;/p&gt;
+We can use frontier LLMs that move faster than a human to find and fix these issues in the time we have left.
+The hard remaining part is deploying the fixes.&lt;/p&gt;
 &lt;p&gt;This probably sounds like nonsense words or hysterical overreacting to most people, so here's what that means:&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;"GLM" is a kind of LLM (AI). The GLM family is &lt;em&gt;open-weight&lt;/em&gt;, which means anyone can download and run the models.&lt;/li&gt;
@@ -47,7 +48,7 @@ Here's &lt;a href="https://dev.classmethod.jp/en/articles/dgx-spark-glm-5-3-flas
 "Unified memory" means it can be shared between the host operating system and the GPU.
 That's more than enough to run 5.3-flash, and it will probably get around 30 tokens/second once it releases.
 For 256 GB, the price starts at around $9,500.&lt;/p&gt;
-&lt;p&gt;Further improvements in user-space software can get half-again the throughput
+&lt;p&gt;Further improvements in software can get half-again the throughput
 through &lt;a href="https://arxiv.org/abs/2607.00501"&gt;changes to the model decoder&lt;/a&gt;.
 If we extrapolate that to the M5, that would put the total throughput at around 45 tokens/second.&lt;/p&gt;
 &lt;p&gt;45 tokens/second is enough to write this snippet of code in 3 seconds:&lt;/p&gt;
@@ -142,6 +143,8 @@ On the current policy trajectory, the biggest risk is a heap of untriaged warnin
 Fund security engineering, preferably with flexible grants that can be used for hiring or technology products as decided by the organization.
 Create mandates and incentives for improving security, especially for frequent penetration testing.
 Encourage using frontier models with human oversight for that pentesting.
+Encourage increased airgapping and discourage over-the-air updates: updates should be frequent but require physical access.
+For systems where airgapping isn't feasible, incentivize frequent, signed, and tested deployments.
 Penalize &lt;em&gt;not&lt;/em&gt; investigating and revising security posture regularly, with increased penalties if a hack happens as a result.
 Require findings to be fixed within a risk-based deadline from discovery, with federal funding for the fixes.
 Both carrot and stick.&lt;/p&gt;
@@ -179,9 +182,54 @@ Findings are getting very cheap; the fixes are not.&lt;/p&gt;
 &lt;h3 id="companies-and-open-source-foundations"&gt;Companies and open source foundations&lt;a class="zola-anchor" href="#companies-and-open-source-foundations" aria-label="Anchor link for: companies-and-open-source-foundations"&gt;&lt;/a&gt;
 &lt;/h3&gt;
 &lt;p&gt;Take advantage of the (literal) billions of dollars that are flooding the industry to improve safety across the board.
-Hire as many security engineers as you can.
-Use Astra, Mythos, and other frontier models for good, to find the risks before attackers do.
-Pay attention to developments in frontier and open weight models.&lt;/p&gt;
+Hire as many security engineers as you can and fund existing maintainers.
+Instruct those engineers and existing maintainers to &lt;em&gt;triage&lt;/em&gt;, &lt;em&gt;design&lt;/em&gt;, &lt;em&gt;review&lt;/em&gt;, &lt;em&gt;backport&lt;/em&gt;, and &lt;em&gt;deploy&lt;/em&gt; patches, not primarily to find vulnerabilities or write new code.&lt;/p&gt;
+&lt;p&gt;Use Astra, Mythos, and other frontier models for good, to find the risks before attackers do.
+Use structured prompts such as Google's &lt;a href="https://github.com/google/rust-skills/tree/main/unsafe_rust_review"&gt;Unsafe Rust Review&lt;/a&gt;; this is much more effective than telling them to look hard for bugs.&lt;/p&gt;
+&lt;p&gt;LLMs are good at writing patches, but &lt;a href="https://1password.com/blog/why-ai-generated-patches-still-require-human-review"&gt;not as one-off-prompts&lt;/a&gt;.
+Give them structured prompts and &lt;a href="https://codeberg.org/jyn514/paracress/src/branch/code-dump/.agents/skills/_implementation-closeout.md"&gt;iterated self-review cycles&lt;/a&gt; until the LLM itself judges the patch to be high-quality.
+Whenever possible, get them to test their own fixes rather than guessing at whether their patch is effective.
+Only then consider it ready for a human to review.&lt;/p&gt;
+&lt;p&gt;Sandbox the agents themselves.
+The OpenAI-HuggingFace attack happened from a frontier lab testing a model;
+your own LLMs can easily cause incidents if you're careless.
+Restrict credentials to narrow scopes.
+If the issuing authority doesn't support scoped credentials, put a &lt;a href="https://github.com/jyn514/dotfiles/tree/dev/tools/zulip-proxy"&gt;trusted interface&lt;/a&gt; in front of the services that adds the scope limitations itself; do not give agents direct access to broad credentials.
+&lt;a href="https://unit42.paloaltonetworks.com/bypass-of-aws-sandbox-network-isolation-mode/"&gt;Do not rely on filtering to only GET requests&lt;/a&gt;.
+Block requests at the firewall level and only expose a trusted list of domains.
+Filter endpoints using network proxies and trusted interfaces, not local configuration that the LLM can override.
+Preserve logs of every mutation or network request the agent makes.&lt;/p&gt;
+&lt;p&gt;Invest in formal verification, fuzzing and property testing, and &lt;a href="https://www.usenix.org/conference/enigma2021/presentation/gaynor"&gt;memory-safe languages&lt;/a&gt;.
+LLMs are &lt;a href="https://arxiv.org/html/2606.05632v1"&gt;good at writing Lean&lt;/a&gt; and &lt;a href="https://danluu.com/ai-coding/#testing-background"&gt;fuzz tests&lt;/a&gt;.
+I don't care whether you use Go or Rust but for the love of god please &lt;a href="https://blog.google/security/rust-in-android-move-fast-fix-things/"&gt;don't use C or C++&lt;/a&gt; for new code.&lt;/p&gt;
+&lt;p&gt;Invest in triage:
+Record which versions of systems are affected,
+assign critical findings a human owner and a deadline,
+and create developer tooling to automatically update/close issues when they're fixed.&lt;/p&gt;
+&lt;p&gt;Invest in backport, release, and deployment machinery.
+Test upgrades and rollbacks, all the boring stuff.
+Developer tooling is cheap now; throw tokens at it so you can spend less human time on each patch: dependency-update automation, signed and reproducible releases, increased deployment speed.
+Engineers should be spending their time on coordinated disclosure and frequent releases, not on individual patches.&lt;/p&gt;
+&lt;p&gt;Deprecate old and insecure versions.
+There's a sea-change: you're in a rush, but the people depending on you are too.
+Use that as leverage to get them to upgrade.
+Where possible, write developer tooling that helps them automatically upgrade.
+Track whether people are upgrading and patching; if they aren't, invest more in tooling.&lt;/p&gt;
+&lt;p&gt;There are going to be a lot of patches and they will be exploited &lt;em&gt;very&lt;/em&gt; quickly after the embargo lifts.
+Measure how long it takes end-to-end from a patch being reported to being deployed and adopted.
+Conduct campaigns to speed it up, focusing on the bottlenecks.
+Wherever possible, try to shorten embargo times: if you can find a flaw, an attacker probably can too, so the coordination window is much narrower than you're used to.&lt;/p&gt;
+&lt;p&gt;Invest in supply-chain security.
+Inventory your software and infrastructure dependencies.
+Inventory your own systems too: what versions are running in prod? what services do you run that don't have a maintainer? which of your systems are EOL?
+You finally have the ability to review &lt;em&gt;all&lt;/em&gt; your dependencies without skimming; do so, prioritizing privileged and security-exposed dependencies first.
+LLMs are really good at finding bugs given the source code: use that to your advantage.&lt;/p&gt;
+&lt;p&gt;Invest in containment and recovery.
+Do not rely on a single firewall or VPN.
+Instead, use defense-in-depth: segment your networks, limit credential scope, test your backups, and run incident-response exercises.
+If possible, practice bringing up your systems from a cold start.&lt;/p&gt;
+&lt;p&gt;Pay attention to developments in frontier and open weight models.
+The more advanced that models get, the less time you have to patch and deploy.&lt;/p&gt;
 &lt;p&gt;Even if you don't think the threat described here is real,
 you're getting a once-in-a-lifetime opportunity to improve security for your projects and communities.
 Please take it.&lt;/p&gt;
