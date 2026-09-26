@@ -7,7 +7,736 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Sat, 26 Sep 2026 12:50:22 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 26 Sep 2026 16:58:35 +0000</lastBuildDate>
+    <item>
+      <title>Reverse-engineering the vintage Intel 8087's tangent algorithm: more than CORDIC</title>
+      <link>http://www.righto.com/2026/09/8087-tangent-cordic.html</link>
+      <description>&lt;p&gt;I hope you're not tired of the 8087, because I have another article about
+Intel's floating-point chip.&lt;span id="fnref:posts"&gt;&lt;a class="ref" href="#fn:posts"&gt;1&lt;/a&gt;&lt;/span&gt;
+In 1980, Intel introduced the 8087, making floating-point operations much faster
+in the IBM PC and other systems.
+In this article, I look at the algorithm behind the chip's tangent instruction.
+One popular approach for trigonometric functions is an algorithm called CORDIC.
+Another approach is a polynomial approximation. The 8087 combined the two
+to obtain both high accuracy and high performance.
+The 8087 provided an enormous speedup over the 8086 microprocessor, computing a tangent in
+90 microseconds rather than 13,000 microseconds.&lt;span id="fnref:emulator"&gt;&lt;a class="ref" href="#fn:emulator"&gt;2&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;By examining the circuitry and microcode of the 8087,
+I can explain the algorithm behind the tangent instruction, called &lt;code&gt;FPTAN&lt;/code&gt;.
+To explore the 8087's circuitry, I popped the lid off a chip with a chisel
+and created a high-resolution image with a microscope.
+The microcode ROM is the large rectangular region in the center of the die, holding the 1648 micro-instructions that control the chip.
+The bottom half of the chip (red box) is the datapath, the circuitry that performs floating-point calculations on 80-bit values.&lt;span id="fnref:bits"&gt;&lt;a class="ref" href="#fn:bits"&gt;3&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/8087-datapath-zoom-diagram.jpg"&gt;&lt;img alt="A close-up of the 8087's datapath, showing functional blocks that are used by FPTAN. Click this image (or any other) for a larger version." class="hilite" height="730" src="https://static.righto.com/images/8087-fptan/8087-datapath-zoom-diagram-w600.jpg" title="A close-up of the 8087's datapath, showing functional blocks that are used by FPTAN. Click this image (or any other) for a larger version." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A close-up of the 8087's datapath, showing functional blocks that are used by &lt;code&gt;FPTAN&lt;/code&gt;. Click this image (or any other) for a larger version.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;Zooming in on the datapath shows the relevant functional units.
+The exponent ROM holds fixed exponent values that the algorithms need.
+The constant ROM holds constants, including the constants used by the CORDIC algorithm.
+The shifter is a large component; it shifts a 64-bit value left or right by arbitrary amounts.
+The adder is the heart of the 8087's calculations; as well as providing addition and subtraction, it is used in a loop for multiplication, division, and square roots.
+The B register holds one input to the adder, while multiple sources can provide the other input. The sum register holds the adder's output.
+The eight stack registers and the temporary registers hold floating-point numbers.
+Finally, the shift register holds 16 status bits for the CORDIC calculations.&lt;/p&gt;
+&lt;h2&gt;The CORDIC algorithm&lt;/h2&gt;
+&lt;p&gt;CORDIC is a clever algorithm for quickly computing transcendental functions
+with simple hardware: it uses shift and add instructions along with table lookups,
+but doesn't need multiplication or division.
+This algorithm dates back to 1956, when it was developed for the B-58 Hustler,
+the first bomber capable of flying at Mach 2.
+The aircraft had an analog navigation computer, but analog components provided limited accuracy.
+Engineer Jack Volder was given the task of designing a digital computer to replace
+the analog computer.&lt;span id="fnref:birth-of-cordic"&gt;&lt;a class="ref" href="#fn:birth-of-cordic"&gt;7&lt;/a&gt;&lt;/span&gt;
+One key problem was that an analog computer can easily generate sines and cosines
+with an electromechanical device called a resolver.
+But trigonometric functions are difficult to produce digitally, especially with the
+slow transistors of that era.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/b58.jpg"&gt;&lt;img alt="A Convair B-58A Hustler, on display in San Antonio, TX (details)." class="hilite" height="258" src="https://static.righto.com/images/8087-fptan/b58-w600.jpg" title="A Convair B-58A Hustler, on display in San Antonio, TX (details)." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A Convair B-58A Hustler, on display in San Antonio, TX (&lt;a href="https://www.portsanantonio.us/B-58"&gt;details&lt;/a&gt;).&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;Jack Volder came up with a fast way to calculate trigonometric functions
+with simple hardware.
+He called the algorithm&amp;mdash;and the computer that implemented it&amp;mdash;CORDIC: "COordinate Rotation DIgital Computer".
+CORDIC converts an angle to a vector, where
+the vector's coordinates provide the necessary trig functions.
+The trick is to break down the angle into a sequence of special angles, angles that
+make vector rotation easy.
+These special angles are precomputed and stored in a table, so the CORDIC calculation
+can be performed quickly, even on 1950s hardware.
+Each CORDIC iteration provides an additional bit of accuracy, so the algorithm converges
+rapidly. CORDIC became popular, including in &lt;a href="https://archived.hpcalc.org/laporte/TheSecretOfTheAlgorithms.htm"&gt;scientific calculators&lt;/a&gt;, which used decimal CORDIC instead of binary.&lt;/p&gt;
+&lt;h2&gt;Some trigonometry&lt;/h2&gt;
+&lt;p&gt;I'll try to keep the math to a minimum, but in this section I'll give a quick explanation
+of how CORDIC works.
+The diagram below reviews how trig functions are related to the coordinates of a point.
+Suppose you have an angle θ; it specifies a point &lt;em&gt;(X, Y)&lt;/em&gt; on the unit circle. 
+The basic formulas are &lt;em&gt;X=cos θ&lt;/em&gt;, &lt;em&gt;Y=sin θ&lt;/em&gt;, and &lt;em&gt;Y/X = tan θ&lt;/em&gt;.
+Thus, if you can determine the coordinate &lt;em&gt;(X, Y)&lt;/em&gt;, then you can determine the value of the
+trig functions.
+If the point is &lt;em&gt;not&lt;/em&gt; on the unit circle, e.g. &lt;em&gt;(X', Y')&lt;/em&gt;, then you can still easily determine
+tan θ. (Spoiler: this is what the 8087 does.) However, sin θ and cos θ become messy.&lt;span id="fnref:sin"&gt;&lt;a class="ref" href="#fn:sin"&gt;4&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/trig.jpg"&gt;&lt;img alt="The relationship between an angle, the X and Y coordinates, and the trig functions." class="hilite" height="210" src="https://static.righto.com/images/8087-fptan/trig-w300.jpg" title="The relationship between an angle, the X and Y coordinates, and the trig functions." width="300" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The relationship between an angle, the X and Y coordinates, and the trig functions.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;If you've done any computer graphics, you've probably seen how a rotation matrix can rotate a point by an angle. (If you're not familiar with rotation matrices, you can read about them &lt;a href="https://en.wikipedia.org/wiki/Rotation_matrix"&gt;here&lt;/a&gt; or just trust that it works.)
+Multiplying a point &lt;em&gt;(X, Y)&lt;/em&gt; by the rotation matrix yields the new point &lt;em&gt;(X', Y')&lt;/em&gt; as shown below.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/rotate.jpg"&gt;&lt;img alt="A point can be rotated by using a rotation matrix." class="hilite" height="228" src="https://static.righto.com/images/8087-fptan/rotate-w250.jpg" title="A point can be rotated by using a rotation matrix." width="250" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A point can be rotated by using a rotation matrix.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;Unfortunately, since the rotation matrix (1, below) requires &lt;em&gt;sin&lt;/em&gt; and &lt;em&gt;cos&lt;/em&gt;, it doesn't seem like it helps solve our problem.
+However, we can divide the matrix by &lt;em&gt;cos θ&lt;/em&gt;; this seems even less helpful since now the matrix (2) needs &lt;em&gt;tan&lt;/em&gt;, which is what we want to evaluate. (Moreover, the vector's length will grow.)
+But the key to CORDIC is to use special angles, &lt;em&gt;α&lt;sub&gt;n&lt;/sub&gt; = arctan(2&lt;sup&gt;-n&lt;/sup&gt;)&lt;/em&gt;.
+When we substitute one of these special angles into the matrix, we get matrix (3), which is easy to evaluate in hardware: multiplying by a power of 2 can be done by shifting the bits.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/matrices.jpg"&gt;&lt;img alt="Simplifying the rotation matrix." class="hilite" height="110" src="https://static.righto.com/images/8087-fptan/matrices-w400.jpg" title="Simplifying the rotation matrix." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Simplifying the rotation matrix.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;Applying matrix (3) to the point &lt;em&gt;(X,Y)&lt;/em&gt; gives the equations (4).
+These are key equations for the CORDIC process.
+The important thing is that these equations are fast and easy to compute in machine language or
+hardware, as the only operations are addition, subtraction, and binary shifting.&lt;/p&gt;
+&lt;p&gt;With that background, we can see how CORDIC works.
+First, we break down the desired input angle into a combination of special angles that
+adds up to the desired angle.&lt;span id="fnref:proof"&gt;&lt;a class="ref" href="#fn:proof"&gt;5&lt;/a&gt;&lt;/span&gt;
+Then we apply the rotation formula above for each special angle, 
+starting with the unit vector (1, 0). The result is a point
+&lt;em&gt;(X, Y)&lt;/em&gt; at the desired angle, and then the desired tangent is simply &lt;em&gt;Y/X&lt;/em&gt;.&lt;span id="fnref:typical-cordic"&gt;&lt;a class="ref" href="#fn:typical-cordic"&gt;6&lt;/a&gt;&lt;/span&gt;
+Since the table of special angles is precomputed, the &lt;em&gt;arctan&lt;/em&gt; operations don't slow down the process.
+As an aside, after the first few terms, the special angles approach &lt;em&gt;2&lt;sup&gt;-n&lt;/sup&gt;&lt;/em&gt;,
+so they shrink by roughly a factor of 2 at each step.&lt;/p&gt;
+&lt;p&gt;To summarize, the CORDIC algorithm consists of looping through a table of stored angles.
+If the stored angle is less than the desired angle, the stored angle is subtracted from the
+desired angle to yield a new desired angle and the equations above (shifts, add, and subtract) are applied to yield a new vector.
+At the end, the tangent of the original angle is given by &lt;em&gt;Y/X&lt;/em&gt;.&lt;/p&gt;
+&lt;h2&gt;The rational polynomial approximation&lt;/h2&gt;
+&lt;p&gt;The accuracy of CORDIC depends on the number of terms that are used. With 16 terms, the
+accuracy is approximately 2&lt;sup&gt;-16&lt;/sup&gt;, or 16 bits of accuracy.
+To get 64 bits of accuracy would require calculating 64 terms (and a table of 64 special angles).
+To get an answer faster, the 8087 uses 16 bits of CORDIC and uses another algorithm for
+the remaining angle.
+(The remaining angle is the gap between the sum of special CORDIC angles and the desired angle,
+so it is very small, around 2&lt;sup&gt;-16&lt;/sup&gt;.)&lt;/p&gt;
+&lt;p&gt;For the remaining angle, the 8087 uses a &lt;a href="https://en.wikipedia.org/wiki/Pad%C3%A9_approximant"&gt;Padé approximant&lt;/a&gt;, which is the ratio of two polynomials.
+There's a whole family of Padé approximations, depending on the order of the polynomials.
+The 8087 uses a simple formula: &lt;i&gt;3x/(3-x&lt;sup&gt;2&lt;/sup&gt;)&lt;/i&gt;.&lt;span id="fnref:pade"&gt;&lt;a class="ref" href="#fn:pade"&gt;8&lt;/a&gt;&lt;/span&gt;
+Although this approximation is simple, it is very accurate for small values; its error is proportional to &lt;em&gt;x&lt;sup&gt;4&lt;/sup&gt;&lt;/em&gt;.
+Since &lt;em&gt;x&amp;lt;2&lt;sup&gt;-16&lt;/sup&gt;&lt;/em&gt;, the error will be less than &lt;em&gt;2&lt;sup&gt;-64&lt;/sup&gt;&lt;/em&gt;, meeting the 64-bit accuracy
+requirement for the 8087.
+Moreover, the 8087 doesn't need to perform the division in the rational polynomial since
+&lt;code&gt;FPTAN&lt;/code&gt; returns a separate numerator and denominator. Thus, the division is "free".&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/function-comparison.jpg"&gt;&lt;img alt="The tangent function (red), rational approximation (blue), and Taylor series (green).
+Disclaimer: The Taylor series isn't as bad as it appears, since the relevant range is very close to 0.
+Graph generated with Desmos." class="hilite" height="342" src="https://static.righto.com/images/8087-fptan/function-comparison-w320.jpg" title="The tangent function (red), rational approximation (blue), and Taylor series (green).
+Disclaimer: The Taylor series isn't as bad as it appears, since the relevant range is very close to 0.
+Graph generated with Desmos." width="320" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The tangent function (red), rational approximation (blue), and Taylor series (green).
+Disclaimer: The Taylor series isn't as bad as it appears, since the relevant range is very close to 0.
+Graph generated with Desmos.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;If you've studied calculus, you might think that a Taylor series polynomial is the way to go,
+but the ratio of two polynomials is better.
+(One reason is that tangent blows up to infinity at π/2.
+A polynomial won't blow up, but the ratio of polynomials can, so it fits the tangent function better.)
+The graph above compares the tangent function (red), the rational approximation (blue),
+and the third-order Taylor series (green).&lt;/p&gt;
+&lt;h2&gt;Putting the pieces together: the 8087 algorithm&lt;/h2&gt;
+&lt;p&gt;The 8087's tangent algorithm has three parts: determining the CORDIC decision bits (called &lt;a href="https://web.archive.org/web/20220204062801if_/http://home.citycable.ch/pierrefleur/Jacques-Laporte/Meggitt_62.pdf"&gt;pseudo-division&lt;/a&gt;),
+computing the rational approximation, and applying the rotation equations based on the
+CORDIC decision bits (called pseudo-multiplication).&lt;span id="fnref:nave"&gt;&lt;a class="ref" href="#fn:nave"&gt;9&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;In more detail, the first step determines which special angles to add to approximate the
+input angle. 
+Each special angle is compared to the remaining input angle and subtracted if it is smaller.
+If the angle is subtracted, a 1 is recorded; otherwise, a 0 is recorded.
+Since this process is similar to how long division subtracts (or doesn't subtract) successive
+shifted versions of the divisor, generating 1s or 0s for the quotient, the process is known as pseudo-division.
+Note that the rotations are not applied in this step. Instead, this step decides which rotations
+to apply later.&lt;/p&gt;
+&lt;p&gt;The diagram below shows this process applied to the input angle 0.95 radians.&lt;span id="fnref:range"&gt;&lt;a class="ref" href="#fn:range"&gt;10&lt;/a&gt;&lt;/span&gt;
+The process generates the sequence of bits
+&lt;em&gt;[1,0,0,1,0,1,0,1,0,0,1,0,0,1,1,1]&lt;/em&gt;,
+where the leftmost bit indicates &lt;em&gt;arctan(2&lt;sup&gt;0&lt;/sup&gt;)&lt;/em&gt; and so forth.
+The angle is reduced by roughly a factor of 2 at each step, so the residual angle is
+very small.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/diagram1.jpg"&gt;&lt;img alt="In the first phase of the CORDIC algorithm&amp;mdash;pseudo-division&amp;mdash;the input angle is reduced by special angles, leaving a residual angle at the end. (&amp;quot;rad&amp;quot; is radians, not the unit of radiation.)" class="hilite" height="279" src="https://static.righto.com/images/8087-fptan/diagram1-w350.jpg" title="In the first phase of the CORDIC algorithm&amp;mdash;pseudo-division&amp;mdash;the input angle is reduced by special angles, leaving a residual angle at the end. (&amp;quot;rad&amp;quot; is radians, not the unit of radiation.)" width="350" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;In the first phase of the CORDIC algorithm&amp;mdash;pseudo-division&amp;mdash;the input angle is reduced by special angles, leaving a residual angle at the end. ("rad" is radians, not the &lt;a href="https://en.wikipedia.org/wiki/Rad_(radiation_unit)"&gt;unit of radiation&lt;/a&gt;.)&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;Next, the tangent of the remaining angle is calculated with the rational approximation
+function, &lt;i&gt;3x/(3-x&lt;sup&gt;2&lt;/sup&gt;)&lt;/i&gt;.
+The result is used as the initial vector for the next step.
+The division is not performed here; instead, the numerator becomes &lt;em&gt;Y&lt;/em&gt; in the initial vector
+and the denominator becomes &lt;em&gt;X&lt;/em&gt;. Thus, the expensive division step is avoided, since it
+happens implicitly in the answer.
+Multiplying by 3 is easy (shift left and add), so the only expensive operation at this
+step is squaring the angle, which requires a full 64-bit multiplication.&lt;/p&gt;
+&lt;p&gt;The final step applies each CORDIC rotation if the corresponding decision bit from the first step is
+1.
+Since this is somewhat analogous to binary multiplication, which adds the multiplicand
+at each step if the multiplier bit is 1, this step is known as pseudo-multiplication.
+As described earlier, each rotation is computed with shifts, addition, and subtraction,
+so each rotation is inexpensive.
+Each rotation in this step corresponds to an angle reduction in the first step.
+The rotations are applied in
+reverse order&amp;mdash;the smallest one first&amp;mdash;to reduce rounding error.
+To accomplish this, the decision bits are stored in a 16-bit shift register in the
+first step, and shifted out in opposite order in this step.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/diagram2.jpg"&gt;&lt;img alt="In the last phase of the CORDIC algorithm&amp;mdash;pseudo-multiplication&amp;mdash;a vector is rotated multiple times by applying shifts and adds. The final vector provides the tangent." class="hilite" height="310" src="https://static.righto.com/images/8087-fptan/diagram2-w420.jpg" title="In the last phase of the CORDIC algorithm&amp;mdash;pseudo-multiplication&amp;mdash;a vector is rotated multiple times by applying shifts and adds. The final vector provides the tangent." width="420" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;In the last phase of the CORDIC algorithm&amp;mdash;pseudo-multiplication&amp;mdash;a vector is rotated multiple times by applying shifts and adds. The final vector provides the tangent.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;The diagram above shows the process applied to the input 0.95. 
+The initial vector (green) comes from the rational approximation function; it is very close to
+(3, 0), but slightly rotated due to the tiny residual angle.
+Each rotation step generates a new vector that matches the angle from the corresponding
+step in the first part; I show two of the rotation matrices.
+Note that the vectors diverge from the circle&amp;mdash;a consequence of dividing each matrix by &lt;em&gt;cos &amp;theta;&lt;/em&gt;&amp;mdash;but this doesn't
+affect the tangent.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;FPTAN&lt;/code&gt; instruction is somewhat peculiar as it doesn't return the tangent directly.
+Instead, it returns the Partial Tangent: the two coordinate values
+(&lt;code&gt;X&lt;/code&gt; and &lt;code&gt;Y&lt;/code&gt;) that can be divided to produce the tangent.
+One might wonder why the chip didn't do the division automatically.
+The motivation was that division
+was slow back then, and omitting the division allowed for optimizations in some cases.&lt;/p&gt;
+&lt;h2&gt;Relevant hardware details of the 8087&lt;/h2&gt;
+&lt;p&gt;In this section, I'll explain some features of the 8087 that are important for the microcode implementation of &lt;code&gt;FPTAN&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The 8087 supports a variety of data types,
+but internally, everything is stored as an 80-bit floating-point number called a "temporary real".
+A number has three parts: a sign bit, a 15-bit exponent, and a 64-bit significand (the fractional part),
+In most cases, a floating-point number is represented by &lt;i&gt;sign&lt;/i&gt; &amp;times; &lt;i&gt;significand&lt;/i&gt; × 2&lt;sup&gt;&lt;i&gt;exponent&lt;/i&gt;&lt;/sup&gt;.
+The advantage of floating-point numbers is that the exponent allows them to cover a huge range, from very small to very large.
+The significand is a 64-bit binary number of the form &lt;code&gt;1.bbb…&lt;/code&gt;:
+a leading 1, followed by the binary point (the binary equivalent of the decimal point) and the rest of the bits.&lt;span id="fnref:leading-one"&gt;&lt;a class="ref" href="#fn:leading-one"&gt;11&lt;/a&gt;&lt;/span&gt;
+One important detail is that the exponent is stored with a "bias" of 16383 added to it. Thus, the stored exponent is always positive, even if the real
+exponent is negative. For instance, an exponent of 1 is stored as &lt;code&gt;0x4000&lt;/code&gt;, and an exponent of -16 is stored as &lt;code&gt;0x3fef&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/registers.jpg"&gt;&lt;img alt="The 80-bit temporary real format and the register formats. The dot indicates the binary point, analogous to the decimal point." class="hilite" height="209" src="https://static.righto.com/images/8087-fptan/registers-w550.jpg" title="The 80-bit temporary real format and the register formats. The dot indicates the binary point, analogous to the decimal point." width="550" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The 80-bit temporary real format and the register formats. The dot indicates the binary point, analogous to the decimal point.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;To use the 8087, a programmer stores values in its eight internal registers, organized as a stack. Each register holds an 80-bit floating-point number.
+To optimize performance,
+each value in the register stack also has an associated "tag" value:
+zero, valid, special, or empty.
+A value of zero is tagged as &lt;em&gt;zero&lt;/em&gt;.
+A "normal" floating-point value is tagged as &lt;em&gt;valid&lt;/em&gt;. If the value is infinity, Not a Number (NaN), or a denormalized value,
+then it is tagged as &lt;em&gt;special&lt;/em&gt;.
+Finally, an &lt;em&gt;empty&lt;/em&gt; tag indicates that a register does not hold a value; this allows detection of
+stack underflow (reading an empty register) or stack overflow (storing to a non-empty
+register).&lt;/p&gt;
+&lt;p&gt;The 8087 also has temporary registers that it uses internally: &lt;code&gt;tmpA&lt;/code&gt;, &lt;code&gt;tmpB&lt;/code&gt;, and &lt;code&gt;tmpC&lt;/code&gt;.
+(These registers are heavily used for the tangent calculation.)
+&lt;code&gt;tmpA&lt;/code&gt; and &lt;code&gt;tmpB&lt;/code&gt; are 80-bit registers, along
+with two tag bits.
+However, &lt;code&gt;tmpC&lt;/code&gt; is different: it doesn't have a sign, exponent, or tag.
+Moreover,
+the significand is 68 bits; &lt;code&gt;tmpC&lt;/code&gt; has an additional
+bit to prevent overflow and three additional low-order bits for rounding, known as
+&lt;em&gt;guard&lt;/em&gt;, &lt;em&gt;round&lt;/em&gt;, and &lt;em&gt;sticky&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;In the microcode,
+each 16-bit micro-instruction performs one low-level operation.
+Many of the operations move data from one register to another.
+Other operations provide conditional jumps, subroutine calls, and returns.
+A bit shift operation takes two micro-instructions: the first moves a value to the shifter and
+configures the direction and amount of shift. The second micro-instruction (which may be
+a distance after the first) moves the result from the shifter to a destination.&lt;/p&gt;
+&lt;p&gt;Similarly, addition takes two micro-instructions. The first micro-instruction
+specifies the first argument to add and selects various options such as
+carry and rounding.
+(For subtraction, an option complements the second argument.)
+The second argument always comes from the &lt;code&gt;B&lt;/code&gt; register, which confusingly is
+unrelated to the &lt;code&gt;tmpB&lt;/code&gt; register.
+The second micro-instruction moves the result from the sum register to a destination.&lt;/p&gt;
+&lt;h2&gt;Implementation of the tangent algorithm in microcode&lt;/h2&gt;
+&lt;p&gt;In this section, I'll discuss some highlights of the tangent microcode.
+The listing below shows the 8087's microcode, along with my comments.
+Each line indicates a 16-bit micro-instruction.
+The control flow is a bit complicated, so I've put a flowchart in the footnotes.&lt;span id="fnref:flowchart"&gt;&lt;a class="ref" href="#fn:flowchart"&gt;12&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;pre class="microcode"&gt;
+&lt;span&gt;FPTAN:&lt;/span&gt;
+#1039 st(0) -&gt; tmpA        &lt;span&gt;store argument in tmpA&lt;/span&gt;
+#1040 stackPtr--           &lt;span&gt;check if room on stack to push result&lt;/span&gt;
+#1041 stack overflow?
+#1042 jmp #1022 if tmp empty/special/overflow/div &lt;span&gt;exit if bad argument or stack overflow&lt;/span&gt;
+#1043 jmp #1045 if tmpA:tag ZERO &lt;span&gt;is argument 0?&lt;/span&gt;
+#1044 except:precision     &lt;span&gt;precision exception except for 0&lt;/span&gt;
+#1045 expconst 0x3ff0      &lt;span&gt;Test if exponent &gt;= -16&lt;/span&gt;
+#1046 adder: tmpA:exp + 0 cin=1 &lt;span&gt;argument exponent + 1&lt;/span&gt;
+#1047 expConst -&gt; Breg
+#1048 adder: sumreg:frac - Breg cin=1 &lt;span&gt;subtract -15&lt;/span&gt;
+#1049 jmp #1061 if adder pos &lt;span&gt;CORDIC if exponent &gt;= -16&lt;/span&gt;
+#1050 expconst 0x3fff      &lt;span&gt;non-CORDIC path:&lt;/span&gt;
+#1051 tmpA:exp -&gt; Breg     &lt;span&gt;check original exponent&lt;/span&gt;
+#1052 expConst -&gt; tmpB:frac &lt;span&gt;against exponent 0&lt;/span&gt;
+#1053 adder: tmpB:frac - Breg cin=1 &lt;span&gt;subtract&lt;/span&gt;
+#1054 sumreg:frac -&gt; expConv &lt;span&gt;3fff - exp (i.e. -exp unbiased)&lt;/span&gt;
+#1055 sumreg:frac -&gt; shiftcount
+#1056 jmp #1082 if exponent[6:14] != 0 &lt;span&gt;if exp &gt; -64 goto rational approximation&lt;/span&gt;
+#1057 high bit -&gt; tmpB:frac &lt;span&gt;otherwise return original argument&lt;/span&gt;
+#1058 expConst -&gt; tmpB:sign,exp &lt;span&gt;push 1 for X (denom): result is orig angle&lt;/span&gt;
+#1059 tmpB -&gt; st(0)
+#1060 RNI
+#1061 expconst 0x0010      &lt;span&gt;CORDIC path&lt;/span&gt;
+#1062 sumreg:frac -&gt; loopcounter &lt;span&gt;loopcounter = exp + 16&lt;/span&gt;
+#1063 tmpA:frac -&gt; tmpC    &lt;span&gt;tmpC = original angle&lt;/span&gt;
+#1064 trig const -&gt; Breg/rnd
+#1065 adder: tmpC - Breg cin=1, roundmode &lt;span&gt;subtract first CORDIC angle&lt;/span&gt;
+#1066 adder sign -&gt; cordic, shl &lt;span&gt;save bit  in shift register&lt;/span&gt;
+#1067 jmp #1079 if not adder pos
+#1068 sumreg:frac,rnd -&gt; tmpC
+#1069 adder: tmpA:exp + 0 cin=1 &lt;span&gt;increment exp if first angle used&lt;/span&gt;
+#1070 sumreg:frac -&gt; tmpA:exp
+#1071 jmp #1079
+#1072 shift tmpC L 0 bytes, 1 bits &lt;span&gt;top of CORDIC scan loop&lt;/span&gt;
+#1073 shift L -&gt; tmpC      &lt;span&gt;shift angle left&lt;/span&gt;
+#1074 trig const -&gt; Breg/rnd
+#1075 adder: tmpC - Breg cin=1, roundmode &lt;span&gt;subtract CORDIC angle&lt;/span&gt;
+#1076 adder sign -&gt; cordic, shl &lt;span&gt;save decision bit in shift register&lt;/span&gt;
+#1077 jmp #1079 if not adder pos
+#1078 sumreg:frac,rnd -&gt; tmpC
+#1079 jmp #1072 if not const latch zero &lt;span&gt;bottom of CORDIC scan loop&lt;/span&gt;
+#1080 tmpC -&gt; tmpA:frac    &lt;span&gt;update tmpA, tmpB&lt;/span&gt;
+#1081 expConst -&gt; shiftcount &lt;span&gt;16 -&gt; shiftcount (otherwise based on exponent)&lt;/span&gt;
+#1082 tmpA:frac -&gt; tmpB:frac &lt;span&gt;Padé approximation&lt;/span&gt;
+#1083 tmpA:frac -&gt; Breg    &lt;span&gt;tmpA = ang&lt;/span&gt;
+#1084 call SQUARE          &lt;span&gt;square the angle&lt;/span&gt;
+#1085 shift sumreg:frac R count byte bit
+#1086 shift R -&gt; sumreg:frac &lt;span&gt;shift twice to scale square&lt;/span&gt;
+#1087 shift sumreg:frac R count byte bit
+#1088 shift R -&gt; Breg      &lt;span&gt;Breg = ang^2&lt;/span&gt;
+#1089 1.1 -&gt; tmpB:frac     &lt;span&gt;3 (with exp 1)&lt;/span&gt;
+#1090 adder: tmpB:frac - Breg cin=0
+#1091 sumreg:frac -&gt; tmpB:frac &lt;span&gt;tmpB (X) = 3-ang^2&lt;/span&gt;
+#1092 shift tmpA:frac R 0 bytes, 1 bits
+#1093 shift R -&gt; Breg/rnd
+#1094 adder: tmpA:frac + Breg cin=0, roundmode &lt;span&gt;ang + ang/2&lt;/span&gt;
+#1095 sumreg:sign,frac,rnd -&gt; tmpC &lt;span&gt;tmpC (Y) = 3×ang with appropriate exponent&lt;/span&gt;
+#1096 expconst 0x3ff0      &lt;span&gt;exponent -15&lt;/span&gt;
+#1097 expConst -&gt; Breg
+#1098 adder: tmpA:exp - Breg cin=1
+#1099 jmp #1118 if not adder pos &lt;span&gt;skip if exponent too small&lt;/span&gt;
+#1100 shift tmpC R 0 bytes, 1 bits &lt;span&gt;CORDIC pseudo-multiplication path&lt;/span&gt;
+#1101 #15 -&gt; loopcounter
+#1102 shift R -&gt; tmpC
+#1103 jmp #1113 if not cordic[0] &lt;span&gt;CORDIC: if saved decision bit...&lt;/span&gt;
+#1104 shift tmpC R loopcount &lt;span&gt;send tmpC (Y) to shifter&lt;/span&gt;
+#1105 tmpC -&gt; Breg/rnd     &lt;span&gt;send tmpC to adder&lt;/span&gt;
+#1106 adder: tmpB:frac + Breg cin=0, roundmode &lt;span&gt;tmpB (X) not shifted because tmpC scaled&lt;/span&gt;
+#1107 sumreg:sign,frac,rnd -&gt; tmpC &lt;span&gt;tmpC = tmpC + tmpB (implicit &gt;&gt;n)&lt;/span&gt;
+#1108 shift R -&gt; sumreg:frac,rnd &lt;span&gt;shifted old tmpC to sumreg&lt;/span&gt;
+#1109 shift sumreg:frac,rnd R loopcount &lt;span&gt;shift right again because tmpC scaled&lt;/span&gt;
+#1110 shift R -&gt; Breg/rnd  &lt;span&gt;and send to B reg&lt;/span&gt;
+#1111 adder: tmpB:frac - Breg cin=1, roundmode
+#1112 sumreg:frac,rnd -&gt; tmpB:frac &lt;span&gt;tmpB = tmpB - tmpC&gt;&gt;n&lt;/span&gt;
+#1113 cordic shr           &lt;span&gt;shift out shift register bit&lt;/span&gt;
+#1114 shift tmpC R 0 bytes, 1 bits &lt;span&gt;start shift of tmpC (Y)&lt;/span&gt;
+#1115 jmp #1118 if cordic==0 &lt;span&gt;done if shift register empty&lt;/span&gt;
+#1116 shift R -&gt; tmpC      &lt;span&gt;shift tmpC (Y) right&lt;/span&gt;
+#1117 jmp #1103 if not const latch zero &lt;span&gt;done if counter at zero&lt;/span&gt;
+#1118 expconst 0x3fff      &lt;span&gt;CORDIC done&lt;/span&gt;
+#1119 tmpB:frac -&gt; sumreg:frac &lt;span&gt;Test top bit of tmpB (X)&lt;/span&gt;
+#1120 jmp #1124 if reg bit 63 &lt;span&gt;If set, use exponent 0&lt;/span&gt;
+#1121 expconst 0x3ffe      &lt;span&gt;Otherwise, use exponent -1 and&lt;/span&gt;
+#1122 shift sumreg:frac L 0 bytes, 1 bits &lt;span&gt;shift left one bit to normalize&lt;/span&gt;
+#1123 shift L -&gt; tmpB:frac
+#1124 expConst -&gt; tmpB:sign,exp &lt;span&gt;store exponent in tmpB&lt;/span&gt;
+#1125 tmpC -&gt; tmpA:frac    &lt;span&gt;store tmpC (Y) in tmpA&lt;/span&gt;
+#1126 tmpC -&gt; sumreg:frac,sign
+#1127 jmp #1132 if not sumreg[64] &lt;span&gt;test overflow bit&lt;/span&gt;
+#1128 shift tmpC R 0 bytes, 1 bits &lt;span&gt;if set, normalize by shifting right&lt;/span&gt;
+#1129 shift R -&gt; tmpA:frac
+#1130 adder: tmpA:exp + 0 cin=1 &lt;span&gt;and increment exponent by 1&lt;/span&gt;
+#1131 sumreg:frac -&gt; tmpA:exp
+#1132 tmpB -&gt; st(0)        &lt;span&gt;tmpB to top of stack: X (denom)&lt;/span&gt;
+#1133 stackPtr++
+#1134 tmpA -&gt; st(0)        &lt;span&gt;tmpA to st(1): Y (numerator)&lt;/span&gt;
+#1135 stackPtr--
+#1136 RNI                  &lt;span&gt;End of FPTAN&lt;/span&gt;
+&lt;/pre&gt;
+
+&lt;p&gt;The &lt;code&gt;FPTAN&lt;/code&gt; microcode starts at address &lt;code&gt;#1039&lt;/code&gt; (decimal).
+The microcode starts by moving the argument from the top of the stack to the &lt;code&gt;tmpA&lt;/code&gt; register.
+If the top value is empty, this indicates a stack underflow. If the next element on
+the stack (the position that will hold the result) is not empty, this indicates a stack
+overflow. In either case, the microcode indicates an "invalid" exception and ends the instruction.&lt;/p&gt;
+&lt;p&gt;One peculiar feature of the 8087 is that it flags a result with a "precision" exception if
+the result is not exact. (This happens very frequently, even for, say, 1/10.)
+The only tangent that the 8087 can compute precisely is &lt;em&gt;tan(0)&lt;/em&gt;, so all other inputs
+result in a precision exception (&lt;code&gt;#1044&lt;/code&gt;).&lt;/p&gt;
+&lt;p&gt;Next, the argument's exponent is tested, splitting the execution into three paths.
+If the exponent is -64 or less, the argument is so small that
+the tangent equals the argument, within the accuracy of the system.&lt;span id="fnref:comparison"&gt;&lt;a class="ref" href="#fn:comparison"&gt;13&lt;/a&gt;&lt;/span&gt;
+In this case (&lt;code&gt;#1057&lt;/code&gt;), the original argument is returned unchanged (with the denominator 1 pushed), and the code ends.
+The second case is if the argument's exponent is -17 or less. In this case,
+the CORDIC step is skipped, and the routine jumps directly to the rational approximation (&lt;code&gt;#1082&lt;/code&gt;).&lt;/p&gt;
+&lt;h3&gt;CORDIC pseudo-division&lt;/h3&gt;
+&lt;p&gt;The most interesting case is the CORDIC path (&lt;code&gt;#1061&lt;/code&gt;), taken if the exponent is between -1 and -16.
+Conceptually, the code performs 16 CORDIC steps, using 16 stored angles.
+However, the code is optimized, skipping the large angles for smaller
+inputs.
+Specifically, the loop counter is initialized based on the
+exponent of the input angle (&lt;code&gt;#1062&lt;/code&gt;).
+The CORDIC pseudo-division loop (&lt;code&gt;#1061&lt;/code&gt;-&lt;code&gt;#1080&lt;/code&gt;) tests the angles, subtracting ones that aren't too big.&lt;span id="fnref:first-step"&gt;&lt;a class="ref" href="#fn:first-step"&gt;14&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;The decision results are recorded in a 16-bit shift register, located on the far right side of the die.
+Presumably, this is where the layout had some unused space.
+Since the shift register is loaded and unloaded serially, it doesn't need access to the
+internal fraction bus, just two lines to shift the bits in and out, so the shift
+register could be located in otherwise unused space.&lt;/p&gt;
+&lt;p&gt;The code is optimized to use 64-bit integer arithmetic rather than floating-point arithmetic.
+This makes it tricky to understand the code since values
+must be viewed more as fixed-point numbers with
+implicit exponents.
+These exponents are not stored anywhere, but can be determined by analyzing the algorithm.
+Even the angle constants in the ROM do not have explicit exponents.&lt;span id="fnref:rom-exponents"&gt;&lt;a class="ref" href="#fn:rom-exponents"&gt;15&lt;/a&gt;&lt;/span&gt;
+Moreover, the implicit exponents change for each step through the loop to preserve accuracy.
+Roughly speaking, each cycle of the loop reduces the values by a factor of 2, and the
+angle constants shrink accordingly.
+If the values had a fixed exponent, they would end up with 16 leading zeros, wasting
+precision. But by scaling the values each cycle (with a left shift),
+the numbers continue to use the full 64 bits.
+In other words, the hardware is performing fast integer arithmetic, but mathematically
+you can think of it as fixed-point with exponents that don't physically exist in the chip.
+See the table in the footnotes&lt;span id="fnref:details"&gt;&lt;a class="ref" href="#fn:details"&gt;16&lt;/a&gt;&lt;/span&gt; for details on how the implicit exponents change through
+the loop.&lt;/p&gt;
+&lt;style&gt;
+  pre.microcode {font-family: courier, fixed; padding: 10px; background-color: #f5f5f5; display:inline-block;border:none;font-size:90%; height: 200px; overflow-y: scroll; resize:vertical;}
+  pre.microcode span {color: green; font-style:italic; font-family: sans-serif; font-size: 90%;}
+&lt;/style&gt;
+
+&lt;h3&gt;Rational polynomial approximation&lt;/h3&gt;
+&lt;p&gt;After the CORDIC pseudo-division loop, the microcode calculates the rational polynomial
+approximation (&lt;code&gt;#1082&lt;/code&gt;).
+The small-angle path rejoins the execution flow here.
+The microcode to calculate the polynomial approximation has a few interesting features.
+The most time-consuming part is the &lt;code&gt;SQUARE&lt;/code&gt; routine, which multiplies a fixed-point number by itself.
+Multiplication is complicated, so I'll give the details in a later post.
+But in brief, the 8087 uses Booth's Algorithm to
+multiply by two bits at a time (radix 4), so it is twice as fast as regular binary
+multiplication.
+The loop to perform the shifts and adds is implemented in hardware, rather than microcode.
+That is, one microcode instruction performs 32 additions: the hardware tests the
+bits, does the appropriate add or subtract, updates the loop counter, and loops.
+For performance, the shifting is done with specialized shifters, not the 8087's general-purpose
+shifter.&lt;/p&gt;
+&lt;p&gt;Except for the square, the polynomials are calculated with additions rather than multiplications.
+The constant 3 doesn't come from the constant ROM, but from special-purpose transistors that
+set the top two bits of the significand; this is usually used to supply an NaN.
+(If the implicit exponent is 1, this corresponds to 3.)
+Subtracting the square yields the numerator. For the denominator, the angle is shifted
+right (i.e. divided by 2) and added to itself. 
+This performs a multiplication by 3 (technically by 1.5, but increasing the implicit
+exponent to 1 turns this into 3).
+It would be expensive to divide the numerator by the denominator; instead, the numerator
+and denominator are used as the initial Y and X values for the following CORDIC steps.&lt;/p&gt;
+&lt;h3&gt;CORDIC pseudo-multiplication&lt;/h3&gt;
+&lt;p&gt;Next is the CORDIC loop where the rotations are applied to the vector (&lt;code&gt;#1100&lt;/code&gt;).
+The rotations are applied in the reverse order from how they were computed in the first step:
+the smallest rotations are applied first to preserve accuracy.
+Bits are shifted out of the shift register to indicate if the rotation should be applied or
+not. As soon as the shift register is all zeros, the loop stops.
+In other words, smaller angles go through the loop just a few times, not the full 16 times.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/rom.jpg"&gt;&lt;img alt="A close-up of the microcode ROM under the microscope. A transistor is formed where a vertical polysilicon line crosses doped silicon (pink). The 8087's ROM is unusual: it uses four transistor sizes, so it stores two bits per transistor, twice the density of a regular ROM." class="hilite" height="297" src="https://static.righto.com/images/8087-fptan/rom-w450.jpg" title="A close-up of the microcode ROM under the microscope. A transistor is formed where a vertical polysilicon line crosses doped silicon (pink). The 8087's ROM is unusual: it uses four transistor sizes, so it stores two bits per transistor, twice the density of a regular ROM." width="450" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A close-up of the microcode ROM under the microscope. A transistor is formed where a vertical polysilicon line crosses doped silicon (pink). The 8087's ROM is unusual: it uses four transistor sizes, so it stores two bits per transistor, twice the density of a regular ROM.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;The rotations are applied by shifts and adds (or subtracts), but keeping track of the
+implicit exponents is a bit tricky.
+Since the vector starts almost horizontal, the X value is approximately 3, and the Y value
+is around 2&lt;sup&gt;-16&lt;/sup&gt;.
+As the vector rotates, X remains roughly 3, but Y potentially increases by a factor of 2
+each time.
+To provide the maximum accuracy for each number,
+the exponent for X (&lt;code&gt;tmpB&lt;/code&gt;) is 1, while the exponent for Y (&lt;code&gt;tmpC&lt;/code&gt;) starts off at
+-14 and increases by 1 each loop as Y is shifted right.
+(Remember that these exponents are not stored anywhere but are implicit.)
+Since the two registers have different (implicit) exponents, the values must be shifted
+before adding.
+The shift amounts aren't intuitive; the table&lt;span id="fnref2:details"&gt;&lt;a class="ref" href="#fn:details"&gt;16&lt;/a&gt;&lt;/span&gt; in the
+footnotes may help clarify.&lt;/p&gt;
+&lt;p&gt;After the CORDIC loop, 
+the final part of the code (&lt;code&gt;#1118&lt;/code&gt;) normalizes the &lt;code&gt;X&lt;/code&gt; and &lt;code&gt;Y&lt;/code&gt; values, creating the floating-point
+values that are returned from the instruction.
+Recall that these aren't "real" floating-point values at this point, so they
+may need adjustment.
+Specifically, if &lt;code&gt;X&lt;/code&gt; doesn't have a
+leading 1, it is shifted left one position, while if &lt;code&gt;Y&lt;/code&gt; has two leading digits, it
+is shifted right one position. In either case, the exponent is adjusted accordingly.
+The &lt;code&gt;X&lt;/code&gt; and &lt;code&gt;Y&lt;/code&gt; values are put on the stack (&lt;code&gt;#1132&lt;/code&gt;) to complete the instruction.&lt;/p&gt;
+&lt;h2&gt;Conclusions&lt;/h2&gt;
+&lt;p&gt;The &lt;code&gt;FPTAN&lt;/code&gt; instruction is fairly slow as 8087 instructions go, due to its complexity.
+The documentation says that it takes typically 450 clock cycles.
+(The time has a large range; depending on the value, it can take 30 to 540 clock cycles.)
+For the value I examined (0.95), 33% of the time is in the CORDIC
+pseudo-division, 15% in the rational polynomial (mostly the squaring operation), 47% in the CORDIC pseudo-multiplication, and 5% overhead.&lt;/p&gt;
+&lt;p&gt;CORDIC is a popular way to compute trig functions, but there are alternatives such as polynomials.
+The 8087 is unusual because it combines CORDIC and a rational polynomial.
+For the Pentium, Intel moved from CORDIC to polynomial approximations;
+the Pentium's &lt;a href="https://www.righto.com/2025/03/pentium-multiplier-adder-reverse-engineered.html"&gt;fast multiplication circuitry&lt;/a&gt; made polynomials practical.
+Nowadays, Intel has libraries such as MKL (Math Kernel Library)
+and 
+Short Vector Math Library (SVML) that provide highly optimized implementations tailored
+to Intel hardware. These libraries are said to use polynomial approximations,
+using parallel instructions (SIMD) for performance, rather than specialized hardware.
+With these libraries, x87 operations and 80-bit floats are &lt;a href="https://learn.microsoft.com/en-us/windows/win32/dxtecharts/sixty-four-bit-programming-for-game-developers#porting-applications-to-64-bit-platforms:~:text=The%20x87%2C%20MMX%2C%20and%203DNow!%20instruction%20sets%20are%20deprecated%20in%2064%2Dbit%20modes."&gt;mostly obsolete&lt;/a&gt;.
+Nonetheless, I hope you've enjoyed this look at an original 8087 algorithm.&lt;/p&gt;
+&lt;p&gt;I plan to continue reverse-engineering the 8087 microcode;
+for updates, follow me on
+ Bluesky (&lt;a href="https://bsky.app/profile/righto.com"&gt;@righto.com&lt;/a&gt;),
+Mastodon (&lt;a href="https://oldbytes.space/@kenshirriff"&gt;@kenshirriff@oldbytes.space&lt;/a&gt;),
+or &lt;a href="http://www.righto.com/feeds/posts/default"&gt;RSS&lt;/a&gt;.
+I've been working on this with the members of the "Opcode Collective", especially Smartest Blob and Gloriouscow, who converted the
+ROM images to microcode data and extensively analyzed the contents.
+See the &lt;a href="https://github.com/a-mcego/granite/tree/main/tools/8087mc"&gt;8087 repository&lt;/a&gt; on GitHub for more.
+AI statement: Despite the presence of the em dash, no AI was used in the writing of this article (&lt;a href="https://www.righto.com/p/index.html#ai"&gt;details&lt;/a&gt;). The Opcode Collective used an ML algorithm to classify each ROM cell to extract the microcode.&lt;/p&gt;
+&lt;h2&gt;Notes and references&lt;/h2&gt;
+&lt;div class="footnote"&gt;
+&lt;ol&gt;
+&lt;li id="fn:posts"&gt;
+&lt;p&gt;If you want more on the 8087, here's a list of my previous 8087 posts, newest to oldest:
+&lt;br&gt;&lt;a href="https://www.righto.com/2026/09/8087-microcode-reverse-engineering-fscale.html"&gt;Microcode in Intel's 8087 floating-point chip: the scale instruction&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2026/06/intel-8087-adder-reverse-engineered.html"&gt;The adder at the heart of Intel's 8087 floating-point chip&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2026/05/microcode-inside-intel-8087-floating.html"&gt;Microcode inside the Intel 8087 floating-point chip: register exchange&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2026/02/8087-instruction-decoding.html"&gt;Instruction decoding in the Intel 8087 floating-point chip&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2025/12/8087-microcode-conditions.html"&gt;Conditions in the Intel 8087 floating-point chip's microcode&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2025/12/8087-stack-circuitry.html"&gt;The stack circuitry of the Intel 8087 floating point chip, reverse-engineered&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2020/05/die-analysis-of-8087-math-coprocessors.html"&gt;Die analysis of the 8087 math coprocessor's fast bit shifter&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2020/05/extracting-rom-constants-from-8087-math.html"&gt;Extracting ROM constants from the 8087 math coprocessor's die&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2018/09/two-bits-per-transistor-high-density.html"&gt;Two bits per transistor: high-density ROM in Intel's 8087 floating point chip&lt;/a&gt;
+&lt;br&gt;&lt;a href="https://www.righto.com/2018/08/inside-die-of-intels-8087-coprocessor.html"&gt;Inside the die of Intel's 8087 coprocessor chip, root of modern floating point&lt;/a&gt;
+&lt;br&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:posts" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:emulator"&gt;
+&lt;p&gt;Intel's &lt;a href="https://archive.org/details/8086familyusersm00inte/page/n16/mode/1up]"&gt;documentation&lt;/a&gt;
+provides a performance comparison of the 8087 versus floating-point operations emulated on the 8086.
+The speedup varies depending on the instruction, but is typically almost a factor of 100.
+This speedup made the 8087 chip highly desirable for numerical applications such as CAD and spreadsheets.&amp;#160;&lt;a class="footnote-backref" href="#fnref:emulator" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:bits"&gt;
+&lt;p&gt;Internally, the 8087 uses 80 bits to hold floating-point values: one bit for the sign,
+15 bits for the exponent, and 64 bits for the significand.
+However, the 8087 uses three extra low-order bits for rounding, called Guard, Round, and Sticky. These bits ensure that a value is always rounded in the right direction.
+Some parts of the datapath have additional bits for sign or overflow: the shifter is 68 bits wide, and the &lt;a href="https://www.righto.com/2026/06/intel-8087-adder-reverse-engineered.html"&gt;adder&lt;/a&gt; is 69 bits wide.
+For the most part, I'll ignore these extra bits and refer to the datapath as 64 bits wide.&amp;#160;&lt;a class="footnote-backref" href="#fnref:bits" title="Jump back to footnote 3 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:sin"&gt;
+&lt;p&gt;To compute &lt;em&gt;sin θ&lt;/em&gt; from the 8087's &lt;em&gt;X&lt;/em&gt; and &lt;em&gt;Y&lt;/em&gt; values, the typical formula
+is &lt;em&gt;sin θ = Y/sqrt(X&lt;sup&gt;2&lt;/sup&gt;+Y&lt;sup&gt;2&lt;/sup&gt;)&lt;/em&gt;; &lt;em&gt;cos θ&lt;/em&gt; is similar.&amp;#160;&lt;a class="footnote-backref" href="#fnref:sin" title="Jump back to footnote 4 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:proof"&gt;
+&lt;p&gt;The special angles (in degrees) are approximately
+45°, 26.6°, 14°, 7.1°, 3.6°, 1.8°, 0.9°, … 
+You might wonder if adding up the special angles will always converge to
+the desired angle θ.
+A proof can be found &lt;a href="https://www.wseas.us/e-library/conferences/2007hangzhou/papers/560-120.pdf"&gt;here&lt;/a&gt;.
+Note that &lt;em&gt;arctan(2&lt;sup&gt;-n&lt;/sup&gt;)&lt;/em&gt; rapidly approaches &lt;em&gt;2&lt;sup&gt;-n&lt;/sup&gt;&lt;/em&gt; (in radians), so it's kind of
+like a binary fraction expression, cutting the gap approximately in half each time.&amp;#160;&lt;a class="footnote-backref" href="#fnref:proof" title="Jump back to footnote 5 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:typical-cordic"&gt;
+&lt;p&gt;The CORDIC implementation in the 8087 is somewhat different from the
+typical use of CORDIC, which finds &lt;em&gt;sin&lt;/em&gt; and &lt;em&gt;cos&lt;/em&gt;.
+In this approach, &lt;em&gt;all&lt;/em&gt; the special angles are used, but an angle is either added or
+subtracted at each step, resulting in convergence to the desired angle.
+Recall that since the matrix is scaled by &lt;em&gt;1/sin α&lt;sub&gt;i&lt;/sub&gt;&lt;/em&gt; at each step, the ending
+vector is no longer a unit vector. As a result, &lt;em&gt;cos&lt;/em&gt; and &lt;em&gt;sin&lt;/em&gt; don't match
+the final vector &lt;em&gt;(X, Y)&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;The trick is that if all the special angles are used, the overall scaling factor ends
+up being the same, simply the product of all the &lt;em&gt;cos α&lt;sub&gt;i&lt;/sub&gt;&lt;/em&gt; factors.
+(It doesn't matter if the rotation is positive or negative because
+&lt;em&gt;cos α&lt;sub&gt;i&lt;/sub&gt; = cos -α&lt;sub&gt;i&lt;/sub&gt;&lt;/em&gt;.)
+Thus, the overall scaling factor can be precomputed and the initial unit vector can be
+prescaled by this amount. 
+The result is that the final vector &lt;em&gt;(X, Y)&lt;/em&gt; yields (&lt;em&gt;cos θ, sin θ&lt;/em&gt;) directly, which is what we
+want.&lt;/p&gt;
+&lt;p&gt;The key point is that there are two CORDIC approaches: using positive and negative angles,
+or using or omitting angles. (The first case multiplies each angle by +1 or -1, while the
+second case multiplies each angle by 1 or 0.) Most CORDIC implementations use the
+first approach, while the 8087 uses the second approach.&amp;#160;&lt;a class="footnote-backref" href="#fnref:typical-cordic" title="Jump back to footnote 6 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:birth-of-cordic"&gt;
+&lt;p&gt;Jack Volder, the creator of CORDIC, wrote an article,
+&lt;a href="https://web.archive.org/web/20160304064804/http://late-dpedago.urv.cat/site_media/papers/fulltext_2.pdf"&gt;The Birth of CORDIC&lt;/a&gt;, that describes the history in detail, as well as
+including photos of the B-58 navigation computer.
+Volder's original articles from 1959 are &lt;a href="https://dl.acm.org/doi/10.1145/1457838.1457886"&gt;The CORDIC Computing Technique&lt;/a&gt; and &lt;a href="https://doi.org/10.1109/TEC.1959.5222693"&gt;The CORDIC Trigonometric Computing Technique&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/cordic-ii.jpg"&gt;&lt;img alt="The CORDIC-II digital computer system. Photo by General Dynamics, from &amp;quot;The Birth of CORDIC&amp;quot;." class="hilite" height="459" src="https://static.righto.com/images/8087-fptan/cordic-ii-w500.jpg" title="The CORDIC-II digital computer system. Photo by General Dynamics, from &amp;quot;The Birth of CORDIC&amp;quot;." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The CORDIC-II digital computer system. Photo by General Dynamics, from "The Birth of CORDIC".&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;The photo above shows the CORDIC II computer that was used on the B-58 aircraft. It was a 30-bit serial computer, running at 198.4 kHz and weighing a hefty 134 pounds.
+It was implemented with diode-transistor logic (DTL) gates, using 2498 transistors and 4265 diodes, and had a drum memory (visible at the top) for storage, holding the equivalent of 39 kilobytes.
+Interestingly, the CORDIC operations were implemented as basic instructions in the
+instruction set, rather than subroutines; a CORDIC instruction took 5 ms, the same speed as a 
+multiplication or division.&amp;#160;&lt;a class="footnote-backref" href="#fnref:birth-of-cordic" title="Jump back to footnote 7 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:pade"&gt;
+&lt;p&gt;This Padé approximation is called the [1,2] approximation since the numerator is a
+first-order polynomial and the denominator is a second-order polynomial.
+Padé approximations can be derived from the continued fraction expansion of tan.
+See &lt;a href="https://web.mae.ufl.edu/uhk/PADE-LATEST.pdf"&gt;Constructing Padé Approximates&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;By the way, if you've taken calculus, you might think that a Taylor series is a good
+way to approximate a function.
+Unfortunately, a Taylor series is bad at approximating a function over an interval,
+rather than a point.
+You're much better off using a polynomial that minimizes the maximum error over the
+interval, as in the &lt;a href="https://www.righto.com/2025/01/pentium-floating-point-ROM.html"&gt;Pentium&lt;/a&gt;.&amp;#160;&lt;a class="footnote-backref" href="#fnref:pade" title="Jump back to footnote 8 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:nave"&gt;
+&lt;p&gt;The 8087's algorithm is described in
+&lt;a href="https://linkinghub.elsevier.com/retrieve/pii/0165607483901515"&gt;Implementation of transcendental functions on a numerics processor&lt;/a&gt; by Rafi Nave, who led the hardware design of the 8087.&amp;#160;&lt;a class="footnote-backref" href="#fnref:nave" title="Jump back to footnote 9 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:range"&gt;
+&lt;p&gt;The valid argument range for &lt;code&gt;FPTAN&lt;/code&gt; is documented as &lt;em&gt;0&amp;lt;θ&amp;lt;π/4&lt;/em&gt;, so the demonstration value that I use, 0.95, is outside
+the documented range.
+I find the range puzzling, since the first CORDIC constant is &lt;em&gt;arctan(1)&lt;/em&gt;, &lt;em&gt;π/4&lt;/em&gt;,
+which will only be useful for inputs above &lt;em&gt;π/4&lt;/em&gt;.
+Thus, the 8087 uses a scarce ROM entry and an extra loop cycle to handle values outside
+the permitted range.
+I have two hypotheses about this. Perhaps the 8087 was implemented for a larger
+argument range, but the numerical error was larger than expected, so the range
+was truncated.
+Alternatively, the &lt;code&gt;FPATAN&lt;/code&gt; arctan instruction might need the first CORDIC constant
+and it was easier to use the same constant loop for &lt;code&gt;FPTAN&lt;/code&gt; and &lt;code&gt;FPATAN&lt;/code&gt;.
+(I haven't examined &lt;code&gt;FPATAN&lt;/code&gt; yet to confirm this.)
+In any case, the code works with 0.95; I use it as an example because
+the angles are larger and more visible.&lt;/p&gt;
+&lt;p&gt;Another peculiarity is that the documentation is inconsistent about whether 0 is
+in the range or not. The book &lt;a href="https://link.amazon/B031RmZKC"&gt;The 8087 Primer&lt;/a&gt; by
+the principle architects of the 8087 and 8086 states that the argument range excludes
+0, a decision that was made to simplify the microcode.
+However, looking at the microcode (&lt;code&gt;#1044&lt;/code&gt;) shows that the code explicitly checks for
+a zero input and handles the case.&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;FPTAN&lt;/code&gt; appears to work for values almost up to &lt;em&gt;π/2&lt;/em&gt;, with
+some accuracy loss as the result approaches infinity near &lt;em&gt;π/2&lt;/em&gt;.
+However, the values from 1 to &lt;em&gt;π/2&lt;/em&gt; (which are outside the defined range and have an exponent of 0) probably work by coincidence,
+not by design.
+The larger exponent results in an additional loop iteration;
+the lookup of trig constants wraps around the algorithm starts with the last constant, &lt;em&gt;atan(2&lt;/sup&gt;-15)&lt;/em&gt;.
+But due to scaling, this value ends up being interpreted as approximately 2. Since this CORDIC angle is
+greater than &lt;em&gt;π/2&lt;/em&gt;, it is skipped.
+The algorithm then proceeds with the remaining constants, executing properly.&lt;/p&gt;
+&lt;p&gt;Footnote to the footnote:  Although the mathematical meaning of "range" is the &lt;em&gt;output&lt;/em&gt; of a function,
+Intel uses it to describe the &lt;em&gt;input&lt;/em&gt; of a function, which mathematicians call the domain.&amp;#160;&lt;a class="footnote-backref" href="#fnref:range" title="Jump back to footnote 10 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:leading-one"&gt;
+&lt;p&gt;One difference between the 8087's temporary real format and the external formats is that
+in the temporary real, the leading 1 digit is explicitly stored in the number.
+In the external formats, the leading 1 is implicit and not stored in the number,
+providing one additional bit of accuracy, but making arithmetic more complicated.&amp;#160;&lt;a class="footnote-backref" href="#fnref:leading-one" title="Jump back to footnote 11 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:flowchart"&gt;
+&lt;p&gt;The flowchart below shows the control flow for the &lt;code&gt;FPTAN&lt;/code&gt; microcode.
+The main blocks are the CORDIC pseudo-division, the rational approximation,
+and the CORDIC pseudo-multiplication. (Click it for a large image.)&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fptan/flowchart.jpg"&gt;&lt;img alt="Flowchart of the FPTAN microcode." class="hilite" height="988" src="https://static.righto.com/images/8087-fptan/flowchart-w400.jpg" title="Flowchart of the FPTAN microcode." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Flowchart of the FPTAN microcode.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:flowchart" title="Jump back to footnote 12 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:comparison"&gt;
+&lt;p&gt;The comparisons take multiple micro-instructions, for example, selecting a constant such as &lt;code&gt;0x3ff0&lt;/code&gt; (recall that exponents are biased by 16383 or &lt;code&gt;0x3fff&lt;/code&gt;, so &lt;code&gt;0x3ff0&lt;/code&gt; corresponds to -15), moving the constant to the adder,
+subtracting the constant from the exponent, and branching on the result.&amp;#160;&lt;a class="footnote-backref" href="#fnref:comparison" title="Jump back to footnote 13 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:first-step"&gt;
+&lt;p&gt;The first step of the CORDIC algorithm (&lt;code&gt;#1061&lt;/code&gt;-&lt;code&gt;#1068&lt;/code&gt;) is handled separately.
+It took me a while to figure out why the first step of the CORDIC algorithm is special.
+The cause is that the CORDIC angles are close to &lt;em&gt;2&lt;sup&gt;-n&lt;/sup&gt;&lt;/em&gt;, but not exactly.
+Thus, the number of CORDIC cycles does not change exactly when the exponent of the input angle changes.
+This is a problem because the number of pseudo-division cycles depends on the exponent,
+but the number of pseudo-multiplication cycles depends on the largest CORDIC angle used.
+Since the numbers are scaled in both loops, a mismatch in the number of cycles leaves
+the result off by a factor of 2. The first CORDIC step tests if the first CORDIC constant
+is used and increments the &lt;code&gt;tmpA&lt;/code&gt; exponent by 1 to counteract this.
+(Don't worry if this doesn't make sense.)&amp;#160;&lt;a class="footnote-backref" href="#fnref:first-step" title="Jump back to footnote 14 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:rom-exponents"&gt;
+&lt;p&gt;The constant ROM in the 8087 holds the significands, but not the exponents.
+When I originally extracted the constants from the constant ROM, back in 2020 (&lt;a href="https://www.righto.com/2020/05/extracting-rom-constants-from-8087-math.html"&gt;link&lt;/a&gt;),
+I couldn't find the exponents, so I came up with plausible exponents that resulted in meaningful
+values.
+The 8087 has a separate exponent ROM.
+Now that I've examined the microcode, I can see that the exponents in the exponent ROM
+are unrelated to the significands in the constant ROM.
+I'm glad I didn't waste much time trying to figure out the exponents back then :-)&amp;#160;&lt;a class="footnote-backref" href="#fnref:rom-exponents" title="Jump back to footnote 15 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:details"&gt;
+&lt;p&gt;The following table shows the calculations at each step of the algorithm, using
+0.95 as the input.
+Note that the calculations are done with integer arithmetic;
+the exponents (gray) are not stored as part of the numbers, but
+are implied by the algorithm.
+The exponents change in each step, so as the values get smaller during the pseudo-division stage, the exponents
+get smaller too, ensuring that the values can use most of the available bits.
+The opposite happens during pseudo-multiplication: the values start off small and
+grow as the vector is rotated; the exponent is increased each step to counteract this.
+Unlike "real" floating-point numbers, the bit representations are not normalized; sometimes
+they have two 1 digits to the left of the binary point, and sometimes they
+have leading zeros.
+That is, the exponents are fixed for each step; they don't change based on the
+value.&lt;/p&gt;
+&lt;p&gt;&lt;style type="text/css"&gt;
+div.cordic { height: 300px; width: fit-content; overflow-y: scroll; resize:vertical;}
+div.cordic p { display: none;}
+table.cordic {border-collapse: collapse; border: 1px solid #ccc;}
+table.cordic th {border-bottom: 2px solid #ccc; padding: 0 5px 5px 5px; position: sticky;
+  top: -1px; background-color: #fff; z-index: 1;}
+table.cordic td {padding: 0 10px;}
+table.cordic tr.top td {border-top: 1px solid #ccc;}
+table.cordic tr.top1 td {border-top: 3px solid #ccc;}
+table.cordic tr.bot1 td {border-bottom: 3px solid #ccc;}
+&lt;/style&gt;&lt;/p&gt;
+&lt;p&gt;&lt;/p&gt;&lt;/p&gt;&lt;div class="cordic"&gt;&lt;table class="cordic"&gt;
+&lt;tr&gt;&lt;th&gt;operation&lt;/th&gt;&lt;th&gt;bits&lt;/th&gt;&lt;th&gt;value&lt;/th&gt;&lt;th&gt;flag&lt;/th&gt;&lt;th&gt;reg&lt;/th&gt;&lt;/tr&gt;&lt;/p&gt;
+&lt;p&gt;&lt;tr&gt;&lt;td&gt;load with θ&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1110011…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.9500&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;0&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1001001…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.7854&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0101010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.1646&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1010100…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-2&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.1646&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-1&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1101101…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-2&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.4636&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0101000…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-3&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.1646&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-2&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111010…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-3&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.2450&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;10.1010001…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-4&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.1646&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-3&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111110…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-4&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.1244&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1010010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-4&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.04025&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0100100…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-5&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.04025&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-4&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-5&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.06242&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;10.1001001…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-6&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.04025&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-5&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-6&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.03124&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1001001…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-6&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.009007&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0010011…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-7&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.009007&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-6&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-7&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.01562&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;10.0100111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-8&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.009007&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-7&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-8&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.007812&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0100111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-8&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.001195&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1001110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-9&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.001195&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-8&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-9&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.003906&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0011100…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-10&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.001195&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-9&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-10&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.001953&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;10.0111001…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-11&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.001195&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-10&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-11&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.0009766&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0111001…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-11&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0002181&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1110010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-12&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0002181&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-11&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-12&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.0004883&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1100100…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-13&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0002181&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-12&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-13&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.0002441&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;11.1001001…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-14&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0002181&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-13&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-14&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.0001221&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1001001…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-14&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.00009604&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;11.0010010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-15&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.00009604&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-14&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-15&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.00006104&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0010010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-15&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.00003500&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift left&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;10.0100101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-16&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.00003500&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;cmp atan(2&lt;sup&gt;-15&lt;/sup&gt;)&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&lt;span style="color:blue"&gt;&amp;nbsp;1.1111111…&lt;/span&gt;&lt;span style="color:gray"&gt;×2&lt;sup&gt;-16&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="color:blue"&gt;0.00003052&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;const&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;sub angle&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0100101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-16&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.000004482&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top1"&gt;&lt;td&gt;X approx&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.0000&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="bot1"&gt;&lt;td&gt;Y approx&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0011100…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-14&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.00001345&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;-15&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1011100…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-14&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0001050&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;-15&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.0000&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1101110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-13&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0001050&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;-14&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;10.0101110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-13&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0002881&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;-14&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.0000&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0010111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-12&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0002881&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;-13&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;10.1010111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-12&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0006543&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;-13&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.0000&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0101011…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-11&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0006543&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1010101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-10&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0006543&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0101010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-9&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.0006543&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;-10&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1101010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-9&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.003584&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;-10&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.0000&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1110101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-8&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.003584&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0111010…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-7&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.003584&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0011101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-6&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.003584&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;-7&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1011101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-6&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.02702&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;-7&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.0000&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1101110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-5&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.02702&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0110111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-4&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.02702&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;-5&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1110111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-4&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.1208&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;-5&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;2.9991&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1111011…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-3&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.1208&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0111101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-2&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.1208&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;-3&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1111101…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-2&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.4957&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;-3&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0111110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;2.9840&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.1111110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;-1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.4957&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0111111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;0&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.4957&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;shift right&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;0.0011111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.4957&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class="top"&gt;&lt;td&gt;Y += 2&lt;sup&gt;0&lt;/sup&gt;X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1011110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.4797&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;tmpC&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;X -= 2&lt;sup&gt;0&lt;/sup&gt;Y&lt;sub&gt;old&lt;/sub&gt;&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0011111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;2.4884&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;final X&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.0011111…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;2.4884&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpB&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;final Y&lt;/td&gt;&lt;td&gt;&lt;span style="font-family:courier"&gt;&amp;nbsp;1.1011110…&lt;span style="color:gray"&gt;×2&lt;sup&gt;1&lt;/sup&gt;&lt;span&gt;&lt;/span&gt;&lt;/td&gt;&lt;td&gt;3.4797&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;tmpA&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/div&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:details" title="Jump back to footnote 16 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;a class="footnote-backref" href="#fnref2:details" title="Jump back to footnote 16 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-7735201633324934284</guid>
+      <pubDate>Sat, 26 Sep 2026 09:20:56 -0700</pubDate>
+    </item>
     <item>
       <title>Microcode in Intel's 8087 floating-point chip: the scale instruction</title>
       <link>http://www.righto.com/2026/09/8087-microcode-reverse-engineering-fscale.html</link>
@@ -9799,371 +10528,6 @@ Sending instruction bytes across the chip is less of an impact, since the instru
 </description>
       <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-6792624295909344732</guid>
       <pubDate>Fri, 09 May 2025 19:55:00 -0700</pubDate>
-    </item>
-    <item>
-      <title>The absurdly complicated circuitry for the 386 processor's registers</title>
-      <link>http://www.righto.com/2025/05/intel-386-register-circuitry.html</link>
-      <description>&lt;p&gt;The groundbreaking Intel 386 processor (1985) was the first 32-bit processor in the x86 architecture.
-Like most processors, the 386 contains numerous registers; registers are a key part of a processor because
-they provide storage that is much faster than main memory.
-The register set of the 386 includes general-purpose registers, index registers, and segment selectors, as well
-as registers with special functions for memory management and operating system implementation.
-In this blog post, I look at the silicon die of the 386 and explain how the processor implements its main registers.&lt;/p&gt;
-&lt;p&gt;It turns out that the circuitry that implements the 386's registers is much more complicated than one would expect.
-For the 30 registers that I examine, instead of using a standard circuit, the 386 uses &lt;em&gt;six&lt;/em&gt; different circuits,
-each one optimized for the particular characteristics of the register.
-For some registers, Intel squeezes register cells together to double the storage capacity.
-Other registers support accesses of 8, 16, or 32 bits at a time.
-Much of the register file is "triple-ported", allowing two registers to be read simultaneously while a value is written
-to a third register.
-Finally, I was surprised to find that registers don't store bits in order: the lower 16 bits of each register are interleaved, while the upper 16 bits are stored linearly.&lt;/p&gt;
-&lt;p&gt;The photo below shows the 386's shiny fingernail-sized silicon die under a special metallurgical microscope.
-I've labeled the main functional blocks. 
-For this post, the Data Unit in the lower left quadrant of the chip is the relevant component.
-It consists of the 32-bit arithmetic logic unit (ALU) along
-with the processor's main register bank (highlighted in red at the bottom).
-The circuitry, called the datapath, can be viewed as the heart of the processor.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/386-die-labeled.jpg"&gt;&lt;img alt="This die photo of the 386 shows the location of the registers. Click this image (or any other) for a larger version." class="hilite" height="534" src="https://static.righto.com/images/386-regs2/386-die-labeled-w500.jpg" title="This die photo of the 386 shows the location of the registers. Click this image (or any other) for a larger version." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;This die photo of the 386 shows the location of the registers. Click this image (or any other) for a larger version.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The datapath is built with a regular structure: each register or ALU functional unit is a horizontal stripe of circuitry,
-forming the horizontal bands visible in the image.
-For the most part, this circuitry consists of a carefully optimized circuit copied 32 times, once for each bit of the processor.
-Each circuit for one bit is exactly the same width&amp;mdash;60 µm&amp;mdash;so the functional blocks can be stacked together like microscopic
-LEGO bricks.
-To link these circuits, 
-metal bus lines run vertically through the datapath in groups of 32, allowing data to flow up and down through the blocks.
-Meanwhile, control lines run horizontally, enabling ALU operations or register reads and writes; the irregular circuitry
-on the right side of the Data Unit produces the signals for these control lines, activating the appropriate control
-lines for each instruction.&lt;/p&gt;
-&lt;p&gt;The datapath is highly structured to maximize performance while minimizing its area on the die.
-Below, I'll look at how the registers are implemented according to this structure.&lt;/p&gt;
-&lt;h2&gt;The 386's registers&lt;/h2&gt;
-&lt;p&gt;A processor's registers are one of the most visible features of the processor architecture.
-The 386 processor contains 16 registers for use by application programmers, a small number by modern standards,
-but large enough for the time.
-The diagram below shows the eight 32-bit general-purpose registers.
-At the top are four registers called EAX, EBX, ECX, and EDX.
-Although these registers are 32-bit registers, they can also be treated as 16 or 8-bit registers for backward
-compatibility with earlier processors.
-For instance, the lower half of EAX can be accessed as the 16-bit register AX, while the bottom byte of EAX can
-be accessed as the 8-bit register AL.
-Moreover, bits 15-8 can also be accessed as an 8-bit register called AH.
-In other words, there are four different ways to access the EAX register, and similarly for the other three registers.
-As will be seen, these features complicate the implementation of the register set.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/gp-registers.jpg"&gt;&lt;img alt="The general purpose registers in the 386. From 80386 Programmer's Reference Manual, page 2-8." class="hilite" height="317" src="https://static.righto.com/images/386-regs2/gp-registers-w350.jpg" title="The general purpose registers in the 386. From 80386 Programmer's Reference Manual, page 2-8." width="350" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The general purpose registers in the 386. From &lt;a href="http://www.bitsavers.org/components/intel/80386/230985-001_80386_Programmers_Reference_Manual_1986.pdf#page=44"&gt;80386 Programmer's Reference Manual&lt;/a&gt;, page 2-8.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The bottom half of the diagram shows that the 32-bit EBP, ESI, EDI, and ESP registers can also be treated as 16-bit registers BP, SI, DI, and SP. Unlike the previous registers,
-these ones cannot be treated as 8-bit registers.
-The 386 also has six segment registers that define the 
-start of memory segments; these are 16-bit registers.
-The 16 application registers are rounded out by the status flags and instruction pointer (EIP);
-they are viewed as 32-bit registers, but their implementation is more complicated.
-The 386 also has numerous registers for operating system programming, but I won't discuss them here, since they
-are likely in other parts of the chip.&lt;span id="fnref:system-regs"&gt;&lt;a class="ref" href="#fn:system-regs"&gt;1&lt;/a&gt;&lt;/span&gt;
-Finally, the 386 has numerous temporary registers that are not visible to the programmer but are used by the microcode
-to perform complex instructions.&lt;/p&gt;
-&lt;h2&gt;The 6T and 8T static RAM cells&lt;/h2&gt;
-&lt;p&gt;The 386's registers are implemented with static RAM cells, a circuit that can hold one bit.
-These cells are arranged into a grid to provide multiple registers.
-Static RAM can be contrasted with the dynamic RAM that computers use for their main memory:
-dynamic RAM holds each bit in a tiny capacitor, while static RAM uses a faster but larger and more complicated circuit.
-Since main memory holds gigabytes of data, it uses dynamic RAM to provide dense and inexpensive storage.
-But the tradeoffs are different for registers: the storage capacity is small, but speed is of the essence.
-Thus, registers use the static RAM circuit that I'll explain below.&lt;/p&gt;
-&lt;p&gt;The concept behind a static RAM cell is to connect two inverters into a loop.
-If an inverter has a "0" as input, it will output a "1", and vice versa.
-Thus, the inverter loop will be stable,
-with one inverter on and one inverter off, and each inverter supporting the other.
-Depending on which inverter is on, the circuit stores a 0 or a 1, as shown below.
-Thus, the pair of inverters provides one bit of memory.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/inverter-loop.png"&gt;&lt;img alt="Two inverters in a loop can store a 0 or a 1." class="hilite" height="121" src="https://static.righto.com/images/386-regs2/inverter-loop-w250.png" title="Two inverters in a loop can store a 0 or a 1." width="250" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Two inverters in a loop can store a 0 or a 1.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;To be useful, however, the inverter loop needs a way to store a bit into it, as well as a way to read out the stored bit.
-To write a new value into the circuit, two signals are fed in, forcing the inverters to the desired new values.
-One inverter receives the new bit value, while the other inverter receives the complemented bit value.
-This may seem like a brute-force way to update the bit, but it works.
-The trick is that the inverters in the cell are small and weak, while the input signals are higher current,
-able to overpower the inverters.&lt;span id="fnref:flip"&gt;&lt;a class="ref" href="#fn:flip"&gt;2&lt;/a&gt;&lt;/span&gt;
-These signals are fed in through wiring called "bitlines"; the bitlines can also be used to read the value
-stored in the cell.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/simple-cell.png"&gt;&lt;img alt="By adding two pass transistors to the circuit, the cell can be read and written." class="hilite" height="125" src="https://static.righto.com/images/386-regs2/simple-cell-w350.png" title="By adding two pass transistors to the circuit, the cell can be read and written." width="350" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;By adding two pass transistors to the circuit, the cell can be read and written.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;To control access to the register, 
-the bitlines are connected to the inverters through pass transistors, which act as switches to
-control access to the inverter loop.&lt;span id="fnref:pass"&gt;&lt;a class="ref" href="#fn:pass"&gt;3&lt;/a&gt;&lt;/span&gt;
-When the pass transistors are on, the
-signals on the write lines can pass through to the inverters. But when the pass transistors are off, the
-inverters are isolated from the write lines.
-The pass transistors are turned on by a control signal, called a "wordline" since it controls access to a word
-of storage in the register.
-Since each inverter is constructed from two transistors, the circuit above consists of six transistors&amp;mdash;thus this circuit is called a "6T" cell.&lt;/p&gt;
-&lt;p&gt;The 6T cell uses the same bitlines for reading and writing, so you can't read and write to registers simultaneously.
-But adding two transistors creates an "8T" circuit that lets you read from one register
-and write to another register at the same time. (In technical terms, the register file is two-ported.)
-In the 8T schematic below, the two additional transistors (G and H) are used for reading.
-Transistor G buffers the cell's value; it turns on if the inverter output is high, pulling the read output bitline low.&lt;span id="fnref:precharge"&gt;&lt;a class="ref" href="#fn:precharge"&gt;4&lt;/a&gt;&lt;/span&gt;
-Transistor H is a pass transistor that blocks this signal until a read is performed on this register;
-it is controlled by a read wordline.
-Note that there are two bitlines for writing (as before) along with one bitline for reading.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/cell-schematic.png"&gt;&lt;img alt="Schematic of a storage cell. Each transistor is labeled with a letter." class="hilite" height="155" src="https://static.righto.com/images/386-regs2/cell-schematic-w500.png" title="Schematic of a storage cell. Each transistor is labeled with a letter." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Schematic of a storage cell. Each transistor is labeled with a letter.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;To construct registers (or memory), a grid is constructed from these cells.
-Each row corresponds to a register, while each column corresponds to a bit position.
-The horizontal lines are the wordlines, selecting which word to access, while the
-vertical lines are the bitlines, passing bits in or out of the registers.
-For a write, the vertical bitlines provide the 32 bits (along with their complements).
-For a read, the vertical bitlines receive the 32 bits from the register.
-A wordline is activated to read or write the selected register.
-To summarize: each row is a register, data flows vertically, and control signals flow horizontally.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/grid.png"&gt;&lt;img alt="Static memory cells (8T) organized into a grid." class="hilite" height="433" src="https://static.righto.com/images/386-regs2/grid-w500.png" title="Static memory cells (8T) organized into a grid." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Static memory cells (8T) organized into a grid.&lt;/div&gt;&lt;/p&gt;
-&lt;h2&gt;Six register circuits in the 386&lt;/h2&gt;
-&lt;p&gt;The die photo below zooms in on the register circuitry in the lower left corner of the 386 processor.
-You can see the arrangement of storage cells into a grid, but note that the pattern changes from row to row.
-This circuitry implements 30 registers: 22 of the registers hold 32 bits, while the bottom ones are 16-bit registers.
-By studying the die, I determined that there are six different register circuits,
-which I've arbitrarily labeled (&lt;em&gt;a&lt;/em&gt;) to (&lt;em&gt;f&lt;/em&gt;).
-In this section, I'll describe these six types of registers.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/registers-labeled.jpg"&gt;&lt;img alt="The 386's main register bank, at the bottom of the datapath.  The numbers show how many bits of the register can be accessed." class="hilite" height="185" src="https://static.righto.com/images/386-regs2/registers-labeled-w600.jpg" title="The 386's main register bank, at the bottom of the datapath.  The numbers show how many bits of the register can be accessed." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The 386's main register bank, at the bottom of the datapath.  The numbers show how many bits of the register can be accessed.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;I'll start at the bottom with the simplest circuit: eight 16-bit registers that I'm calling type (&lt;em&gt;f&lt;/em&gt;).
-You can see a "notch" on the left side of the register file
-because these registers are half the width of the other registers (16 bits versus 32 bits).
-These registers are implemented with the 8T circuit described earlier, making them dual ported:
-one register can be read while another register is written.
-As described earlier, three vertical bus lines pass through each bit: one bitline for reading and two bitlines
-(with opposite polarity)
-for writing.
-Each register has two control lines (wordlines): one to select a register for reading and another to select a register for writing.&lt;/p&gt;
-&lt;p&gt;The photo below shows how four cells of type (&lt;em&gt;f&lt;/em&gt;) are implemented on the chip.
-In this image, the chip's two metal layers have been removed along with most of the polysilicon wiring, showing the underlying silicon.
-The dark outlines indicate regions of doped silicon, while the stripes across the doped region correspond to transistor
-gates. 
-I've labeled each transistor with a letter corresponding to the earlier schematic.
-Observe that the layout of the bottom half is a mirrored copy of the upper half, saving a bit of space.
-The left and right sides are approximately mirrored; the irregular shape allows separate read and wite wordlines 
-to control the left and right halves without colliding.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/cell-f-labeled.jpg"&gt;&lt;img alt="Four memory cells of type (f), separated by dotted lines. The small irregular squares are remnants of polysilicon
-that weren't fully removed." class="hilite" height="323" src="https://static.righto.com/images/386-regs2/cell-f-labeled-w300.jpg" title="Four memory cells of type (f), separated by dotted lines. The small irregular squares are remnants of polysilicon
-that weren't fully removed." width="300" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Four memory cells of type (&lt;i&gt;f&lt;/i&gt;), separated by dotted lines. The small irregular squares are remnants of polysilicon
-that weren't fully removed.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The 386's register file and datapath are designed with 60 µm of width assigned to each bit.
-However, the register circuit above is unusual:
-the image above is 60 µm wide but there are two register cells side-by-side.
-That is, the circuit crams &lt;em&gt;two&lt;/em&gt; bits in 60 µm of width, rather than one.
-Thus, this dense layout implements two registers per row (with interleaved bits), providing twice the density of the other register circuits.&lt;/p&gt;
-&lt;p&gt;If you're curious to know how the transistors above are connected,
-the schematic below shows how the physical arrangement of the transistors above corresponds to two of the 8T memory cells
-described earlier.
-Since the 386 has two overlapping layers of metal, it is very hard to interpret a die photo with the metal layers.
-But see my &lt;a href="https://www.righto.com/2023/11/reverse-engineering-intel-386.html"&gt;earlier article&lt;/a&gt; if you want these photos.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/schematic-full.png"&gt;&lt;img alt="Schematic of two static cells in the 386, labeled &amp;quot;R&amp;quot; and &amp;quot;L&amp;quot; for &amp;quot;right&amp;quot; and &amp;quot;left&amp;quot;. The schematic approximately matches the physical layout." class="hilite" height="253" src="https://static.righto.com/images/386-regs2/schematic-full-w650.png" title="Schematic of two static cells in the 386, labeled &amp;quot;R&amp;quot; and &amp;quot;L&amp;quot; for &amp;quot;right&amp;quot; and &amp;quot;left&amp;quot;. The schematic approximately matches the physical layout." width="650" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Schematic of two static cells in the 386, labeled "R" and "L" for "right" and "left". The schematic approximately matches the physical layout.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Above the type (&lt;em&gt;f&lt;/em&gt;) registers are 10 registers of type (&lt;em&gt;e&lt;/em&gt;), occupying five rows of cells.
-These registers are the same 8T implementation as before, but these registers are 32 bits wide instead of 16.
-Thus, the register takes up the full width of the datapath, unlike the previous registers.
-As before, the double-density circuit implements two registers per row.
-The silicon layout is identical (apart from being 32 bits wide instead of 16), so I'm not including a photo.&lt;/p&gt;
-&lt;p&gt;Above those registers are four (&lt;em&gt;d&lt;/em&gt;) registers, which are more complex.
-They are triple-ported registers, so one register can be written while two other registers are read.
-(This is useful for ALU operations, for instance, since two values can be added and the result written back
-at the same time.)
-To support reading a second register, another vertical bus line is added for each bit.
-Each cell has two more transistors to connect the cell to the new bitline.
-Another wordline controls the additional read path.
-Since each cell has two more transistors, there are 10 transistors in total and the circuit is called 10T.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/cell-d-labeled.jpg"&gt;&lt;img alt="Four cells of type (d). The striped green regions are the remnants of oxide layers that weren't completely removed, and can be ignored." class="hilite" height="296" src="https://static.righto.com/images/386-regs2/cell-d-labeled-w500.jpg" title="Four cells of type (d). The striped green regions are the remnants of oxide layers that weren't completely removed, and can be ignored." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Four cells of type (&lt;i&gt;d&lt;/i&gt;). The striped green regions are the remnants of oxide layers that weren't completely removed, and can be ignored.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The diagram above shows four memory cells of type (&lt;em&gt;d&lt;/em&gt;).
-Each of these cells takes the full 60 µm of width, unlike the previous double-density cells.
-The cells are mirrored horizontally and vertically;
-this increases the density slightly since power lines can be shared between cells.
-I've labeled the transistors &lt;code&gt;A&lt;/code&gt; through &lt;code&gt;H&lt;/code&gt; as before, as well as the two additional transistors &lt;code&gt;I&lt;/code&gt; and &lt;code&gt;J&lt;/code&gt; for the
-second read line.
-The circuit is the same as before, except for the two additional transistors, but
-the silicon layout is significantly different.&lt;/p&gt;
-&lt;p&gt;Each of the (&lt;em&gt;d&lt;/em&gt;) registers has five control lines. Two control lines select a register for reading, connecting the register
-to one of the two vertical read buses.
-The three write lines allow parts of the register to be written independently: the top 16 bits, the next 8 bits, or the
-bottom 8 bits.
-This is required by the x86 architecture, where a 32-bit register such as EAX can also be accessed as the 16-bit AX register,
-the 8-bit AH register, or the 8-bit AL register.
-Note that reading part of a register doesn't require separate control lines: the register provides all 32 bits and
-the reading circuit can ignore the bits it doesn't want.&lt;/p&gt;
-&lt;p&gt;Proceeding upward, the three (&lt;em&gt;c&lt;/em&gt;) registers have a similar 10T implementation.
-These registers, however, do not support partial writes so all 32 bits must be written at once.
-As a result, these registers only require three control lines (two for reads and one for writes).
-With fewer control lines, the cells can be fit into less vertical space, so the layout is slightly more compact than
-the previous type (&lt;em&gt;d&lt;/em&gt;) cells. The diagram below shows four type (&lt;em&gt;c&lt;/em&gt;) rows above two type (&lt;em&gt;d&lt;/em&gt;) rows.
-Although the cells have the same ten transistors, they have been shifted around somewhat.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/cells-cd.jpg"&gt;&lt;img alt="Four rows of type (c) above two cells of type (d)." class="hilite" height="383" src="https://static.righto.com/images/386-regs2/cells-cd-w500.jpg" title="Four rows of type (c) above two cells of type (d)." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Four rows of type (&lt;i&gt;c&lt;/i&gt;) above two cells of type (&lt;i&gt;d&lt;/i&gt;).&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Next are the four (&lt;em&gt;b&lt;/em&gt;) registers, which support 16-bit writes and 32-bit writes (but not 8-bit writes).
-Thus, these registers have four control lines (two for reads and two for writes).
-The cells take slightly more vertical space than the (&lt;em&gt;c&lt;/em&gt;) cells due to the additional control line, but the layout is
-almost identical.&lt;/p&gt;
-&lt;p&gt;Finally, the (&lt;em&gt;a&lt;/em&gt;) register at the top has an unusual feature: it can receive a copy of the value in the register just
-below it.
-This value is copied directly between the registers, without using the read or write buses.
-This register has 3 control lines: one for read, one for write, and one for copying.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/cells-ab-labeled.jpg"&gt;&lt;img alt="A cell of type (a), which can copy the value in the cell of type (b) below." class="hilite" height="408" src="https://static.righto.com/images/386-regs2/cells-ab-labeled-w300.jpg" title="A cell of type (a), which can copy the value in the cell of type (b) below." width="300" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A cell of type (&lt;i&gt;a&lt;/i&gt;), which can copy the value in the cell of type (&lt;i&gt;b&lt;/i&gt;) below.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The diagram above shows a cell of type (&lt;em&gt;a&lt;/em&gt;) above a cell of type (&lt;em&gt;b&lt;/em&gt;).
-The cell of type (&lt;em&gt;a&lt;/em&gt;) is based on the standard 8T circuit,
-but with six additional transistors to copy the value of the cell below.
-Specifically, two inverters buffer the output from cell (&lt;em&gt;b&lt;/em&gt;), one inverter for each side of the cell.
-These inverters are implemented with transistors I1 through I4.&lt;span id="fnref:inverters"&gt;&lt;a class="ref" href="#fn:inverters"&gt;5&lt;/a&gt;&lt;/span&gt;
-Two transistors, S1 and S2, act as a pass-transistor switches between these inverters and the memory cell.
-When activated by the control line, the switch transistors allow the inverters to overwrite the memory cell with
-the contents of the cell below.
-Note that cell (&lt;em&gt;a&lt;/em&gt;) takes considerably more vertical space because of the extra transistors.&lt;/p&gt;
-&lt;h2&gt;Speculation on the physical layout of the registers&lt;/h2&gt;
-&lt;p&gt;I haven't determined the mapping between the 386's registers and the 30 physical registers, but I can speculate.
-First, the 386 has four registers that can be accessed as 8, 16, or 32-bit registers: EAX, EBX, ECX, and EDX.
-These must map onto the (&lt;em&gt;d&lt;/em&gt;) registers, which support these access patterns.&lt;/p&gt;
-&lt;p&gt;The four index registers (ESP, EBP, ESI, and EDI) can be used as 32-bit registers or 16-bit registers,
-matching the four (&lt;em&gt;b&lt;/em&gt;) registers with the same properties.
-Which one of these registers can be copied to the type (&lt;em&gt;a&lt;/em&gt;) register?
-Maybe the stack pointer (ESP) is copied as part of interrupt handling.&lt;/p&gt;
-&lt;p&gt;The register file has eight 16-bit registers, type (&lt;em&gt;f&lt;/em&gt;).
-Since there are six 16-bit segment registers in the 386, I suspect the 16-bit registers are the segment registers and two additional registers.
-The &lt;a href="https://web.archive.org/web/20210624172529/https://asm.inightmare.org/opcodelst/index.php?op=LOADALL"&gt;LOADALL&lt;/a&gt;
-instruction gives some clues, suggesting that the two additional 16-bit registers are
-LDT (Local Descriptor Table register) and TR (Task Register).
-Moreover, &lt;code&gt;LOADALL&lt;/code&gt; handles 10 temporary registers, matching the 10 registers of type (&lt;em&gt;e&lt;/em&gt;) near the bottom
-of the register file.
-The three 32-bit registers of type (&lt;em&gt;c&lt;/em&gt;) may be the
-CR0 control register and the DR6 and DR7 debug registers.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/segregs.jpg"&gt;&lt;img alt="The six 16-bit segment registers in the 386." class="hilite" height="233" src="https://static.righto.com/images/386-regs2/segregs-w500.jpg" title="The six 16-bit segment registers in the 386." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The six 16-bit segment registers in the 386.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;In this article, I'm only looking at the main register file in the datapath.
-The 386 presumably has other registers scattered around
-the chip for various purposes.
-For instance, the Segment Descriptor Cache contains multiple registers similar to type (&lt;em&gt;e&lt;/em&gt;), probably holding cache entries.
-The processor status flags and the instruction pointer (EIP) may not be implemented as discrete registers.&lt;span id="fnref:flags-eip"&gt;&lt;a class="ref" href="#fn:flags-eip"&gt;6&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;To the right of the register file, a complicated block of circuitry uses seven-bit values to select registers.
-Two values select the registers (or constants) to read, while a third value selects the register to write.
-I'm currently analyzing this circuitry, which should provide more insight into how the physical registers
-are assigned.&lt;/p&gt;
-&lt;h2&gt;The shuffle network&lt;/h2&gt;
-&lt;p&gt;There's one additional complication in the register layout.
-As mentioned earlier, the bottom 16 bits of the main registers can be treated as two 8-bit registers.&lt;span id="fnref:datapoint"&gt;&lt;a class="ref" href="#fn:datapoint"&gt;7&lt;/a&gt;&lt;/span&gt;
-For example, the 8-bit AH and AL registers form the bottom 16 bits of the EAX register.
-I explained earlier how the registers use multiple write control lines to allow these different parts of the register
-to be updated separately.
-However, there is also a layout problem.&lt;/p&gt;
-&lt;p&gt;To see the problem, suppose you perform an 8-bit ALU operation on the AH register, which is bits 15-8 of the EAX register.
-These bits must be shifted down to positions 7-0 so they can take part in the ALU operation, and then must be shifted
-back to positions 15-8 when stored into AH.
-On the other hand, if you perform an ALU operation on AL (bits 7-0 of EAX), the bits are already in position and
-don't need to be shifted.&lt;/p&gt;
-&lt;p&gt;To support the shifting required for 8-bit register operations, the 386's register file physically interleaves the bits of the two lower bytes (but not the high bytes).
-As a result, bit 0 of AL is next to bit 0 of AH in the register file, and so forth.
-This allows multiplexers to easily select bits from AH or AL as needed.
-In other words, each bit of AH and AL is in almost the correct physical position, so an 8-bit shift is not required.
-(If the bits were in order, each multiplexer would need to be connected to bits that are separated by eight positions,
-requiring inconvenient wiring.)&lt;span id="fnref:8086"&gt;&lt;a class="ref" href="#fn:8086"&gt;8&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/swap-network.jpg"&gt;&lt;img alt="The shuffle network above the register file interleaves the bottom 16 bits." class="hilite" height="99" src="https://static.righto.com/images/386-regs2/swap-network-w600.jpg" title="The shuffle network above the register file interleaves the bottom 16 bits." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The shuffle network above the register file interleaves the bottom 16 bits.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The photo above shows the shuffle network.
-Each bit has three bus lines associated with it: two for reads and one for writes, and these all get shuffled.
-On the left, the lines for the 16 bits pass straight through.
-On the right, though, the two bytes are interleaved.
-This shuffle network is located below the ALU and above the register file, so data words are shuffled when stored in the
-register file and then unshuffled when read from the register file.&lt;span id="fnref:constants"&gt;&lt;a class="ref" href="#fn:constants"&gt;9&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;In the photo, the lines on the left aren't quite straight.
-The reason is that the circuitry above is narrower than the circuitry below.
-For the most part, each functional block in the datapath is constructed with the same width (60 µm) for each bit.
-This makes the layout simpler since functional blocks can be stacked on top of each other and the vertical bus wiring
-can pass straight through.
-However, the circuitry above the registers (for the barrel shifter) is about 10% narrower (54.5 µm), so the wiring
-needs to squeeze in and then expand back out.&lt;span id="fnref:width"&gt;&lt;a class="ref" href="#fn:width"&gt;10&lt;/a&gt;&lt;/span&gt;
-There's a tradeoff of requiring more space for this wiring versus the space saved by making the barrel shifter
-narrower and Intel must have considered the tradeoff worthwhile.
-(My hypothesis is that since the shuffle network required additional wiring to shuffle the bits, it didn't take up
-more space to squeeze the wiring together at the same time.)&lt;/p&gt;
-&lt;h2&gt;Conclusions&lt;/h2&gt;
-&lt;p&gt;If you look in a book on processor design, you'll find a description of how registers can be created from static memory cells.
-However, the 386 illustrates that the implementation in a real processor is considerably more complicated.
-Instead of using one circuit, Intel used six different circuits for the registers in the 386.&lt;/p&gt;
-&lt;p&gt;The 386's register circuitry also shows the curse of backward compatibility.
-The x86 architecture supports 8-bit register accesses for
-compatibility with processors dating back to 1971.
-This compatibility requires additional circuitry such as the shuffle network and interleaved registers.
-Looking at the circuitry of x86 processors makes me appreciate some of the advantages of RISC processors,
-which avoid much of the ad hoc circuitry of x86 processors.&lt;/p&gt;
-&lt;p&gt;If you want more information about how the 386's memory cells were implemented, I wrote a &lt;a href="https://www.righto.com/2023/11/reverse-engineering-intel-386.html"&gt;lower-level article&lt;/a&gt; earlier.
-I plan to write more about the 386, so
-follow me on Bluesky (&lt;a href="https://bsky.app/profile/righto.com"&gt;@righto.com&lt;/a&gt;) or &lt;a href="https://www.righto.com/feeds/posts/default"&gt;RSS&lt;/a&gt; for updates.&lt;/p&gt;
-&lt;h2&gt;Footnotes and references&lt;/h2&gt;
-&lt;div class="footnote"&gt;
-&lt;ol&gt;
-&lt;li id="fn:system-regs"&gt;
-&lt;p&gt;The 386 has multiple registers that are only relevant to operating systems programmers
-(see Chapter 4 of the &lt;a href="http://www.bitsavers.org/components/intel/80386/230985-003_386DX_Microprocessor_Programmers_Reference_Manual_1990.pdf"&gt;386 Programmer's Reference Manual&lt;/a&gt;).
-These include the Global Descriptor Table Register (GDTR), Local Descriptor Table Register (LDTR), Interrupt Descriptor Table Register (IDTR), and Task Register (TR).
-There are four Control Registers CR0-CR3; CR0 controls coprocessor usage, paging, and a few other things.
-The six Debug Registers for hardware breakpoints are named DR0-DR3, DR6, and DR7.
-The two Test Registers for TLB testing are named TR6 and TR7.
-I expect that these registers are in the 386's Segment Unit and Paging Unit, rather than part of the processing datapath.&amp;#160;&lt;a class="footnote-backref" href="#fnref:system-regs" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:flip"&gt;
-&lt;p&gt;Typically the write driver circuit generates a strong low on one of the bitlines,
-  flipping the corresponding inverter to a high output.
-  As soon as one inverter flips, it will force the other inverter into the right state.
-  To support this, the pullup transistors in the inverters are weaker than normal.&amp;#160;&lt;a class="footnote-backref" href="#fnref:flip" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:pass"&gt;
-&lt;p&gt;The pass transistor passes its signal through or blocks it.
-In CMOS, this is usually implemented with a transmission gate with an NMOS and a PMOS transistor in parallel.
-The cell uses only the NMOS transistor, which is much worse at passing a high signal than a low signal.
-Because there is one NMOS pass transistor on each side of the inverters, one of the transistors will be passing
-a low signal that will flip the state.&amp;#160;&lt;a class="footnote-backref" href="#fnref:pass" title="Jump back to footnote 3 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:precharge"&gt;
-&lt;p&gt;The bitline is typically precharged to a high level for a read, and then the cell pulls the line low for
-a 0.
-This is more compact than including circuitry in each cell to pull the line high.&amp;#160;&lt;a class="footnote-backref" href="#fnref:precharge" title="Jump back to footnote 4 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:inverters"&gt;
-&lt;p&gt;Note that buffering is needed so the (&lt;em&gt;b&lt;/em&gt;) cell can write to the (&lt;em&gt;a&lt;/em&gt;) cell. If the cells were connected
-directly, cell (&lt;em&gt;a&lt;/em&gt;) could overwrite cell (&lt;em&gt;b&lt;/em&gt;) as easily as cell (&lt;em&gt;b&lt;/em&gt;) could overwrite cell (&lt;em&gt;a&lt;/em&gt;).
-With the inverters in between, cell (&lt;em&gt;b&lt;/em&gt;) won't be affected by cell (&lt;em&gt;a&lt;/em&gt;).&amp;#160;&lt;a class="footnote-backref" href="#fnref:inverters" title="Jump back to footnote 5 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:flags-eip"&gt;
-&lt;p&gt;In the 8086, the processor status flags are not stored as a physical register, but instead consist of flip-flops scattered
-throughout the chip (&lt;a href="https://www.righto.com/2023/02/silicon-reverse-engineering-intel-8086.html"&gt;details&lt;/a&gt;).
-The 386 probably has a similar implementation for the flags.&lt;/p&gt;
-&lt;p&gt;In the 8086, the program counter (instruction pointer) does not exist as such.
-Instead, the instruction prefetch circuitry has a register holding the current prefetch address.
-If the program counter address is required (to push a return address or to perform a relative branch, for instance),
-the program counter value is derived from the prefetch address.
-If the 386 is similar, the program counter won't have a physical register in the register file.&amp;#160;&lt;a class="footnote-backref" href="#fnref:flags-eip" title="Jump back to footnote 6 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:datapoint"&gt;
-&lt;p&gt;The x86 architecture combines two 8-bit registers to form a 16-bit register for historical reasons.
-The TTL-based &lt;a href="https://www.righto.com/2023/08/datapoint-to-8086.html"&gt;Datapoint 2200&lt;/a&gt; (1971) system had 8-bit
-A, B, C, D, E, H, and L registers, with the H and L registers combined to form a 16-bit indexing register for
-memory accesses. Intel created a microprocessor version of the Datapoint 2200's architecture, called the 8008.
-Intel's 8080 processor extended the register pairs so BC and DE could also be used as 16-bit registers.
-The 8086 kept this register design, but changed the 16-bit register names to AX, BX, CX, and DX, with
-the 8-bit parts called AH, AL, and so forth. 
-Thus, the unusual physical structure of the 386's register file is due to compatibility with a programmable terminal from 1971.&amp;#160;&lt;a class="footnote-backref" href="#fnref:datapoint" title="Jump back to footnote 7 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:8086"&gt;
-&lt;p&gt;To support 8-bit and 16-bit operations,
-  the 8086 processor used a similar interleaving scheme with the two 8-bit halves of a register interleaved.
-  Since the 8086 was a 16-bit processor, though, its interleaving was simpler than the 32-bit 386. Specifically,
-  the 8086 didn't have the upper 16 bits to deal with.&amp;#160;&lt;a class="footnote-backref" href="#fnref:8086" title="Jump back to footnote 8 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:constants"&gt;
-&lt;p&gt;The 386's constant ROM is located below the shuffle network.
-Thus, constants are stored with the bits interleaved in order to produce the right results.
-(This made the ROM contents incomprehensible until I figured out the shuffling pattern, but that's
-a topic for another article.)&amp;#160;&lt;a class="footnote-backref" href="#fnref:constants" title="Jump back to footnote 9 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:width"&gt;
-&lt;p&gt;The main body of the datapath (ALU, etc.) has the same 60 µm cell width as the register file.
-However, the datapath is slightly wider than the register file overall.
-The reason? The datapath has a small amount of circuitry between bits 7 and 8 and between bits 15 and 16, in
-order to handle 8-bit and 16-bit operations.
-As a result, the logical structure of the registers is visible as stripes in the physical layout of the ALU below.
-(These stripes are also visible in the die photo at the beginning of this article.)&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/386-regs2/alu-layout.jpg"&gt;&lt;img alt="Part of the ALU circuitry, displayed underneath the structure of the EAX register." class="hilite" height="200" src="https://static.righto.com/images/386-regs2/alu-layout-w500.jpg" title="Part of the ALU circuitry, displayed underneath the structure of the EAX register." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Part of the ALU circuitry, displayed underneath the structure of the EAX register.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:width" title="Jump back to footnote 10 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-8383886582076151029</guid>
-      <pubDate>Thu, 01 May 2025 10:04:00 -0700</pubDate>
     </item>
   </channel>
 </rss>

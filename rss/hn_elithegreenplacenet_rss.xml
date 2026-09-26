@@ -7,7 +7,301 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Sat, 26 Sep 2026 12:50:50 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 26 Sep 2026 16:59:01 +0000</lastBuildDate>
+    <item>
+      <title>Rusty thoughts on "Parse, don't validate"</title>
+      <link>https://eli.thegreenplace.net/2026/rusty-thoughts-on-parse-dont-validate/</link>
+      <description>&lt;p&gt;Like many programmers, I find Alexis King's &lt;a class="reference external" href="https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/"&gt;Parse, don't validate&lt;/a&gt;
+article fascinating, because it gives a name to an idiom that seems familiar and
+important - one I've observed and used in the past without naming it explicitly.
+This post is a review of the &amp;quot;Parse, don't validate&amp;quot; pattern applied to the Rust
+programming language (the original post uses Haskell). I was particularly
+interested in finding educational examples of this pattern in the Rust standard
+library and other well-known projects.&lt;/p&gt;
+&lt;p&gt;Without repeating the original article (please read it first!), here's the
+gist of it.&lt;/p&gt;
+&lt;p&gt;Consider the venerable &lt;tt class="docutils literal"&gt;Vec&lt;/tt&gt;; its &lt;tt class="docutils literal"&gt;first&lt;/tt&gt; method returns &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;Option&amp;lt;&amp;amp;T&amp;gt;&lt;/span&gt;&lt;/tt&gt;.
+Why? Because a vector is not guaranteed to have any elements in it, so what
+to do if &lt;tt class="docutils literal"&gt;first&lt;/tt&gt; is invoked on an empty one? Returning an &lt;tt class="docutils literal"&gt;Option&lt;/tt&gt; in this
+case is idiomatic in Rust &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt;, with convenient syntax sugar for accepting
+the result of functions that return &lt;tt class="docutils literal"&gt;Option&lt;/tt&gt; and deciding what to do next.&lt;/p&gt;
+&lt;p&gt;So what's the issue?&lt;/p&gt;
+&lt;p&gt;Imagine we have a function to read some configuration paths from an env var,
+while enforcing the invariant that the list can't be empty:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;anyhow&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="nb"&gt;Result&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;ensure&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;get_configuration_directories&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Result&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nb"&gt;Vec&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;PathBuf&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;::&lt;span class="n"&gt;var&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;CONFIG_DIRS&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;context&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;could not read CONFIG_DIRS&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;directories&lt;/span&gt;: &lt;span class="nb"&gt;Vec&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;PathBuf&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;split&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sc"&gt;&amp;#39;,&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;map&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;str&lt;/span&gt;::&lt;span class="n"&gt;trim&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;map&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;PathBuf&lt;/span&gt;::&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;collect&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;ensure&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;directories&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s"&gt;&amp;quot;empty CONFIG_DIRS&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nb"&gt;Ok&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;directories&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;So far, so good. Now let's take a typical usage of this function:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Result&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;config_dirs&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;get_configuration_directories&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;match&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;config_dirs&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;first&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cache_dir&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;initialize_cache&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cache_dir&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="fm"&gt;unreachable!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;already checked that CONFIG_DIRS is non-empty&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nb"&gt;Ok&lt;/span&gt;&lt;span class="p"&gt;(())&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Once &lt;tt class="docutils literal"&gt;get_configuration_directories&lt;/tt&gt; returns a successful result,
+we are guaranteed that the vector isn't empty. And yet, if we want to get the
+first element of this vector, we have to use the &lt;tt class="docutils literal"&gt;first&lt;/tt&gt; method that returns
+&lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;Option&amp;lt;&amp;amp;T&amp;gt;&lt;/span&gt;&lt;/tt&gt;. We are therefore forced - again - to handle a potentially
+empty case (where the option is &lt;tt class="docutils literal"&gt;None&lt;/tt&gt;).&lt;/p&gt;
+&lt;p&gt;As the original article states, this has a number of problems with code clarity,
+potential performance implications and a ticking time bomb if the invariant
+is ever changed in &lt;tt class="docutils literal"&gt;get_configuration_directories&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;The core issue is that &lt;tt class="docutils literal"&gt;Vec&lt;/tt&gt; is fundamentally a type that can be empty; we
+can carry along a &amp;quot;This one can't be empty, pinky promise!&amp;quot; comment on all the
+relevant code, but it's not formally checked by anything.&lt;/p&gt;
+&lt;div class="section" id="a-type-for-non-empty-vector"&gt;
+&lt;h2&gt;A type for &amp;quot;non-empty&amp;quot; vector&lt;/h2&gt;
+&lt;p&gt;The solution is leveraging the type system to enforce a newly established
+invariant. We can use a separate type for &amp;quot;a vector that cannot be empty&amp;quot;;
+in fact, such types already exist in several Rust crates - for example
+&lt;a class="reference external" href="https://docs.rs/nonempty/latest/nonempty/"&gt;nonempty&lt;/a&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="nc"&gt;NonEmpty&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;head&lt;/span&gt;: &lt;span class="nc"&gt;T&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;tail&lt;/span&gt;: &lt;span class="nb"&gt;Vec&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;This type has no constructor that permits &amp;quot;no elements&amp;quot;; its &lt;tt class="docutils literal"&gt;new&lt;/tt&gt; takes
+one element, and its &lt;tt class="docutils literal"&gt;first&lt;/tt&gt; method returns &lt;tt class="docutils literal"&gt;&amp;amp;T&lt;/tt&gt; without an &lt;tt class="docutils literal"&gt;Option&lt;/tt&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;e&lt;/span&gt;: &lt;span class="nc"&gt;T&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nc"&gt;Self&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="bp"&gt;Self&lt;/span&gt;::&lt;span class="n"&gt;singleton&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;e&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;singleton&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;head&lt;/span&gt;: &lt;span class="nc"&gt;T&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nc"&gt;Self&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;NonEmpty&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;head&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;tail&lt;/span&gt;: &lt;span class="nb"&gt;Vec&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;first&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="kp"&gt;&amp;amp;&lt;/span&gt;&lt;span class="nc"&gt;T&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;head&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The rest of the crate deals with making &lt;tt class="docutils literal"&gt;NonEmpty&lt;/tt&gt; behave as close as possible
+to a normal &lt;tt class="docutils literal"&gt;Vec&lt;/tt&gt;, by implementing many useful traits, as well as conversions
+like:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;from_vec&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;vec&lt;/span&gt;: &lt;span class="nb"&gt;Vec&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Option&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;NonEmpty&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;T&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;vec&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_empty&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;head&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;vec&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;remove&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;NonEmpty&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;head&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;tail&lt;/span&gt;: &lt;span class="nc"&gt;vec&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;})&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Let's see how our &lt;tt class="docutils literal"&gt;get_configuration_directories&lt;/tt&gt; function would look if it
+returned a &lt;tt class="docutils literal"&gt;NonEmpty&lt;/tt&gt; instead of a plain &lt;tt class="docutils literal"&gt;Vec&lt;/tt&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;get_configuration_directories&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Result&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;NonEmpty&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;PathBuf&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;::&lt;span class="n"&gt;var&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;CONFIG_DIRS&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;context&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;could not read CONFIG_DIRS&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;directories&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;value&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;split&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sc"&gt;&amp;#39;,&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;map&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;str&lt;/span&gt;::&lt;span class="n"&gt;trim&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;map&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;PathBuf&lt;/span&gt;::&lt;span class="n"&gt;from&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;collect&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;directories&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;NonEmpty&lt;/span&gt;::&lt;span class="n"&gt;from_vec&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;directories&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;bail&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;CONFIG_DIRS cannot be empty&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nb"&gt;Ok&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;directories&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Note the use of &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;NonEmpty::from_vec&lt;/span&gt;&lt;/tt&gt; here - this is where the invariant is
+established. Now a successful result is &lt;tt class="docutils literal"&gt;NonEmpty&lt;/tt&gt;, not just &lt;tt class="docutils literal"&gt;Vec&lt;/tt&gt;. The
+client code looks like:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Result&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;config_dirs&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;get_configuration_directories&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;initialize_cache&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;config_dirs&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;first&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nb"&gt;Ok&lt;/span&gt;&lt;span class="p"&gt;(())&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;There's no need to check if the returned value is empty again; this is enforced
+by the type system!&lt;/p&gt;
+&lt;p&gt;This is where the parse vs. validate terminology of the original article comes
+from. When &lt;tt class="docutils literal"&gt;get_configuration_directories&lt;/tt&gt; returned a &lt;tt class="docutils literal"&gt;Vec&lt;/tt&gt;, it simply
+validated it. But when it returns a &lt;tt class="docutils literal"&gt;NonEmpty&lt;/tt&gt; - the vector is transformed
+into another entity which carries additional meaning. If we treat the concept
+of parsing in the most generic sense - &amp;quot;transforming data from one format to
+another&amp;quot;, this fits.&lt;/p&gt;
+&lt;p&gt;To mention a less artificial example, the
+&lt;a class="reference external" href="https://github.com/rustcoreutils/posixutils-rs"&gt;Rust rewrite of core POSIX utilities&lt;/a&gt;
+uses &lt;tt class="docutils literal"&gt;NonEmpty&lt;/tt&gt; in several places &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;. For example, when constructing a
+shell pipeline:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="nc"&gt;Pipeline&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;commands&lt;/span&gt;: &lt;span class="nc"&gt;NonEmpty&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;Command&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;negate_status&lt;/span&gt;: &lt;span class="kt"&gt;bool&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;The command parser's code:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;parse_pipeline&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;alias_table&lt;/span&gt;: &lt;span class="kp"&gt;&amp;amp;&lt;/span&gt;&lt;span class="nc"&gt;AliasTable&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nc"&gt;ParseResult&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="nb"&gt;Option&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;Pipeline&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// pipeline = &amp;quot;!&amp;quot; command (&amp;quot;|&amp;quot; linebreak command)*&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;negate_status&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;match_alternatives&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;CommandToken&lt;/span&gt;::&lt;span class="n"&gt;Bang&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_some&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;commands&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;parse_command&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;alias_table&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;NonEmpty&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Ok&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;A valid &lt;tt class="docutils literal"&gt;Pipeline&lt;/tt&gt; is only returned if there are some commands in the
+parsed AST. Otherwise, it just returns &lt;tt class="docutils literal"&gt;None&lt;/tt&gt;. Once this is done, the client
+code can use &lt;tt class="docutils literal"&gt;commands.first()&lt;/tt&gt; without having to worry about the
+possibility of it returning &lt;tt class="docutils literal"&gt;None&lt;/tt&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="gradual-parsing-and-type-refinement"&gt;
+&lt;h2&gt;Gradual parsing and type refinement&lt;/h2&gt;
+&lt;p&gt;A somewhat more interesting example can be found in the source code of
+&lt;a class="reference external" href="https://github.com/rust-lang/rust-analyzer"&gt;rust-analyzer&lt;/a&gt;. This project
+has a type that represents an absolute filesystem path:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="nc"&gt;AbsPathBuf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Utf8PathBuf&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Instead of carrying around a regular path, the absoluteness is recorded in
+the type once the initial parsing and validation is done:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;impl&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;TryFrom&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;Utf8PathBuf&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;AbsPathBuf&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;type&lt;/span&gt; &lt;span class="nc"&gt;Error&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Utf8PathBuf&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;try_from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;path_buf&lt;/span&gt;: &lt;span class="nc"&gt;Utf8PathBuf&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Result&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;AbsPathBuf&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Utf8PathBuf&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;path_buf&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;is_absolute&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Err&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;path_buf&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;Ok&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;AbsPathBuf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;path_buf&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Subsequent code doesn't have to validate the the path is absolute. The type
+enforces it.&lt;/p&gt;
+&lt;p&gt;Note also that &lt;tt class="docutils literal"&gt;AbsPathBuf&lt;/tt&gt; wraps &lt;tt class="docutils literal"&gt;Utf8PathBuf&lt;/tt&gt;, not &lt;tt class="docutils literal"&gt;PathBuf&lt;/tt&gt;.
+&lt;tt class="docutils literal"&gt;Utf8PathBuf&lt;/tt&gt; is itself a custom, &amp;quot;parsed&amp;quot; type refinement from the
+&lt;a class="reference external" href="https://docs.rs/camino/latest/camino/"&gt;camino crate&lt;/a&gt;. Regular paths in the
+Rust standard library aren't guaranteed to be valid UTF-8, so they cannot be
+easily converted to a &lt;tt class="docutils literal"&gt;String&lt;/tt&gt; (which has to be valid UTF-8 in Rust);
+&lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;camino::Utf8PathBuf&lt;/span&gt;&lt;/tt&gt; establishes validity on construction, and can then
+be converted to a string with just:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;as_str&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="kp"&gt;&amp;amp;&lt;/span&gt;&lt;span class="kt"&gt;str&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="o"&gt;..&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;So we have an example of gradual parsing and type refinement here:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;std::path::PathBuf
+
+      |
+      |   prove UTF-8
+      |
+      V
+
+camino::Utf8PathBuf
+
+      |
+      |   prove absolute
+      |
+      V
+
+rust-analyzer&amp;#39;s paths::AbsPathBuf
+&lt;/pre&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class="section" id="non-zero-integers"&gt;
+&lt;h2&gt;Non-zero integers&lt;/h2&gt;
+&lt;p&gt;Rust has a generic type called &lt;a class="reference external" href="https://doc.rust-lang.org/std/num/struct.NonZero.html"&gt;NonZero&lt;/a&gt;,
+to describe unsigned numeric quantities that are known to be non-zero.&lt;/p&gt;
+&lt;p&gt;For example, &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;thread::available_parallelism&lt;/span&gt;&lt;/tt&gt; is defined as:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;available_parallelism&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Result&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;NonZero&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;usize&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;If the call is successful, it returns a &lt;tt class="docutils literal"&gt;NonZero&amp;lt;usize&amp;gt;&lt;/tt&gt;, which is like
+a normal &lt;tt class="docutils literal"&gt;usize&lt;/tt&gt; with the restriction that it's not zero. Client code doesn't
+have to keep checking whether the parallelism is 0 - it's enshrined in the type
+system.&lt;/p&gt;
+&lt;p&gt;Rust defines the &lt;a class="reference external" href="https://doc.rust-lang.org/std/primitive.u32.html#impl-Div%3CNonZero%3Cu32%3E%3E-for-u32"&gt;division operator&lt;/a&gt;
+with &lt;tt class="docutils literal"&gt;NonZero&amp;lt;usize&amp;gt;&lt;/tt&gt; in the denominator as an operation that &amp;quot;cannot panic&amp;quot;.&lt;/p&gt;
+&lt;p&gt;&lt;tt class="docutils literal"&gt;NonZero&lt;/tt&gt; has an additional advantage: zero is an invalid value for the
+type, so Rust can use the zero bit pattern to represent &lt;tt class="docutils literal"&gt;None&lt;/tt&gt;. Consequently,
+&lt;tt class="docutils literal"&gt;Option&amp;lt;NonZeroUsize&amp;gt;&lt;/tt&gt; is &lt;a class="reference external" href="https://doc.rust-lang.org/std/option/index.html#representation"&gt;guaranteed to have the same size&lt;/a&gt; and alignment as
+&lt;tt class="docutils literal"&gt;NonZeroUsize&lt;/tt&gt; itself (and as &lt;tt class="docutils literal"&gt;usize&lt;/tt&gt;). This can avoid the extra storage
+that an &lt;tt class="docutils literal"&gt;Option&amp;lt;usize&amp;gt;&lt;/tt&gt; would generally require.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="parsing-json"&gt;
+&lt;h2&gt;Parsing JSON&lt;/h2&gt;
+&lt;p&gt;A common example of the &amp;quot;parse, don't validate&amp;quot; idiom appears in deserializing
+data from a JSON string. Rust's &lt;tt class="docutils literal"&gt;serde&lt;/tt&gt; crate enables us to do the parsing,
+with validated decisions encoded into the type system, e.g.:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="cp"&gt;#[derive(Debug, Deserialize)]&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="nc"&gt;Config&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;name&lt;/span&gt;: &lt;span class="nb"&gt;String&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;workers&lt;/span&gt;: &lt;span class="nc"&gt;NonZeroUsize&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;mode&lt;/span&gt;: &lt;span class="nc"&gt;Mode&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="cp"&gt;#[derive(Debug, Deserialize)]&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="cp"&gt;#[serde(rename_all = &lt;/span&gt;&lt;span class="s"&gt;&amp;quot;snake_case&amp;quot;&lt;/span&gt;&lt;span class="cp"&gt;)]&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;enum&lt;/span&gt; &lt;span class="nc"&gt;Mode&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;Fast&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;Safe&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;And then later:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;input&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s"&gt;r#&amp;quot;&lt;/span&gt;
+&lt;span class="s"&gt;     {&lt;/span&gt;
+&lt;span class="s"&gt;         &amp;quot;name&amp;quot;: &amp;quot;compiler&amp;quot;,&lt;/span&gt;
+&lt;span class="s"&gt;         &amp;quot;workers&amp;quot;: 4,&lt;/span&gt;
+&lt;span class="s"&gt;         &amp;quot;mode&amp;quot;: &amp;quot;fast&amp;quot;&lt;/span&gt;
+&lt;span class="s"&gt;     }&lt;/span&gt;
+&lt;span class="s"&gt; &amp;quot;#&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;config&lt;/span&gt;: &lt;span class="nc"&gt;Config&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;serde_json&lt;/span&gt;::&lt;span class="n"&gt;from_str&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;input&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;?&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;There is a lot happening behind the scenes:&lt;/p&gt;
+&lt;ul class="simple"&gt;
+&lt;li&gt;The types of all fields are enforced (e.g. &amp;quot;name&amp;quot; cannot be an array).&lt;/li&gt;
+&lt;li&gt;The &lt;tt class="docutils literal"&gt;mode&lt;/tt&gt; is validated to be one of the enum values of &lt;tt class="docutils literal"&gt;Mode&lt;/tt&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;tt class="docutils literal"&gt;workers&lt;/tt&gt; is validated to be a non-zero integer, because of the
+&lt;tt class="docutils literal"&gt;NonZeroUsize&lt;/tt&gt; field type.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;We take code like this for granted these days, but it's still a great example
+of the pattern discussed in this post. Once the parser converted &lt;tt class="docutils literal"&gt;mode&lt;/tt&gt; into
+the &lt;tt class="docutils literal"&gt;Mode&lt;/tt&gt; enum, no further validation is required.&lt;/p&gt;
+&lt;p&gt;In dynamic languages like Python and JS, the process is usually much more
+manual. Python's &lt;tt class="docutils literal"&gt;json.loads&lt;/tt&gt; gives us a dictionary, and it's up to the user
+to validate its contents. Libraries like Pydantic permit an approach closer to
+Rust's, but they're not universally used.&lt;/p&gt;
+&lt;hr class="docutils" /&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;Other languages - like Go or Python - have a runtime check that raises
+some sort of exception or panic when &lt;tt class="docutils literal"&gt;lst[0]&lt;/tt&gt; is accessed on an empty
+list or slice.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
+&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
+&lt;tbody valign="top"&gt;
+&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The project implements its own &lt;tt class="docutils literal"&gt;NonEmpty&lt;/tt&gt;, without relying on the
+&lt;tt class="docutils literal"&gt;nonempty&lt;/tt&gt; crate, but all the points in this post apply.&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-09-26:/2026/rusty-thoughts-on-parse-dont-validate/</guid>
+      <pubDate>Sat, 26 Sep 2026 08:25:00 -0700</pubDate>
+    </item>
     <item>
       <title>Notes on discrete-time Fourier series and transform</title>
       <link>https://eli.thegreenplace.net/2026/notes-on-discrete-time-fourier-series-and-transform/</link>
@@ -1527,188 +1821,6 @@ is a classical example of the
 </description>
       <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-08-15:/2026/concurrent-servers-part-7-rust/</guid>
       <pubDate>Sat, 15 Aug 2026 09:41:00 -0700</pubDate>
-    </item>
-    <item>
-      <title>Relative velocity and closing speed</title>
-      <link>https://eli.thegreenplace.net/2026/relative-velocity-and-closing-speed/</link>
-      <description>&lt;p&gt;In Physics simulations or game engines it’s sometimes useful to
-determine the speed with which two objects are approaching each other.
-This post will discuss the concept of &lt;em&gt;closing speed&lt;/em&gt;, which is the
-&lt;em&gt;normal component&lt;/em&gt; of the &lt;em&gt;relative velocity&lt;/em&gt; of two objects.&lt;/p&gt;
-&lt;div class="section" id="relative-velocity-and-its-components"&gt;
-&lt;h2&gt;Relative velocity and its components&lt;/h2&gt;
-&lt;p&gt;Suppose we have objects A and B &lt;a class="footnote-reference" href="#footnote-1" id="footnote-reference-1"&gt;[1]&lt;/a&gt; with velocity vectors
-&lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/94a17f930633898bbe6d1ef2a6c263573aa3842a.svg" style="height: 20px;" type="image/svg+xml"&gt;\vec{V_A}&lt;/object&gt; and &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/c4f87fb6f28657fbd625b4bfbc514b0574e80108.svg" style="height: 20px;" type="image/svg+xml"&gt;\vec{V_B}&lt;/object&gt;. The &lt;em&gt;relative velocity&lt;/em&gt; of B
-w.r.t. A is:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/27625ffaa87e60a1f991ed3aa390d5b284868118.svg" style="height: 24px;" type="image/svg+xml"&gt;\[\vec{V}_{B|A}=\vec{V}_B-\vec{V}_A\]&lt;/object&gt;
-&lt;p&gt;Put differently, it’s the velocity of B in A’s frame of reference.&lt;/p&gt;
-&lt;p&gt;This relative velocity is a vector, and we can split it into orthogonal
-components. Obviously, the nature of such a split depends on the basis
-we want to use. We could look at the vector’s x an y components (we’ll
-be using &lt;img alt="\mathbb{R}^2" class="valign-0 latex-math" src="https://eli.thegreenplace.net/images/math/2b688757b3d0949451e1fa97e71ac5f5f284a5e4.png" style="height: 15px;" /&gt; - two dimensional space, but everything
-here applies to 3D as well), but for this post we’re interested in
-something slightly different:&lt;/p&gt;
-&lt;img alt="Normal and tangential components of the relative velocity." class="align-center" src="https://eli.thegreenplace.net/images/2026/normal-and-tangential.png" /&gt;
-&lt;p&gt;We draw a line connecting the two objects. The component of
-&lt;object class="valign-m6 latex-math" data="https://eli.thegreenplace.net/images/math/8ccc4a9163c92ed1e8e723b64a9d7056ada65491.svg" style="height: 24px;" type="image/svg+xml"&gt;\vec{V}_{B|A}&lt;/object&gt; in the direction of this line is called the
-&lt;em&gt;normal component&lt;/em&gt; of relative velocity, while the component
-perpendicular to this direction is called the &lt;em&gt;tangential component&lt;/em&gt;.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="computing-the-normal-component"&gt;
-&lt;h2&gt;Computing the normal component&lt;/h2&gt;
-&lt;p&gt;How do we find the component of a vector in the direction of a specific
-line? By using a &lt;a class="reference external" href="https://eli.thegreenplace.net/2024/projections-and-projection-matrices/"&gt;vector
-projection!&lt;/a&gt;.
-We’ll represent the line by a vector, and find the projection of
-&lt;object class="valign-m6 latex-math" data="https://eli.thegreenplace.net/images/math/8ccc4a9163c92ed1e8e723b64a9d7056ada65491.svg" style="height: 24px;" type="image/svg+xml"&gt;\vec{V}_{B|A}&lt;/object&gt; onto this vector.&lt;/p&gt;
-&lt;p&gt;The positions of A and B can also be seen as vectors: &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/0cbd4a39e2dc15c143419b61cfab3d08c89dd946.svg" style="height: 20px;" type="image/svg+xml"&gt;\vec{P}_A&lt;/object&gt;
-and &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/8be98601c153883b6091b8ba841746479c876b9c.svg" style="height: 20px;" type="image/svg+xml"&gt;\vec{P}_B&lt;/object&gt;. The line connecting them can then be expressed as
-the vector &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/702505a802f90f2627da0f341f6f28af8a4a2aca.svg" style="height: 20px;" type="image/svg+xml"&gt;\vec{P}_B-\vec{P}_A&lt;/object&gt;:&lt;/p&gt;
-&lt;img alt="The relative-position vector is the difference of the two position vectors." class="align-center" src="https://eli.thegreenplace.net/images/2026/the-relative-position.png" /&gt;
-&lt;p&gt;All we need from this position difference vector is its direction, not
-its magnitude, however &lt;a class="footnote-reference" href="#footnote-2" id="footnote-reference-2"&gt;[2]&lt;/a&gt;. So we’ll use the &lt;em&gt;unit vector&lt;/em&gt; of
-&lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/702505a802f90f2627da0f341f6f28af8a4a2aca.svg" style="height: 20px;" type="image/svg+xml"&gt;\vec{P}_B-\vec{P}_A&lt;/object&gt;, denoted as:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/4037effd91b348b652473f482fc242b7dc83ea57.svg" style="height: 49px;" type="image/svg+xml"&gt;\[\widehat{P}=\frac{\vec{P}_B-\vec{P}_A}{|\vec{P}_B-\vec{P}_A|}\]&lt;/object&gt;
-&lt;p&gt;Finally, to find the projection of &lt;object class="valign-m6 latex-math" data="https://eli.thegreenplace.net/images/math/8ccc4a9163c92ed1e8e723b64a9d7056ada65491.svg" style="height: 24px;" type="image/svg+xml"&gt;\vec{V}_{B|A}&lt;/object&gt; onto
-&lt;object class="valign-0 latex-math" data="https://eli.thegreenplace.net/images/math/ae76f98aa161c8e6255ff6aac4741c7745715b54.svg" style="height: 17px;" type="image/svg+xml"&gt;\widehat{P}&lt;/object&gt;, we compute &lt;a class="footnote-reference" href="#footnote-3" id="footnote-reference-3"&gt;[3]&lt;/a&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/bfa87afcdbc16f27582886265e68c81a888a5719.svg" style="height: 24px;" type="image/svg+xml"&gt;\[S_c=\vec{V}_{B|A}\cdot\widehat{P}=(\vec{V}_B-\vec{V}_A)\cdot\widehat{P}\]&lt;/object&gt;
-&lt;p&gt;Where the multiplication operator between the vectors is the &lt;em&gt;dot
-product&lt;/em&gt;. Note that the result of the dot product is a scalar;
-therefore, the quantity &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/b423d57e7c978d9b6f9e3d76c3e02f52cf5a1a17.svg" style="height: 15px;" type="image/svg+xml"&gt;S_c&lt;/object&gt; is called the &lt;em&gt;closing speed&lt;/em&gt; - it
-expresses the rate at which the relative distance of the two objects is
-changing. If it’s positive, the objects are drifting farther apart; if
-it’s negative, the objects are getting closer together. Therefore the
-term &amp;quot;closing speed&amp;quot; may be slightly confusing; alternatively, this has
-been called a &amp;quot;signed separation speed&amp;quot;, or &amp;quot;normal relative speed&amp;quot; &lt;a class="footnote-reference" href="#footnote-4" id="footnote-reference-4"&gt;[4]&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;The signs in these calculations can be tricky to get right, so we have
-to be very careful. Let’s see a few examples that will help us make
-these computations more concrete.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="examples"&gt;
-&lt;h2&gt;Examples&lt;/h2&gt;
-&lt;p&gt;To build up some intuition and get some practice with the equations,
-we’ll review the following examples:&lt;/p&gt;
-&lt;img alt="Four relative-motion examples." class="align-center" src="https://eli.thegreenplace.net/images/2026/four-relative-motion.png" /&gt;
-&lt;p&gt;&lt;strong&gt;Example I&lt;/strong&gt;: We’ll start by computing the relative position unit
-vector &lt;object class="valign-0 latex-math" data="https://eli.thegreenplace.net/images/math/ae76f98aa161c8e6255ff6aac4741c7745715b54.svg" style="height: 17px;" type="image/svg+xml"&gt;\widehat{P}&lt;/object&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/f28d4a7d06cafd403cd826c0a670975b172ff67a.svg" style="height: 49px;" type="image/svg+xml"&gt;\[\widehat{P}=\frac{\vec{P}_B-\vec{P}_A}{|\vec{P}_B-\vec{P}_A|}=\frac{\langle 4,0\rangle}{|\langle 4,0 \rangle|}=\langle1,0\rangle\]&lt;/object&gt;
-&lt;p&gt;Then, the closing speed is:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/f3b2874b8233cd8c1751ed5ff2fdfbae1d96c711.svg" style="height: 22px;" type="image/svg+xml"&gt;\[S_c=(\vec{V}_B-\vec{V}_A)\cdot\widehat{P}=\langle -3,0\rangle\cdot\langle1,0\rangle=-3\]&lt;/object&gt;
-&lt;p&gt;Based on our convention, the negative sign of &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/b423d57e7c978d9b6f9e3d76c3e02f52cf5a1a17.svg" style="height: 15px;" type="image/svg+xml"&gt;S_c&lt;/object&gt; means that the
-objects are approaching each other. Due to the simple nature of the
-example, this result is easy to verify, as it can be immediately guessed
-just by looking at the diagram.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Example II&lt;/strong&gt;: Here &lt;object class="valign-0 latex-math" data="https://eli.thegreenplace.net/images/math/ae76f98aa161c8e6255ff6aac4741c7745715b54.svg" style="height: 17px;" type="image/svg+xml"&gt;\widehat{P}&lt;/object&gt; is the same as in the previous
-example. The closing speed is:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/f66ddd84100e0b1eaafe03b3afed57dc50a82965.svg" style="height: 22px;" type="image/svg+xml"&gt;\[S_c=(\vec{V}_B-\vec{V}_A)\cdot\widehat{P}=\langle 3,0\rangle\cdot\langle1,0\rangle=3\]&lt;/object&gt;
-&lt;p&gt;Same magnitude, but different sign from before, because the objects are
-moving farther apart.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Example III&lt;/strong&gt; This example is to demonstrate that we get consistent
-results even if B is to the left of A. Here the relative position unit
-vector is:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/e7796cd9ca52dc9cf7de0692372020ef2303bbb8.svg" style="height: 49px;" type="image/svg+xml"&gt;\[\widehat{P}=\frac{\vec{P}_B-\vec{P}_A}{|\vec{P}_B-\vec{P}_A|}=\frac{\langle -2,0\rangle}{|\langle -2,0 \rangle|}=\langle-1,0\rangle\]&lt;/object&gt;
-&lt;p&gt;And the closing speed:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/67c72205da69531f03dd92be8d75a04c775e5342.svg" style="height: 22px;" type="image/svg+xml"&gt;\[S_c=(\vec{V}_B-\vec{V}_A)\cdot\widehat{P}=\langle 3,0\rangle\cdot\langle -1,0\rangle=-3\]&lt;/object&gt;
-&lt;p&gt;Which is the same as in example I, as expected. The direction of
-&lt;object class="valign-0 latex-math" data="https://eli.thegreenplace.net/images/math/ae76f98aa161c8e6255ff6aac4741c7745715b54.svg" style="height: 17px;" type="image/svg+xml"&gt;\widehat{P}&lt;/object&gt; flipped, but so did the direction of the relative
-velocity vector, so the result has the same sign.&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;Example IV&lt;/strong&gt;: Finally, an example showing more arbitrary positions and
-velocities.&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/aa10ecf2964b6bfc8fc7613fe86515408c2fa555.svg" style="height: 49px;" type="image/svg+xml"&gt;\[\widehat{P}=\frac{\vec{P}_B-\vec{P}_A}{|\vec{P}_B-\vec{P}_A|}=\frac{\langle 3,4\rangle}{|\langle 3,4 \rangle|}=\langle0.6,0.8\rangle\]&lt;/object&gt;
-&lt;p&gt;Then:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/a03119506d85247140be836d2e7c898ba991e46e.svg" style="height: 22px;" type="image/svg+xml"&gt;\[S_c=(\vec{V}_B-\vec{V}_A)\cdot\widehat{P}=\langle -3,-6\rangle\cdot\langle 0.6,0.8\rangle=-6.6\]&lt;/object&gt;
-&lt;p&gt;This example is a good opportunity to demonstrate something important
-about &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/b423d57e7c978d9b6f9e3d76c3e02f52cf5a1a17.svg" style="height: 15px;" type="image/svg+xml"&gt;S_c&lt;/object&gt;: it’s time-dependent, because positions change with
-time. Here, -6.6 is the closing speed at the exact moment when A’s and
-B’s positions and velocities are as stated in the example. In the next
-time step, the position of A will be &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/2bc27b863835e60fdba1357f797159dc72d77045.svg" style="height: 18px;" type="image/svg+xml"&gt;\langle2,5\rangle&lt;/object&gt; and the
-position of B will be &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/2450a84c29d863591b7db00ceada4f084bfb99ea.svg" style="height: 18px;" type="image/svg+xml"&gt;\langle2,3\rangle&lt;/object&gt;, while their velocities
-remain the same. The &lt;object class="valign-m3 latex-math" data="https://eli.thegreenplace.net/images/math/b423d57e7c978d9b6f9e3d76c3e02f52cf5a1a17.svg" style="height: 15px;" type="image/svg+xml"&gt;S_c&lt;/object&gt; then will be quite different. This is a
-good segue to the next topic - which is a more physical view of closing
-speed.&lt;/p&gt;
-&lt;/div&gt;
-&lt;div class="section" id="closing-speed-as-a-function-of-time"&gt;
-&lt;h2&gt;Closing speed as a function of time&lt;/h2&gt;
-&lt;p&gt;The computation shown so far represents a static view of the world;
-perhaps the right word to use is &lt;em&gt;instantaneous&lt;/em&gt;. Given the positions
-and velocities at a given moment, what is the closing speed between the
-objects &lt;em&gt;at that exact moment&lt;/em&gt;?&lt;/p&gt;
-&lt;p&gt;But there’s no reason to not generalize this using a more standard
-physical interpretation of velocity.&lt;/p&gt;
-&lt;p&gt;First, let’s state the position vectors of A and B as a function of
-time: &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/4eb67887f180834938958d847a67ce8c4e833101.svg" style="height: 22px;" type="image/svg+xml"&gt;\vec{P}_A(t)&lt;/object&gt; and &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/3b69a9ddd6f52dba77380fd33edf1ce5adb8e57d.svg" style="height: 22px;" type="image/svg+xml"&gt;\vec{P}_B(t)&lt;/object&gt;. The relative
-position vector between the objects is also a function of time:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/70dfcf594bc9407384d7c009f9a608eb3fef4e73.svg" style="height: 22px;" type="image/svg+xml"&gt;\[\vec{R}(t)=\vec{P}_B(t)-\vec{P}_A(t)\]&lt;/object&gt;
-&lt;p&gt;Now we’ll define the scalar distance as the magnitude of this vector:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/7cdc889c6f871266456a41fba1c39755e176be60.svg" style="height: 22px;" type="image/svg+xml"&gt;\[r(t)=|\vec{R}(t)|=|\vec{P}_B(t)-\vec{P}_A(t)|\]&lt;/object&gt;
-&lt;p&gt;We’re interested in &lt;object class="valign-m6 latex-math" data="https://eli.thegreenplace.net/images/math/2e486b6ff05146a7eec038ad6e7e0fc8528811c3.svg" style="height: 24px;" type="image/svg+xml"&gt;\frac{dr(t)}{dt}&lt;/object&gt; - the change in this
-distance over time. Let’s start by breaking &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/9f99e0576aed540806bce0791e5746726e6e413e.svg" style="height: 18px;" type="image/svg+xml"&gt;R(t)&lt;/object&gt; down to its
-constituents:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/f3fe85228247cba64b2cf42ab620ca2ad021f58e.svg" style="height: 51px;" type="image/svg+xml"&gt;\[\begin{aligned}
-    \vec{R}(t)&amp;amp;=\langle x(t),y(t)\rangle \\
-    r(t)&amp;amp;=\sqrt{x(t)^2+y(t)^2}
-\end{aligned}\]&lt;/object&gt;
-&lt;p&gt;By the chain rule &lt;a class="footnote-reference" href="#footnote-5" id="footnote-reference-5"&gt;[5]&lt;/a&gt;:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/6306fb3b34832bfa2973b4f5f2ce022e50e61bfc.svg" style="height: 100px;" type="image/svg+xml"&gt;\[\begin{aligned}
-    \frac{dr(t)}{dt}&amp;amp;=\frac{\frac{d}{dt}(x(t)^2+y(t)^2)}{2\sqrt{x(t)^2+y(t)^2}}\\
-    &amp;amp;=\frac{2x(t)x&amp;#x27;(t)+2y(t)y&amp;#x27;(t)}{2\sqrt{x(t)^2+y(t)^2}}
-    =\frac{x(t)x&amp;#x27;(t)+y(t)y&amp;#x27;(t)}{\sqrt{x(t)^2+y(t)^2}}
-\end{aligned}\]&lt;/object&gt;
-&lt;p&gt;Switching back to the vector representation: since
-&lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/07a18a0fb49fd212904167765ad6d84a0c82e087.svg" style="height: 22px;" type="image/svg+xml"&gt;\vec{R}(t)=\langle x(t),y(t)\rangle&lt;/object&gt;, the numerator of the
-fraction above is then a dot product between &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/7c50f292ef65e21556b433d72d5c11b6e9f87ecf.svg" style="height: 22px;" type="image/svg+xml"&gt;\vec{R}(t)&lt;/object&gt; and
-&lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/4dfa75b6830d41bca1c17cdb195e628f68ed338b.svg" style="height: 22px;" type="image/svg+xml"&gt;\vec{R}&amp;#x27;(t)&lt;/object&gt;, we can write this as:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/a42dd678ac96ed753c3c3526680198572a2fe257.svg" style="height: 49px;" type="image/svg+xml"&gt;\[\frac{dr(t)}{dt}=\frac{\vec{R}(t)\cdot\vec{R}&amp;#x27;(t)}{|\vec{R}(t)|}=\hat{R}(t)\cdot\vec{R}&amp;#x27;(t)\]&lt;/object&gt;
-&lt;p&gt;But &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/54361db0be49009bd9ab092a77a7a00ddf8a1639.svg" style="height: 21px;" type="image/svg+xml"&gt;\hat{R}(t)&lt;/object&gt; is precisely &lt;object class="valign-0 latex-math" data="https://eli.thegreenplace.net/images/math/1787f35be0deea91d648e299fd551f3dcb3e44b5.svg" style="height: 17px;" type="image/svg+xml"&gt;\hat{P}&lt;/object&gt; from the earlier
-section, as a function of time. Moreover:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/a98048e9ed9db3cf9b4799aa6f6146b7dd2cb992.svg" style="height: 22px;" type="image/svg+xml"&gt;\[\vec{R}&amp;#x27;(t)=\vec{P}&amp;#x27;_B(t)-\vec{P}&amp;#x27;_A(t)=\vec{V}_B(t)-\vec{V}_A(t)\]&lt;/object&gt;
-&lt;p&gt;Because velocity is the time derivative of position. Therefore, we end
-up with the same equation, just as a function of time:&lt;/p&gt;
-&lt;object class="align-center" data="https://eli.thegreenplace.net/images/math/e3e0da99f86f0ff329cba714e12223664276b75c.svg" style="height: 38px;" type="image/svg+xml"&gt;\[\frac{dr(t)}{dt}=\hat{P}(t)\cdot(\vec{V}_B(t)-\vec{V}_A(t))\]&lt;/object&gt;
-&lt;p&gt;This formulation is more precise because it makes it very obvious that
-all the quantities we’re dealing with are time dependent.&lt;/p&gt;
-&lt;hr class="docutils" /&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-1" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-1"&gt;[1]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;Throughout this post, we assume our objects are sufficiently far
-apart that they can be treated as &lt;em&gt;points&lt;/em&gt; (or &lt;em&gt;particles&lt;/em&gt;) without
-any shape, area or volume.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-2" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-2"&gt;[2]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The velocity components should be the same regardless of how far
-apart the two objects are.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-3" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-3"&gt;[3]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;In the standard projection formula we’d also divide by the magnitude
-of &lt;object class="valign-0 latex-math" data="https://eli.thegreenplace.net/images/math/ae76f98aa161c8e6255ff6aac4741c7745715b54.svg" style="height: 17px;" type="image/svg+xml"&gt;\widehat{P}&lt;/object&gt;, but in our case it’s a unit vector anyway.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-4" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-4"&gt;[4]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;In some online sources you may see the closing speed described as
-closing velocity because it has a direction. IMHO this is the wrong
-framing. Scalars can be signed! The closing speed is certainly a
-scalar, not a vector.&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;table class="docutils footnote" frame="void" id="footnote-5" rules="none"&gt;
-&lt;colgroup&gt;&lt;col class="label" /&gt;&lt;col /&gt;&lt;/colgroup&gt;
-&lt;tbody valign="top"&gt;
-&lt;tr&gt;&lt;td class="label"&gt;&lt;a class="fn-backref" href="#footnote-reference-5"&gt;[5]&lt;/a&gt;&lt;/td&gt;&lt;td&gt;The notation &lt;object class="valign-m4 latex-math" data="https://eli.thegreenplace.net/images/math/8cef7d030134448b059cf3ccf9ef9edc29b769c0.svg" style="height: 18px;" type="image/svg+xml"&gt;x&amp;#x27;(t)&lt;/object&gt; means &lt;object class="valign-m6 latex-math" data="https://eli.thegreenplace.net/images/math/153450414b2add185e4ad0b5fe515c2835446bfe.svg" style="height: 24px;" type="image/svg+xml"&gt;\frac{dx(t)}{dt}&lt;/object&gt;&lt;/td&gt;&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:eli.thegreenplace.net,2026-08-03:/2026/relative-velocity-and-closing-speed/</guid>
-      <pubDate>Mon, 03 Aug 2026 20:01:00 -0700</pubDate>
     </item>
   </channel>
 </rss>
