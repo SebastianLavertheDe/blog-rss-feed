@@ -5,7 +5,68 @@
     <link>https://buttondown.com/hillelwayne</link>
     <description>&lt;!-- buttondown-editor-mode: fancy --&gt;&lt;p&gt;Hi, I'm Hillel. This is the newsletter version of &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://www.hillelwayne.com"&gt;my website&lt;/a&gt;. I post all website updates here. I also post weekly content just for the newsletter, on topics like&lt;/p&gt;&lt;ul&gt;&lt;li&gt;&lt;p&gt;Formal Methods&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Software History and Culture&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;Fringetech and exotic tooling&lt;/p&gt;&lt;/li&gt;&lt;li&gt;&lt;p&gt;The philosophy and theory of software engineering&lt;/p&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;You can see the archive of all public essays &lt;a target="_blank" rel="noopener noreferrer nofollow" href="https://buttondown.email/hillelwayne/archive/"&gt;here&lt;/a&gt;.&lt;/p&gt;</description>
     <language>en</language>
-    <lastBuildDate>Wed, 30 Sep 2026 13:29:17 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 30 Sep 2026 18:58:23 +0000</lastBuildDate>
+    <item>
+      <title>What TLA+ can and can't check</title>
+      <link>https://buttondown.com/hillelwayne/archive/what-tla-can-and-cant-check/</link>
+      <description>&lt;p&gt;Last week Boris Cherny, the inventor of Claude Code, mentioned that Opus was able to use TLA+&lt;sup id="fnref:tla"&gt;&lt;a class="footnote-ref" href="#fn:tla"&gt;1&lt;/a&gt;&lt;/sup&gt; to find race conditions in code.&lt;/p&gt;
+&lt;div&gt;
+&lt;blockquote class="twitter-tweet"&gt;
+    &lt;a href="https://twitter.com/bcherny/status/2102543349102338309" target="_blank"&gt;&lt;/a&gt;
+&lt;/blockquote&gt;
+&lt;script async src="https://platform.twitter.com/widgets.js" charset="utf-8"&gt;&lt;/script&gt;
+&lt;/div&gt;
+&lt;p&gt;And now everybody on the internet is talking about formal verification. &lt;/p&gt;
+&lt;p&gt;As a long-time educator (&lt;a href="https://link.springer.com/book/10.1007/978-1-4842-3829-5" target="_blank"&gt;1&lt;/a&gt; &lt;a href="https://learntla.com/" target="_blank"&gt;2&lt;/a&gt;) and &lt;a href="https://newsletter.pragmaticengineer.com/p/formal-methods-with-hillel-wayne" target="_blank"&gt;advocate&lt;/a&gt; of TLA+, this is really exciting! TLA+ is great at designing complex concurrent systems and making sure they're bug-free.&lt;sup id="fnref:antithesis"&gt;&lt;a class="footnote-ref" href="#fn:antithesis"&gt;2&lt;/a&gt;&lt;/sup&gt; As a long-time advocate of level-headedness, this new euphoria worries me. I read a lot of people saying that formal methods will solve the problem of agentic software development once and for all, and that's nonsense.&lt;/p&gt;
+&lt;p&gt;Enough words have been spilled about the weaknesses of TLA+ in terms of what it can guarantee, like how &lt;a href="https://buttondown.com/hillelwayne/archive/what-if-the-spec-doesnt-match-the-code/" target="_blank"&gt;correct designs don't automatically translate into correct code&lt;/a&gt;. So I'd like to focus on a different limitation for this newsletter: to verify a property, we need to have a property to verify! So what are the properties that TLA+ can't even express?&lt;/p&gt;
+&lt;p&gt;(This assumes some basic knowledge of TLA+. If you're a total beginner, check out those [1] [2] things above or &lt;a href="https://buttondown.com/hillelwayne/archive/tla-from-first-principles/" target="_blank"&gt;read here&lt;/a&gt;.)&lt;/p&gt;
+&lt;h2&gt;What TLA+ can check&lt;/h2&gt;
+&lt;p&gt;TLA+ divides the system into a set of behaviors. Each behavior is a sequence of states, like "light one is green, then yellow, then red". In each state we can express a regular boolean expressions like "Light four is green" or "All lights are red." We can also modify expressions with three "temporal" logical operators:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;[]P&lt;/code&gt; ("always P") is true if P is true in the current state &lt;em&gt;and every&lt;/em&gt; future state. Example: &lt;code&gt;[](at_most_one_green)&lt;/code&gt; is true if every state going forward has no more than one green light.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;P'&lt;/code&gt; ("P prime") is true if P is true in the next state. Example: &lt;code&gt;light="green" &amp;amp;&amp;amp; light'="red"&lt;/code&gt; is true if the light changes from green to red.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;&amp;lt;&amp;gt;P&lt;/code&gt; ("eventually P") is true if P is true in the current state &lt;em&gt;or in at least one&lt;/em&gt; future state. Example: &lt;code&gt;&amp;lt;&amp;gt;(light4 = "yellow")&lt;/code&gt; is true if light4 is yellow or is yellow in a future state. &lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;When we say that P is a property of the system, we mean it is true in the initial state of every behavior. So if we check the property &lt;code&gt;[]P&lt;/code&gt;, that means that &lt;code&gt;[]P&lt;/code&gt; is true in every initial state, and then by the definition of "always" means that P is true in every future state from that initial state, meaning it is true in every state of every behavior. We call this an &lt;strong&gt;invariant&lt;/strong&gt;, and is one of the most foundational properties we check in TLA+.&lt;/p&gt;
+&lt;p&gt;We can also compose &lt;code&gt;[]&lt;/code&gt; with primes to get &lt;strong&gt;action properties&lt;/strong&gt;, or change variants. &lt;code&gt;[](x' &amp;gt;= x)&lt;/code&gt; is true if the new value of x is always greater than equal to the old value of x. Another fun one is &lt;code&gt;[](P =&amp;gt; P')&lt;/code&gt;: once P is true, it can never become false again. The actual TLA+ is a little more complicated because of a thing called "stutter-invariance", but that's extra details. Action properties and invariants are both &lt;strong&gt;safety&lt;/strong&gt; properties, which roughly means "something bad never happens". &lt;a href="https://www.hillelwayne.com/post/safety-and-liveness/" target="_blank"&gt;I wrote an article on safety and liveness here&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Liveness, btw, is "something good always happens". All liveness properties are based off of &lt;code&gt;&amp;lt;&amp;gt;&lt;/code&gt;. By itself, &lt;code&gt;&amp;lt;&amp;gt;P&lt;/code&gt; just means "P is true in at least one state of every behavior", which is usually too weak to be a good system property. But with composition, we can make more interesting liveness properties:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;[]&amp;lt;&amp;gt;P&lt;/code&gt; is true if, in every state, P is true in at least one future state. This can represent recovery mechanisms like "If the nodes have a new leader election, they will eventually agree on a leader."&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;&amp;lt;&amp;gt;[]P&lt;/code&gt; is true if, at some point in time, P becomes true and remains true forever. This is great for showing that algorithms terminate with the correct results.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;[](P =&amp;gt; &amp;lt;&amp;gt;Q)&lt;/code&gt; is true if, for every state where P is true, there is a future state where Q is true. This can do things like show that P eventually causes Q, or that "all messages put on the queue are eventually in a reader's history." Parsing the formula is a little confusing, so we have the sugar &lt;code&gt;P ~&amp;gt; Q&lt;/code&gt; (P leads to Q).&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;There's a couple of other operators, like &lt;code&gt;ENABLED&lt;/code&gt; and &lt;code&gt;&amp;lt;&amp;lt;A&amp;gt;&amp;gt;_v&lt;/code&gt;, which open up other tricks, but the majority of the stuff we check are invariants, action properties, and liveness. And &lt;a href="https://buttondown.com/hillelwayne/archive/refinement-without-specification/" target="_blank"&gt;refinement&lt;/a&gt;, which is a combination of safety and liveness and a topic unto itself. &lt;/p&gt;
+&lt;h2&gt;What TLA+ can't do&lt;/h2&gt;
+&lt;p&gt;Let's start with the obvious one: if you don't know how to represent your property as a logical formula, then TLA+ can't help you. Nor can any formal method. If you can't formalize the human notion of a bird, you can't prove your app recognizes birds. And, unfortunately, a lot of important properties we care about fall into this category.&lt;/p&gt;
+&lt;p&gt;Next, the overly specific things. TLA+ safety properties work on the level of either individual states (invariants) or single step (action properties). You can't natively define a property over two or more steps, like "pressing &lt;code&gt;delete&lt;/code&gt; and then &lt;code&gt;undo&lt;/code&gt; gives you back the original state", or "once &lt;code&gt;power&lt;/code&gt; is pressed, the computer turns on within ten steps". We also can't define properties on floating point operations or over &lt;a href="https://buttondown.com/hillelwayne/archive/physical-vs-logical-time/" target="_blank"&gt;real time, just logical time&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Now for limit that most interests me. TLA+ properties are implicitly quantified over all behaviors. I said that checking &lt;code&gt;[]P&lt;/code&gt; means "P is true in every state," but what it actually means is "for all behaviors, &lt;code&gt;[]P&lt;/code&gt; is true of that behavior's initial state." Any property TLA+ can check of the system must be a property that is true for every individual behavior.&lt;/p&gt;
+&lt;p&gt;What does that leave out? A lot more than you'd expect!&lt;/p&gt;
+&lt;p&gt;For one, we can't do "there &lt;em&gt;exists&lt;/em&gt; a behavior where P is true". So we can't say that P is possible, even if we don't actually reach it. One example of this would be proving that a game is winnable. We call these &lt;a href="https://buttondown.com/hillelwayne/archive/proving-whats-possible" target="_blank"&gt;reachability properties&lt;/a&gt;. More advanced reachability properties would be things like "P is reachable from every initial state" or "P is reachable from any state where Q is true".&lt;/p&gt;
+&lt;p&gt;We also can't define properties over a &lt;em&gt;set&lt;/em&gt; of behaviors. This is called a &lt;strong&gt;hyperproperty&lt;/strong&gt;. Say we we're modeling phone hardware and want to verify that energy saving mode always uses less energy than normal mode. The property is "any sequence of actions uses no more power in energy saving mode than in regular mode." To refute this, you'd need to give me two behaviors that were identical &lt;em&gt;except&lt;/em&gt; one starts in energy saving mode and the other does not, and the regular mode uses less power. One single behavior isn't enough to cut it, so this is impossible to naturally check in TLA+. &lt;/p&gt;
+&lt;p&gt;Hyperproperties might seem niche but they cover a &lt;a href="https://en.wikipedia.org/wiki/Non-interference_(security)" target="_blank"&gt;ton of security properties&lt;/a&gt; and all statistical properties ("the 95%ile response time is 5ms").&lt;/p&gt;
+&lt;p&gt;Finally, and this one's a little more academic, we can't define properties over the state space as a whole. We can't say, for example, that there's only one path from state X to Y. I don't know how useful this would be in practice. Most of these kinds of "metaproperties" seem like they have potential to be meaningful, I just don't know what specifically.&lt;/p&gt;
+&lt;h3&gt;What "TLA+" "can" "do"&lt;/h3&gt;
+&lt;p&gt;I kind of oversimplified when I said that TLA+ can't do these things. I mean that &lt;em&gt;if&lt;/em&gt; you are writing a spec, and that spec directly corresponds to the system you want to build, then TLA+ can't express these as properties of your system. But you can &lt;a href="https://www.hillelwayne.com/post/software-mimicry/" target="_blank"&gt;mimic&lt;/a&gt; two-step properties with &lt;a href="https://learntla.com/topics/aux-vars.html#" target="_blank"&gt;auxiliary variables&lt;/a&gt;, like storing all state changes in a &lt;code&gt;state_history&lt;/code&gt; sequence and defining the property as an invariant on that sequence. You can mimic some hyperproperties with &lt;a href="https://www.hillelwayne.com/post/hyperproperties/" target="_blank"&gt;self-composition&lt;/a&gt;, where each behavior of the self-composed spec is two behaviors of the actual system. The main TLA+ model checker (TLC) can check the most basic reachability properties with the new &lt;a href="https://github.com/tlaplus/tlaplus/issues/860" target="_blank"&gt;REACHABLE keyword&lt;/a&gt; and some state-space properties with &lt;a href="https://github.com/tlaplus/tlaplus/blob/master/tlatools/org.lamport.tlatools/src/tlc2/module/TLCGetSet.java" target="_blank"&gt;&lt;code&gt;TLCGet&lt;/code&gt;&lt;/a&gt;. Andrew Helwer has a &lt;a href="https://ahelwer.ca/post/2026-09-26-reachability/" target="_blank"&gt;crazy post about mimicking "always reachable"&lt;/a&gt; with fairness and "machine closure."&lt;/p&gt;
+&lt;p&gt;These are useful hacks, but they're still hacks. Each one takes a lot of cleverness to figure out and comes with serious drawbacks. Auxiliary variables ruin refinements, self-composition exponentiates your state space, etc. Hacks don't compose well with the other TLA+ features and don't cover all the intricacies of properties you'd want to express. And worst of all, they make your models look &lt;em&gt;weird&lt;/em&gt; and &lt;em&gt;messy&lt;/em&gt; and not correspond to your actual systems. &lt;/p&gt;
+&lt;p&gt;You could also use a different tool with a different focus. CTL can do reachability properties, PRISM probabilistic properties, etc. They trade off by being worse at things that TLA+ can do, and of course none of them handle properties we can't express logically.&lt;/p&gt;
+&lt;p&gt;Ultimately TLA+ is pretty good at picking a lot of low hanging fruit- invariants and liveness cover many things we care about, and TLA+ is reasonably good at expressing and checking them. There's a lot of potential (and a &lt;a href="https://buttondown.com/hillelwayne/archive/llms-are-bad-at-vibing-specifications/" target="_blank"&gt;a lot of pitfalls&lt;/a&gt;) in using TLA+ to check vibe code. But there are also many things it cannot even express, let alone check. &lt;/p&gt;
+&lt;hr /&gt;
+&lt;h1&gt;&lt;a href="https://www.youtube.com/watch?v=8Xrvyu5tV28" target="_blank"&gt;Logic for Programmers Talk Online&lt;/a&gt;&lt;/h1&gt;
+&lt;p&gt;Thanks to everybody who came to last week's livestream! You can watch the whole thing &lt;a href="https://www.youtube.com/watch?v=8Xrvyu5tV28" target="_blank"&gt;here&lt;/a&gt;.&lt;/p&gt;
+&lt;div class="footnote"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn:tla"&gt;
+&lt;p&gt;"Temporal logic of actions". It's a specification language used to find bugs in concurrent systems. &lt;a href="https://buttondown.com/hillelwayne/archive/what-does-tla-mean-anyway/" target="_blank"&gt;Here's an explanation of the name&lt;/a&gt;.&amp;#160;&lt;a class="footnote-backref" href="#fnref:tla" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:antithesis"&gt;
+&lt;p&gt;(And as for the question of why a person so evangelical about formal methods &lt;a href="https://antithesis.com/" target="_blank"&gt;joined a testing company&lt;/a&gt;, well, there should be an article on their blog about that soon.)&amp;#160;&lt;a class="footnote-backref" href="#fnref:antithesis" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;</description>
+      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/what-tla-can-and-cant-check/</guid>
+      <pubDate>Wed, 30 Sep 2026 13:27:03 +0000</pubDate>
+    </item>
     <item>
       <title>The LLMs yearn for the spines</title>
       <link>https://buttondown.com/hillelwayne/archive/the-llms-yearn-for-the-spines/</link>
@@ -1355,17 +1416,6 @@ will be depended on by somebody", as &lt;a href="https://www.hyrumslaw.com/" tar
       <description>&lt;p&gt;From now until the end of the month, you can get &lt;a href="https://leanpub.com/logic/c/feedchicago" target="_blank"&gt;Logic for Programmers at half price&lt;/a&gt; with the coupon &lt;code&gt;feedchicago&lt;/code&gt;. All royalties from that coupon will go to the &lt;a href="https://www.chicagosfoodbank.org/" target="_blank"&gt;Greater Chicago Food Depository&lt;/a&gt;. Thank you!&lt;/p&gt;</description>
       <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/get-logic-for-programmers-50-off-support-chicago/</guid>
       <pubDate>Mon, 10 Nov 2025 16:31:11 +0000</pubDate>
-    </item>
-    <item>
-      <title>I'm taking a break</title>
-      <link>https://buttondown.com/hillelwayne/archive/im-taking-a-break/</link>
-      <description>&lt;p&gt;Hi everyone,&lt;/p&gt;
-&lt;p&gt;I've been getting burnt out on writing a weekly software essay. It's gone from taking me an afternoon to write a post to taking two or three days, and that's made it really difficult to get other writing done. That, plus some short-term work and life priorities, means now feels like a good time for a break. &lt;/p&gt;
-&lt;p&gt;So I'm taking off from &lt;em&gt;Computer Things&lt;/em&gt; for the rest of the year. There &lt;em&gt;might&lt;/em&gt; be some announcements and/or one or two short newsletters in the meantime but I won't be attempting a weekly cadence until 2026.&lt;/p&gt;
-&lt;p&gt;Thanks again for reading!&lt;/p&gt;
-&lt;p&gt;Hillel&lt;/p&gt;</description>
-      <guid isPermaLink="true">https://buttondown.com/hillelwayne/archive/im-taking-a-break/</guid>
-      <pubDate>Mon, 27 Oct 2025 21:02:37 +0000</pubDate>
     </item>
   </channel>
 </rss>
