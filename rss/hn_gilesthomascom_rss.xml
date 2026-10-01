@@ -5,7 +5,1790 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Thu, 01 Oct 2026 16:11:14 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 01 Oct 2026 21:42:19 +0000</lastBuildDate>
+    <item>
+      <title>Why do OpenAI's GPT-2 weights beat mine?  Part five: data quality</title>
+      <link>https://www.gilesthomas.com/2026/10/why-do-openai-gpt2-weights-beat-mine-5-data-quality</link>
+      <description>&lt;p&gt;When I finished learning how to build an &lt;a href="/llm-from-scratch"&gt;LLM from scratch&lt;/a&gt;,
+I was left with a mystery: my own models were not as good as OpenAI's original
+GPT-2 models, despite being based on the same architecture.&lt;/p&gt;
+
+&lt;p&gt;My models all had 163M parameters, and followed the design from
+&lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
+That meant that they were pretty much the same as the setup for the OpenAI GPT-2 "small" instance,
+except that they did not use weight-tying or bias on the QKV matrices.  Weight-tying means that you re-use
+the initial embedding matrix as the output head at the end, and using it means that GPT-2 small
+saved quite a few parameters -- it was 124M rather than 163M -- at, at least in my
+own experiments, a &lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;cost in quality&lt;/a&gt;;
+similarly, while I found that QKV bias made a &lt;a href="/2026/02/llm-from-scratch-32d-interventions-adding-attention-bias"&gt;tiny improvement in loss terms&lt;/a&gt;, I'd
+felt it was likely within the noise.&lt;/p&gt;
+
+&lt;p&gt;But GPT-2 small consistently beat my models on an instruction
+fine-tuning (IFT) task -- also adapted from Raschka's book.   That test fine-tunes the model
+on a subset of the &lt;a href="https://github.com/tatsu-lab/stanford_alpaca"&gt;Alpaca&lt;/a&gt; dataset, until
+validation loss starts rising, and then runs a test set through the resulting model.
+The responses to the test set questions are stored, and then I run all of the responses
+from all of the models under test past GPT 5.5 in one go to get an aggregate score;
+&lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests"&gt;more details here&lt;/a&gt;.
+GPT-2 small
+always did better than any of my models on this.&lt;/p&gt;
+
+&lt;p&gt;Additionally, it did surprisingly
+well on a simpler eval -- one that just measured the cross entropy loss it got on a
+test set.  It scored close to my own best models, and better than many of them.
+What made this result particularly interesting was that the test set
+in question was a split of my own training data; my models would not have seen it when
+training (at least, in theory), but it seems likely that it would be much more similar to their
+own training data than it was to OpenAI's.&lt;/p&gt;
+
+&lt;p&gt;I've checked two things while probing this mystery:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;It seems very likely that the GPT-2 models were overtrained by modern standards; would
+&lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-3-overtraining"&gt;overtraining my own&lt;/a&gt; models
+get them closer?  It turned out that no, it probably didn't help with the IFT eval (though there might
+have been some signal there).  It did help quite a lot with the test loss eval, though.&lt;/li&gt;
+&lt;li&gt;The way I was handling &lt;a href="/2026/08/why-do-openai-gpt2-weights-beat-mine-4-ift-dropout"&gt;dropout&lt;/a&gt; in the IFT test might
+have been unduly benefiting some models while working against others.  I decided
+to standardise on &lt;em&gt;not&lt;/em&gt; using dropout during this eval, as (counter-intuitively for me) it seemed
+to harm the results of most models, even those that had been pre-trained &lt;em&gt;with&lt;/em&gt; dropout.
+In particular, the OpenAI weights were harmed by using dropout, and making a change
+that benefited them (along with some of my own models) seemed the most conservative
+approach to take in investigating this.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;The next thing I wanted to look into was the training data.&lt;/p&gt;
+
+&lt;p&gt;The exact dataset that the various GPT-2 models were trained on has never been released;
+all we know about it
+is from &lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the paper&lt;/a&gt;,
+where they say:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[W]e created a new web scrape which emphasizes
+  document quality. To do this we only scraped web pages
+  which have been curated/filtered by humans. Manually
+  filtering a full web scrape would be exceptionally expensive
+  so as a starting point, we scraped all outbound links from
+  Reddit, a social media platform, which received at least 3
+  karma. This can be thought of as a heuristic indicator for
+  whether other users found the link interesting, educational,
+  or just funny.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;They called it "WebText".  There is an &lt;a href="https://skylion007.github.io/OpenWebTextCorpus/"&gt;OpenWebText&lt;/a&gt;
+that tries to replicate it, but although they tried to follow the same procedure as the
+original, there's no guarantee that it is all that similar.&lt;/p&gt;
+
+&lt;p&gt;By comparison, I'd normally been training against &lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb"&gt;FineWeb&lt;/a&gt;.
+While this is a general web-scraping dataset, without the "curation" provided by
+using only stuff that was linked from upvoted Reddit posts, it has been refined to
+remove any obvious junk.  I had felt that it was
+pretty much equivalent.&lt;/p&gt;
+
+&lt;p&gt;But what if I were wrong about that?  I decided to see if I could get better models by using better data.&lt;/p&gt;
+&lt;h3 id="the-starting-point"&gt;The starting point&lt;/h3&gt;
+
+&lt;p&gt;Here's a table of all of the models I've been comparing to date.  The "Test loss"
+column shows how well the model in question did on that held-back cross entropy loss
+evaluation.  The "IFT epochs" column shows how many epochs of fine-tuning the model
+needed before its validation loss started rising, the "IFT score" the score that
+GPT 5.5 gave the model's responses to the test set of my Alpaca data, and the "IFT rank"
+the model's rank in terms of that score.  The OpenAI small model is in there in bold,
+and I've also included the OpenAI medium model for comparison purposes.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;IFT epochs&lt;/th&gt;
+  &lt;th&gt;IFT score&lt;/th&gt;
+  &lt;th&gt;IFT rank&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;OpenAI weights: medium&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.231442&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;43.75&lt;/td&gt;
+  &lt;td&gt;1&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained one long epoch&lt;/td&gt;
+  &lt;td&gt;3.324953&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;19.77&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained two normal epochs&lt;/td&gt;
+  &lt;td&gt;3.326482&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;19.72&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.418784&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;18.69&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.420089&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;21.46&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;3.476802&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;13.22&lt;/td&gt;
+  &lt;td&gt;15&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;OpenAI weights: small&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.499677&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;26.00&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.538161&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.77&lt;/td&gt;
+  &lt;td&gt;14&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;10.76&lt;/td&gt;
+  &lt;td&gt;18&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;3.673623&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;17.72&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.683835&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;15.74&lt;/td&gt;
+  &lt;td&gt;8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;14.19&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.724507&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.33&lt;/td&gt;
+  &lt;td&gt;12&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.729900&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;11.34&lt;/td&gt;
+  &lt;td&gt;17&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;3.771478&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;14.67&lt;/td&gt;
+  &lt;td&gt;11&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;3.943522&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;12.31&lt;/td&gt;
+  &lt;td&gt;16&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;4.134991&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;15.04&lt;/td&gt;
+  &lt;td&gt;9&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;4.166892&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;14.99&lt;/td&gt;
+  &lt;td&gt;10&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;You can see that the OpenAI small model did pretty well in terms of the test loss,
+when you consider that it has 39M fewer weights than my models and was being tested against a
+dataset that differs more from its likely training data than it does from my own models'.   Additionally, the specific models that did better than
+OpenAI's small one were all trained with JAX rather than PyTorch -- my hypothesis for that
+is that it's a result of the JAX ones getting better initial weights by pure chance.&lt;/p&gt;
+
+&lt;p&gt;But the big difference was in the IFT score.  In the specific run that gave
+the results in this table, the OpenAI small model got 26.00 -- the closest of my own models was more than
+4.5 points lower, at 21.46.&lt;/p&gt;
+
+&lt;p&gt;This difference was consistent over all of my other test runs.  The GPT-2 small model
+was always ahead of mine.  (GPT-2 medium, of course, beat GPT-2 small and all of my models,
+but given that it is twice the size of mine, that's not a big surprise.)&lt;/p&gt;
+
+&lt;p&gt;Now, quite some time ago, I had tried looking into data quality as a lever to pull
+for model performance.  At the bottom of the table, with the worst test loss of all
+models, you can see two models:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;"Local FineWeb-Edu train"&lt;/li&gt;
+&lt;li&gt;"Local FineWeb-Edu extended train"&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;These two were (as you might guess from the names) trained on the &lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu"&gt;FineWeb-Edu&lt;/a&gt;
+dataset, which includes just the most "educational" data from FineWeb.  They
+scored very badly on the test loss score.  Given that the test dataset is from FineWeb,
+that's not a big surprise -- as I've written previously:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;If you train a model
+  on Jane Austen and then evaluate against &lt;a href="https://www.chucktingle.com/"&gt;Chuck Tingle&lt;/a&gt;, then
+  you're not going to get amazing results.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;But again, GPT-2 had the same issue, and did perfectly well on the test
+loss eval.&lt;/p&gt;
+
+&lt;p&gt;On the other hand, while these FineWeb-Edu models' performance on the IFT eval wasn't stellar -- there are
+plenty of my other models ahead of them -- they did seem to punch above their weight.  Consistently
+across all of the IFT evals I've done, they have scored higher than many of the others --
+despite their poor loss on the test eval.&lt;/p&gt;
+
+&lt;p&gt;Additionally: they were amongst the first models that I trained, before I'd spent
+time learning about how to &lt;a href="/2026/04/llm-from-scratch-32m-interventions-conclusion"&gt;optimise my hyperparameters and training loop&lt;/a&gt;.
+They did not use gradient clipping, they did use dropout, their batch size was just "whatever
+I could squeeze into the GPU", and I didn't set the learning
+rate to the right kind of value or schedule it over the course of the training run.&lt;/p&gt;
+
+&lt;p&gt;So maybe a new training run on FineWeb-Edu plus my training improvements would help?
+And maybe some other tweaks to the training data would be worth looking into?&lt;/p&gt;
+
+&lt;h3 id="the-plan"&gt;The plan&lt;/h3&gt;
+
+&lt;p&gt;I decided to see what would happen if I trained some models with better-quality
+data.  Specifically, I would train models with my current optimised loop and hyperparameters on
+four different datasets:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;FineWeb-Edu -- essentially the same as "Local FineWeb-Edu train" but with a better
+training setup.  This would test the "more educational -&gt; better" hypothesis.&lt;/li&gt;
+&lt;li&gt;A 50:50 split of FineWeb and FineWeb-Edu.  I've read that LLMs can be &lt;em&gt;helped&lt;/em&gt; by
+having a decent amount of lower-quality data in their training loop, as it helps them to generalise.
+Perhaps having some FineWeb in there in addition to the FineWeb-Edu stuff would improve that test loss score while
+also helping the IFT test?&lt;/li&gt;
+&lt;li&gt;A "curated" dataset containing 45% of its contents from FineWeb, 45% from FineWeb-Edu, and 10% from the
+&lt;a href="https://simple.wikipedia.org/wiki/Main_Page"&gt;Simple English Wikipedia&lt;/a&gt;.  The full
+Wikipedia is huge, and full of obscure facts -- while the Simple English one is
+small and hopefully richer in useful information on a per-token basis.  And conveniently,
+Answer.ai have made &lt;a href="https://huggingface.co/datasets/answerdotai/simplewiki"&gt;a snapshot of it available on Hugging Face Hub&lt;/a&gt;.
+Might deliberately putting a bunch of encyclopaedic data into the training set make the model
+better at the IFT eval (which has lots of factual questions in it, like
+"who wrote Pride and Prejudice")?&lt;/li&gt;
+&lt;li&gt;OpenWebText.  Even though I was unsure how well it matched the original WebText,
+given that it was there, it seemed silly to not try training something
+on it and see how it matched up.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;I would train each model on 3.2B tokens of the chosen dataset; that's the Chinchilla-optimal
+amount for my 163M-parameter models.  If there were any interesting results, then I might
+consider doing &lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-3-overtraining"&gt;overtrained&lt;/a&gt; models later on.&lt;/p&gt;
+
+&lt;p&gt;I decided to be at least vaguely scientific about this, and to pre-register some
+predictions:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;The FineWeb-Edu-only model would do pretty badly on the test loss, but better than
+my older FineWeb-Edu models (90%).  It would also punch above its weight on the IFT
+eval (90%).&lt;/li&gt;
+&lt;li&gt;The 50:50 split: I expected it to do worse on the test eval than my JAX FineWeb-only models (70%), but better than
+the FineWeb-Edu one (90%).  I wasn't sure about how it would do on the IFT eval, but
+thought it might be somewhere in between the two groups (60%).&lt;/li&gt;
+&lt;li&gt;The curated dataset I had high hopes for in terms of the IFT eval -- let's say 80% chance
+of it being the best of all of my models.  For the test loss eval, I expected it to
+do about as well as the 50:50 split, maybe a little bit worse (70%).&lt;/li&gt;
+&lt;li&gt;I had no idea how the OpenWebText eval would do!  Could be worse, could be better.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Here's how things turned out.&lt;/p&gt;
+
+&lt;h3 id="the-fineweb-edu-model"&gt;The FineWeb-Edu model&lt;/h3&gt;
+
+&lt;p&gt;I already had a &lt;a href="https://huggingface.co/datasets/gpjt/fineweb-edu-gpt2-tokens"&gt;dataset based on FineWeb-Edu&lt;/a&gt;
+ready to go, from when I trained those two original models.  It is just the 10B-token sample of the original
+dataset at the time I generated it last December, formatted appropriately for my training
+script (details on the dataset card).&lt;/p&gt;
+
+&lt;p&gt;I kicked off a training run with my JAX code (which I've been using for the other
+posts in this series):&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@poppy:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;XLA_PYTHON_CLIENT_MEM_FRACTION&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.95&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;train.py&lt;span class="w"&gt; &lt;/span&gt;full-llm-full-train-with-mha-output-bias-fineweb-edu&lt;span class="w"&gt; &lt;/span&gt;datasets/
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-11&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:11:47.991583&lt;span class="w"&gt; &lt;/span&gt;Downloading&lt;span class="w"&gt; &lt;/span&gt;dataset
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1772&lt;/span&gt;.93it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.00B&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;?B/s&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt;                                                                                                            &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-11&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:11:48.226273&lt;span class="w"&gt; &lt;/span&gt;Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;into&lt;span class="w"&gt; &lt;/span&gt;RAM
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.00B&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;?B/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-11&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:16:29.507646&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;model
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-11&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:16:33.042509&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;optimizer
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-11&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:16:34.138990&lt;span class="w"&gt; &lt;/span&gt;Start&lt;span class="w"&gt; &lt;/span&gt;train
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                                                           &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-11&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:17:38.486288&lt;span class="w"&gt; &lt;/span&gt;Saving&lt;span class="w"&gt; &lt;/span&gt;checkpoint
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;▌&lt;span class="w"&gt;                                                                                                     &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;173&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:22&amp;lt;&lt;span class="m"&gt;39&lt;/span&gt;:17:03,&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;.29s/it,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;6&lt;/span&gt;.897,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;,201&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and just less than 40 hours later, I had a model:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 142,912.226 seconds&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 09:58:26.437276 Tokens seen: 3,260,252,160&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 09:58:26.437284 Throughput: 22,813 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 09:58:26.437302 Final train loss: 3.342&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 09:58:26.437309 Done&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I converted the saved JAX safetensors file from the last checkpoint into a format
+that would be compatible with my PyTorch eval code, and ran my smoke test: how would
+it complete the sentence "Every effort moves you"?&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you closer to God’s Kingdom, and even closer to Him.
+As we can see in
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;That was nice and coherent -- if unusually religious! -- so that was promising.
+I ran the test eval:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-fineweb-edu/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-fineweb-edu/checkpoints/latest/pytorch-model.safetensors
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2758&lt;/span&gt;.50it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;03&lt;/span&gt;:52&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;.74it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.632900
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That was pretty good, putting it at a better test loss than all of the models I had trained
+without optimised hyperparameters, and worse than all of the ones I had trained on
+FineWeb &lt;em&gt;with&lt;/em&gt; optimised hyperparameters.  So that fit in with my prediction that it
+would be better than the old FineWeb-Edu models; the fact that it was also better than
+the non-optimised training runs with FineWeb seemed sensible enough
+that I felt silly for not having predicted that it would have fallen exactly there :-)&lt;/p&gt;
+
+&lt;p&gt;I decided to leave the IFT eval until the end so that I could check all of the models
+from these experiments together, so it was time to &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fineweb-edu"&gt;upload this one to Hugging Face&lt;/a&gt;,
+and move on to the next model.&lt;/p&gt;
+
+&lt;h3 id="5050-fineweb-to-fineweb-edu"&gt;50:50 FineWeb to FineWeb-Edu&lt;/h3&gt;
+
+&lt;p&gt;I put together a new &lt;a href="https://github.com/gpjt/prepare-llm-training-dataset"&gt;repo&lt;/a&gt; with
+&lt;a href="https://github.com/gpjt/prepare-llm-training-dataset/blob/9231eb0ec1d1473663cfa892f7a0c0b241fed355/prepare-dataset.py"&gt;a script to prepare datasets specifically for my training setup&lt;/a&gt;.
+You provide it with config that specifies some source datasets along with information about
+how to process them and how to mix them together, and it uploads a new dataset to
+Hugging Face Hub with the required characteristics.&lt;/p&gt;
+
+&lt;p&gt;For example, for the 50:50 FineWeb to FineWeb-Edu split, the config looked like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;seed&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;42&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;tokens_desired&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;10000000000&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;upload_dataset_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;gpjt/fw-fwedu-5050-gpt2-tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;sources&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;FineWeb&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_id&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;HuggingFaceFW/fineweb&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;sample-10BT&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_split&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;item_field&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;text&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;weight&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;50&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;FineWeb-Edu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_id&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;HuggingFaceFW/fineweb-edu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;sample-10BT&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_split&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;item_field&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;text&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;weight&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;50&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;The way the script works is pretty simple: it works out (based on those &lt;code&gt;weight&lt;/code&gt;s and the
+&lt;code&gt;tokens_desired&lt;/code&gt;) how many tokens it wants from each source dataset, shuffles the items in the sources, then it loops until
+it has the desired number of tokens or more stored in an output.  In the loop, it works out which source is
+currently most under-represented, grabs an item from it, tokenises it, and adds it to the output.&lt;/p&gt;
+
+&lt;p&gt;Running it with that 50:50 config seemed to work fine:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="gp"&gt;giles@perry:~/Dev/prepare-llm-training-dataset (main)$ &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;prepare-dataset.py&lt;span class="w"&gt; &lt;/span&gt;runs/fw-fwedu-5050/
+&lt;span class="go"&gt;Resolving data files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████| 27468/27468 [00:00&amp;lt;00:00, 89875.56it/s]&lt;/span&gt;
+&lt;span class="go"&gt;Loading dataset shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████| 102/102 [00:00&amp;lt;00:00, 133.75it/s]&lt;/span&gt;
+&lt;span class="go"&gt;Resolving data files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████| 2410/2410 [00:00&amp;lt;00:00, 87461.48it/s]&lt;/span&gt;
+&lt;span class="go"&gt;Loading dataset shards: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████| 98/98 [00:00&amp;lt;00:00, 200.09it/s]&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 20:13:22.000187: Generating dataset; per-source counts&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 20:13:22.000217: FineWeb: 5,000,000,000&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 20:13:22.000221: FineWeb-Edu: 5,000,000,000&lt;/span&gt;
+&lt;span class="go"&gt;FineWeb: 100%|████████████████████████████████████████████████████████████████████████████████████████████████▉| 4999999705/5000000000 [1:01:33&amp;lt;00:00, 1353639.33token/s]&lt;/span&gt;
+&lt;span class="go"&gt;FineWeb-Edu: 5000000363token [1:01:33, 1353639.47token/s]&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:14:55.747239:&lt;/span&gt;
+
+
+&lt;span class="go"&gt;Done generating tokens&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:14:55.748480: FineWeb: 4,999,999,705 / 5,000,000,000 (1.000, 1 iterators)&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:14:55.748487: FineWeb-Edu: 5,000,000,363 / 5,000,000,000 (1.000, 1 iterators)&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:14:55.748489: Total: 10,000,000,068&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:14:55.748491: Catting...&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:16:29.565152: Catted into a tensor of shape torch.Size([10000000068])&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:16:29.566663: Saving...&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:16:36.006267: Saved&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:16:36.009413: Uploading to gpjt/fw-fwedu-5050-gpt2-tokens&lt;/span&gt;
+&lt;span class="go"&gt;Processing Files (1 / 1)      : 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████| 20.0GB / 20.0GB,  117MB/s&lt;/span&gt;
+&lt;span class="go"&gt;New Data Upload               : 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████| 14.6GB / 14.6GB, 98.1MB/s&lt;/span&gt;
+&lt;span class="go"&gt;  ...du-5050/train.safetensors: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████| 20.0GB / 20.0GB&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-13 21:17:59.545875: Done&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;So we had almost-perfect 50:50 balance between the datasets, and it saved
+&lt;a href="https://huggingface.co/datasets/gpjt/fw-fwedu-5050-gpt2-tokens-DEPRECATED"&gt;this dataset on Hugging Face&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;I ran &lt;a href="https://github.com/gpjt/prepare-llm-training-dataset/blob/15331678ebd5149fc89563e940096193792dfb07/check-dataset.py"&gt;a script to double-check that it looked sane&lt;/a&gt;,
+and it did, so it was time to spin up a training run:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;XLA_PYTHON_CLIENT_MEM_FRACTION&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.90&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;train.py&lt;span class="w"&gt; &lt;/span&gt;full-llm-full-train-with-mha-output-bias-fw-fwedu-5050&lt;span class="w"&gt; &lt;/span&gt;datasets/
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;:20:59.880918&lt;span class="w"&gt; &lt;/span&gt;Downloading&lt;span class="w"&gt; &lt;/span&gt;dataset
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;/2&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;01&lt;/span&gt;:13&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;36&lt;/span&gt;.70s/it&lt;span class="o"&gt;]&lt;/span&gt;
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0G/20.0G&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;01&lt;/span&gt;:13&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;.24GB/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;:22:13.521745&lt;span class="w"&gt; &lt;/span&gt;Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;into&lt;span class="w"&gt; &lt;/span&gt;RAM
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0G/20.0G&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;01&lt;/span&gt;:13&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;272MB/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;:22:33.787720&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;model
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;:22:35.501063&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;optimizer
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;:22:36.043837&lt;span class="w"&gt; &lt;/span&gt;Start&lt;span class="w"&gt; &lt;/span&gt;train
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                                                           &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;21&lt;/span&gt;:23:11.437206&lt;span class="w"&gt; &lt;/span&gt;Saving&lt;span class="w"&gt; &lt;/span&gt;checkpoint
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                       &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;26&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;02&lt;/span&gt;:20&amp;lt;&lt;span class="m"&gt;38&lt;/span&gt;:07:05,&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;.14s/it,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;9&lt;/span&gt;.308,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;,246&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That was running on &lt;code&gt;perry&lt;/code&gt;, my normal workstation, and I kicked it off in parallel
+with the "curated" model training run below on &lt;code&gt;poppy&lt;/code&gt; my training box, but I'll
+keep the runs separate for the purposes of this writeup.&lt;/p&gt;
+
+&lt;p&gt;When this had been running for an hour or so, our power went out.  My guess is that
+having the tumble dryer running, the car charging, the kettle boiling, the electric hob
+switched on, and two machines doing training runs is a bit too much for our electrics...
+which might be a problem in the future, especially if (as planned) I make &lt;code&gt;poppy&lt;/code&gt; a
+multi-GPU machine.&lt;/p&gt;
+
+&lt;p&gt;However, as things stand, I was able to kick it off again after switching the circuit breaker back on, and things held up.&lt;/p&gt;
+
+&lt;p&gt;Again, about 40 hours later:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 136,060.457 seconds&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 12:05:26.432638 Tokens seen: 3,227,516,928&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 12:05:26.432642 Throughput: 23,721 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 12:05:26.432650 Final train loss: 3.793&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 12:05:26.432653 Done&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;(Note that the numbers reported at the end of a restarted run like this only include
+what happened after the restart.)&lt;/p&gt;
+
+&lt;p&gt;I converted it to PyTorch-compatible tensors, and did the smoke test:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you on to other options—in fact, it’s not even worth that effort. Just make
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Looking good!  Time for the loss test:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-fw-fwedu-5050/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-fw-fwedu-5050/checkpoints/latest/pytorch-model.safetensors
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1192&lt;/span&gt;.07it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;03&lt;/span&gt;:53&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;.72it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.462454
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That was almost in keeping with my prediction that it would do worse than the JAX
+FineWeb-only models, except that it was better than the
+worst of those, "JAX, no MHA bias, with dropout": it was actually better than I predicted.&lt;/p&gt;
+
+&lt;p&gt;So, a promising model.   Time to &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-5050-DEPRECATED"&gt;upload it to Hugging Face&lt;/a&gt; -- and now let's move on
+to the next one.&lt;/p&gt;
+
+&lt;h3 id="the-curated-dataset"&gt;The "curated" dataset&lt;/h3&gt;
+
+&lt;p&gt;With my dataset-preparation script, this was easy enough to set up:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;seed&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;42&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;tokens_desired&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;10000000000&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;upload_dataset_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;gpjt/fw-fwedu-simplewiki-gpt2-tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;sources&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;FineWeb&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_id&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;HuggingFaceFW/fineweb&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;sample-10BT&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_split&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;item_field&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;text&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;weight&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;45&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;FineWeb-Edu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_id&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;HuggingFaceFW/fineweb-edu&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;sample-10BT&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_split&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;item_field&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;text&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;weight&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;45&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Simple English Wikipedia&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_id&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;answerdotai/simplewiki&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;articles&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_split&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;item_field&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;md&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;weight&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;10&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Running that worked nicely:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/prepare-llm-training-dataset&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;prepare-dataset.py&lt;span class="w"&gt; &lt;/span&gt;runs/fw-fwedu-simplewiki/
+Resolving&lt;span class="w"&gt; &lt;/span&gt;data&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;27468&lt;/span&gt;/27468&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;90196&lt;/span&gt;.13it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;shards:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;102&lt;/span&gt;/102&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;358&lt;/span&gt;.90it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Resolving&lt;span class="w"&gt; &lt;/span&gt;data&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2410&lt;/span&gt;/2410&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;88254&lt;/span&gt;.11it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;shards:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;98&lt;/span&gt;/98&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;589&lt;/span&gt;.23it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:59:04.106327:&lt;span class="w"&gt; &lt;/span&gt;Generating&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;per-source&lt;span class="w"&gt; &lt;/span&gt;counts
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:59:04.106387:&lt;span class="w"&gt; &lt;/span&gt;FineWeb:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;,500,000,000
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:59:04.106407:&lt;span class="w"&gt; &lt;/span&gt;FineWeb-Edu:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;,500,000,000
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;:59:04.106422:&lt;span class="w"&gt; &lt;/span&gt;Simple&lt;span class="w"&gt; &lt;/span&gt;English&lt;span class="w"&gt; &lt;/span&gt;Wikipedia:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;,000,000,000
+FineWeb:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████▉&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4499997964&lt;/span&gt;/4500000000&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;59&lt;/span&gt;:41&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1256362&lt;/span&gt;.56token/s&lt;span class="o"&gt;]&lt;/span&gt;
+FineWeb-Edu:&lt;span class="w"&gt; &lt;/span&gt;4500000607token&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;59&lt;/span&gt;:41,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1256363&lt;/span&gt;.31token/s&lt;span class="o"&gt;]&lt;/span&gt;
+Simple&lt;span class="w"&gt; &lt;/span&gt;English&lt;span class="w"&gt; &lt;/span&gt;Wikipedia:&lt;span class="w"&gt; &lt;/span&gt;1000002889token&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;59&lt;/span&gt;:41,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;279192&lt;/span&gt;.58token/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;:58:45.874744:
+
+
+Done&lt;span class="w"&gt; &lt;/span&gt;generating&lt;span class="w"&gt; &lt;/span&gt;tokens
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;:58:45.876043:&lt;span class="w"&gt; &lt;/span&gt;FineWeb:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;,499,997,964&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;,500,000,000&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;.000,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;iterators&lt;span class="o"&gt;)&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;:58:45.876048:&lt;span class="w"&gt; &lt;/span&gt;FineWeb-Edu:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;,500,000,607&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;,500,000,000&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;.000,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;iterators&lt;span class="o"&gt;)&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;:58:45.876052:&lt;span class="w"&gt; &lt;/span&gt;Simple&lt;span class="w"&gt; &lt;/span&gt;English&lt;span class="w"&gt; &lt;/span&gt;Wikipedia:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;,000,002,889&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;,000,000,000&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;.000,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;6&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;iterators&lt;span class="o"&gt;)&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;:58:45.876054:&lt;span class="w"&gt; &lt;/span&gt;Total:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;,000,001,460
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;:58:45.876056:&lt;span class="w"&gt; &lt;/span&gt;Catting...
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:00:18.811748:&lt;span class="w"&gt; &lt;/span&gt;Catted&lt;span class="w"&gt; &lt;/span&gt;into&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;tensor&lt;span class="w"&gt; &lt;/span&gt;of&lt;span class="w"&gt; &lt;/span&gt;shape&lt;span class="w"&gt; &lt;/span&gt;torch.Size&lt;span class="o"&gt;([&lt;/span&gt;&lt;span class="m"&gt;10000001460&lt;/span&gt;&lt;span class="o"&gt;])&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:00:18.813169:&lt;span class="w"&gt; &lt;/span&gt;Saving...
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:00:22.773873:&lt;span class="w"&gt; &lt;/span&gt;Saved
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:00:22.773936:&lt;span class="w"&gt; &lt;/span&gt;Uploading&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;gpjt/fw-fwedu-simplewiki-gpt2-tokens
+Processing&lt;span class="w"&gt; &lt;/span&gt;Files&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt;&lt;span class="w"&gt;      &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB,&lt;span class="w"&gt;  &lt;/span&gt;143MB/s
+New&lt;span class="w"&gt; &lt;/span&gt;Data&lt;span class="w"&gt; &lt;/span&gt;Upload&lt;span class="w"&gt;               &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;.8GB&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;.8GB,&lt;span class="w"&gt;  &lt;/span&gt;142MB/s
+&lt;span class="w"&gt;  &lt;/span&gt;...plewiki/train.safetensors:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:01:59.270021:&lt;span class="w"&gt; &lt;/span&gt;Done
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;One thing that is worth noting in that output is the "6 iterators" for the Simple English Wikipedia.
+If a source dataset runs out of items while we're building up the results in this script,
+we start iterating over it again (with a different seed for the shuffle so that the ordering
+is different).   The "6 iterators" means that it needed to do that 6 times -- the original
+creation of the iterator at the start of the script, and five more.  So that means that
+the Simple English Wikipedia is repeated (oversampled) somewhere between five and six
+times in the dataset.&lt;/p&gt;
+
+&lt;p&gt;That's not a bad thing!  From what I've read, it's actually quite standard to oversample
+highly educational content in LLM training datasets.  And anyway, the dataset the
+script generated was 10B tokens, of which we're only using 3.2B for the training run in
+this post, so it would only appear somewhere between one and two times.  The repetition would
+likely only really cut in if and when we did an overtrained model on the dataset.&lt;/p&gt;
+
+&lt;p&gt;Anyway, I ran my check against &lt;a href="https://huggingface.co/datasets/gpjt/fw-fwedu-simplewiki-gpt2-tokens-DEPRECATED"&gt;the uploaded dataset&lt;/a&gt; -- the first few items were clearly from
+FineWeb, FineWeb-Edu, and the Simple English Wikipedia.&lt;/p&gt;
+
+&lt;p&gt;It was time to kick off a training run:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@poppy:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;XLA_PYTHON_CLIENT_MEM_FRACTION&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.95&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;train.py&lt;span class="w"&gt; &lt;/span&gt;full-llm-full-train-with-mha-output-bias-fw-fwedu-simplewiki&lt;span class="w"&gt; &lt;/span&gt;datasets/
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:24:48.037024&lt;span class="w"&gt; &lt;/span&gt;Downloading&lt;span class="w"&gt; &lt;/span&gt;dataset
+Downloading&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;incomplete&lt;span class="w"&gt; &lt;/span&gt;total...&lt;span class="o"&gt;)&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.00B&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;?B/s&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt;                                                                                                                   &lt;/span&gt;Warning:&lt;span class="w"&gt; &lt;/span&gt;You&lt;span class="w"&gt; &lt;/span&gt;are&lt;span class="w"&gt; &lt;/span&gt;sending&lt;span class="w"&gt; &lt;/span&gt;unauthenticated&lt;span class="w"&gt; &lt;/span&gt;requests&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;the&lt;span class="w"&gt; &lt;/span&gt;HF&lt;span class="w"&gt; &lt;/span&gt;Hub.&lt;span class="w"&gt; &lt;/span&gt;Please&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;set&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;HF_TOKEN&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;enable&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;higher&lt;span class="w"&gt; &lt;/span&gt;rate&lt;span class="w"&gt; &lt;/span&gt;limits&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;faster&lt;span class="w"&gt; &lt;/span&gt;downloads.&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/2&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s&lt;span class="o"&gt;]&lt;/span&gt;
+WARNING:huggingface_hub.utils._http:Warning:&lt;span class="w"&gt; &lt;/span&gt;You&lt;span class="w"&gt; &lt;/span&gt;are&lt;span class="w"&gt; &lt;/span&gt;sending&lt;span class="w"&gt; &lt;/span&gt;unauthenticated&lt;span class="w"&gt; &lt;/span&gt;requests&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;the&lt;span class="w"&gt; &lt;/span&gt;HF&lt;span class="w"&gt; &lt;/span&gt;Hub.&lt;span class="w"&gt; &lt;/span&gt;Please&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;set&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;HF_TOKEN&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;enable&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;higher&lt;span class="w"&gt; &lt;/span&gt;rate&lt;span class="w"&gt; &lt;/span&gt;limits&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;faster&lt;span class="w"&gt; &lt;/span&gt;downloads.
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;/2&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;02&lt;/span&gt;:51&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;85&lt;/span&gt;.85s/it&lt;span class="o"&gt;]&lt;/span&gt;
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0G/20.0G&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;02&lt;/span&gt;:51&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;435MB/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:27:39.934884&lt;span class="w"&gt; &lt;/span&gt;Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;into&lt;span class="w"&gt; &lt;/span&gt;RAM
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0G/20.0G&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;02&lt;/span&gt;:51&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;116MB/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:31:20.492877&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;model
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:31:24.054143&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;optimizer
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:31:25.100832&lt;span class="w"&gt; &lt;/span&gt;Start&lt;span class="w"&gt; &lt;/span&gt;train
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                                                           &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-13&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;:32:29.650379&lt;span class="w"&gt; &lt;/span&gt;Saving&lt;span class="w"&gt; &lt;/span&gt;checkpoint
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;▎&lt;span class="w"&gt;                                                                                                     &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;107&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;08&lt;/span&gt;:38&amp;lt;&lt;span class="m"&gt;39&lt;/span&gt;:05:39,&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;.26s/it,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;7&lt;/span&gt;.631,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;,293&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Again, this was interrupted by the power outage that hit the 50:50 training run, but
+I was able to restart from a checkpoint.&lt;/p&gt;
+
+&lt;p&gt;After another 22 hours, it crashed with an error that I've seen
+&lt;a href="/2026/08/chinchilla-check"&gt;before&lt;/a&gt;:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;jax.errors.JaxRuntimeError: INTERNAL: CUDA error: Failed to end stream capture: CUDA_ERROR_STREAM_CAPTURE_INVALIDATED: operation failed due to a previous error during capture [executable_name=&amp;#39;jit_train_step&amp;#39;]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I put it aside as a one-off oddity when I hit it last time, but this time I dug in
+a bit more.  I noted that it had not ever happened on &lt;code&gt;perry&lt;/code&gt;, but seemed to be an
+issue on &lt;code&gt;poppy&lt;/code&gt;, and that &lt;code&gt;poppy&lt;/code&gt; had an older version of CUDA and the Nvidia drivers
+-- might that be the cause?  I decided to upgrade those before kicking off the next
+run, but for now just restarted the run from the most recent checkpoint.  (Note for
+anyone who is hitting the same error: it has not occurred since the upgrade, so that's worth
+trying.)&lt;/p&gt;
+
+&lt;p&gt;This time it completed OK:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 59,564.515 seconds&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 15:56:52.909888 Tokens seen: 1,367,212,032&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 15:56:52.909894 Throughput: 22,953 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 15:56:52.909912 Final train loss: 3.332&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-15 15:56:52.909959 Done&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Again, these numbers just show what happened after the most recent restart.&lt;/p&gt;
+
+&lt;p&gt;I copied it over to &lt;code&gt;perry&lt;/code&gt;, converted it into a format that was compatible
+with my PyTorch code, and ran the smoke test:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you by the air, for it will make you a better athlete, so your body becomes bigger and stronger
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;Coherent enough -- time for the loss eval:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;~/Dev/jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-fw-fwedu-simplewiki/model.json&lt;span class="w"&gt; &lt;/span&gt;~/Dev/jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-fw-fwedu-simplewiki/checkpoints/latest/pytorch-model.safetensors
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1007&lt;/span&gt;.64it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;03&lt;/span&gt;:57&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;.48it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.542460
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Again, in line with my predictions -- worse than the JAX FineWeb-only models, and
+indeed than the very best PyTorch one, &lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;, and also worse
+than the 50:50 split, but better than the FineWeb-Edu one.&lt;/p&gt;
+
+&lt;p&gt;I &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-simplewiki-DEPRECATED"&gt;uploaded it to Hugging Face&lt;/a&gt;,
+and it was time to move on to what was meant to be the final model for this set of experiments.&lt;/p&gt;
+
+&lt;h3 id="the-openwebtext-run"&gt;The OpenWebText run&lt;/h3&gt;
+
+&lt;p&gt;Again, this was a simple enough config to set up:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;seed&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;42&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;tokens_desired&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;10000000000&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;upload_dataset_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;gpjt/openwebtext-gpt2-tokens&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;sources&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;OpenWebText&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_id&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Skylion007/openwebtext&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_name&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;plain_text&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;hf_split&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;train&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;item_field&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;text&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nt"&gt;&amp;quot;weight&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;50&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and the build and upload process worked well (and took much less time -- for some
+reason, sampling randomly from a single dataset is faster than sampling from two or three):&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/prepare-llm-training-dataset&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;prepare-dataset.py&lt;span class="w"&gt; &lt;/span&gt;runs/openwebtext/
+Resolving&lt;span class="w"&gt; &lt;/span&gt;data&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;80&lt;/span&gt;/80&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;32723&lt;/span&gt;.26it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Resolving&lt;span class="w"&gt; &lt;/span&gt;data&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;80&lt;/span&gt;/80&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;97940&lt;/span&gt;.55it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;shards:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;80&lt;/span&gt;/80&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1200&lt;/span&gt;.13it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:16:47.622617:&lt;span class="w"&gt; &lt;/span&gt;Generating&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;per-source&lt;span class="w"&gt; &lt;/span&gt;counts
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:16:47.622645:&lt;span class="w"&gt; &lt;/span&gt;OpenWebText:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;,000,000,000
+Resolving&lt;span class="w"&gt; &lt;/span&gt;data&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;80&lt;/span&gt;/80&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;45602&lt;/span&gt;.65it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Resolving&lt;span class="w"&gt; &lt;/span&gt;data&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;80&lt;/span&gt;/80&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;67650&lt;/span&gt;.06it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;shards:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;80&lt;/span&gt;/80&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;307&lt;/span&gt;.11it/s&lt;span class="o"&gt;]&lt;/span&gt;
+OpenWebText:&lt;span class="w"&gt; &lt;/span&gt;10000000024token&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;31&lt;/span&gt;:46,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;5246208&lt;/span&gt;.64token/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:48:33.761350:
+
+
+Done&lt;span class="w"&gt; &lt;/span&gt;generating&lt;span class="w"&gt; &lt;/span&gt;tokens
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:48:33.762021:&lt;span class="w"&gt; &lt;/span&gt;OpenWebText:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;,000,000,024&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;,000,000,000&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;.000,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;iterators&lt;span class="o"&gt;)&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:48:33.762026:&lt;span class="w"&gt; &lt;/span&gt;Total:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;,000,000,024
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:48:33.762028:&lt;span class="w"&gt; &lt;/span&gt;Catting...
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:49:33.115508:&lt;span class="w"&gt; &lt;/span&gt;Catted&lt;span class="w"&gt; &lt;/span&gt;into&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;tensor&lt;span class="w"&gt; &lt;/span&gt;of&lt;span class="w"&gt; &lt;/span&gt;shape&lt;span class="w"&gt; &lt;/span&gt;torch.Size&lt;span class="o"&gt;([&lt;/span&gt;&lt;span class="m"&gt;10000000024&lt;/span&gt;&lt;span class="o"&gt;])&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:49:33.115923:&lt;span class="w"&gt; &lt;/span&gt;Saving...
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:49:36.365978:&lt;span class="w"&gt; &lt;/span&gt;Saved
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:49:36.366027:&lt;span class="w"&gt; &lt;/span&gt;Uploading&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;gpjt/openwebtext-gpt2-tokens
+Processing&lt;span class="w"&gt; &lt;/span&gt;Files&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt;&lt;span class="w"&gt;      &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████▉&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB,&lt;span class="w"&gt;  &lt;/span&gt;147MB/s
+New&lt;span class="w"&gt; &lt;/span&gt;Data&lt;span class="w"&gt; &lt;/span&gt;Upload&lt;span class="w"&gt;               &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;.9GB&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;19&lt;/span&gt;.9GB,&lt;span class="w"&gt;  &lt;/span&gt;147MB/s
+&lt;span class="w"&gt;  &lt;/span&gt;...webtext/train.safetensors:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████▉&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB&lt;span class="w"&gt; &lt;/span&gt;/&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;20&lt;/span&gt;.0GB
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;:51:16.202890:&lt;span class="w"&gt; &lt;/span&gt;Done
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Note that it needed to oversample -- that "2 iterators".  OpenWebText is about 40 GiB
+uncompressed, and so that's about 10B GPT-2 tokens -- presumably just a little bit less.
+Again, given that I was planning to use just the first 3.2B tokens of the dataset, I
+didn't feel that it would matter.&lt;/p&gt;
+
+&lt;p&gt;I ran the check script on the newly-uploaded &lt;a href="https://huggingface.co/datasets/gpjt/openwebtext-gpt2-tokens"&gt;Hugging Face dataset&lt;/a&gt;
+and all looked well, so that was all set for the training run.&lt;/p&gt;
+
+&lt;p&gt;I upgraded &lt;code&gt;poppy&lt;/code&gt; first with a &lt;code&gt;sudo pacman -Syu&lt;/code&gt; to see if that helped with the
+weird error that I got in the previous run (which, as I said, it looks like it did), then kicked it off:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@poppy:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;XLA_PYTHON_CLIENT_MEM_FRACTION&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.95&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;train.py&lt;span class="w"&gt; &lt;/span&gt;full-llm-full-train-with-mha-output-bias-openwebtext&lt;span class="w"&gt; &lt;/span&gt;datasets/
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;16&lt;/span&gt;:42:32.606185&lt;span class="w"&gt; &lt;/span&gt;Downloading&lt;span class="w"&gt; &lt;/span&gt;dataset
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;/2&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;941&lt;/span&gt;.38it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.00B&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;?B/s&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt;                                                                                                            &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/2&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;16&lt;/span&gt;:42:32.879987&lt;span class="w"&gt; &lt;/span&gt;Loading&lt;span class="w"&gt; &lt;/span&gt;dataset&lt;span class="w"&gt; &lt;/span&gt;into&lt;span class="w"&gt; &lt;/span&gt;RAM
+Download&lt;span class="w"&gt; &lt;/span&gt;complete:&lt;span class="w"&gt; &lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;.00B&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;?B/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;16&lt;/span&gt;:45:40.438791&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;model
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;16&lt;/span&gt;:45:43.840269&lt;span class="w"&gt; &lt;/span&gt;Creating&lt;span class="w"&gt; &lt;/span&gt;optimizer
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;16&lt;/span&gt;:45:44.848351&lt;span class="w"&gt; &lt;/span&gt;Start&lt;span class="w"&gt; &lt;/span&gt;train
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt;                                                                                                                                           &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;?,&lt;span class="w"&gt; &lt;/span&gt;?it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;2026&lt;/span&gt;-09-15&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;16&lt;/span&gt;:46:50.632075&lt;span class="w"&gt; &lt;/span&gt;Saving&lt;span class="w"&gt; &lt;/span&gt;checkpoint
+&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█&lt;span class="w"&gt;                                                                                                     &lt;/span&gt;&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;332&lt;/span&gt;/33165&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;24&lt;/span&gt;:33&amp;lt;&lt;span class="m"&gt;38&lt;/span&gt;:45:54,&lt;span class="w"&gt;  &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;.25s/it,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;6&lt;/span&gt;.623,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nv"&gt;tps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="m"&gt;22&lt;/span&gt;,154&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;About 31 hours in, it crashed again, but this time it was my own dumb fault: &lt;code&gt;poppy&lt;/code&gt;
+has a relatively small disk and I ran out of space.  I fixed that and kicked it off
+again from the most recent checkpoint, and this time it completed:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 33,927.995 seconds&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-17 11:25:10.835989 Tokens seen: 779,747,328&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-17 11:25:10.835994 Throughput: 22,982 tokens/second&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-17 11:25:10.836012 Final train loss: 3.165&lt;/span&gt;
+&lt;span class="go"&gt;2026-09-17 11:25:10.836018 Done&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;I converted it to PyTorch for the smoke test:&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;Every effort moves you through each phase, so it's not a complete picture.
+
+I'm sure your story was
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;...which looked solid, so it was time for the test loss eval:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;~/Dev/jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-openwebtext/model.json&lt;span class="w"&gt; &lt;/span&gt;~/Dev/jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-openwebtext/checkpoints/latest/pytorch-model.safetensors
+Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;674&lt;/span&gt;.76it/s&lt;span class="o"&gt;]&lt;/span&gt;
+&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;03&lt;/span&gt;:59&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;.37it/s&lt;span class="o"&gt;]&lt;/span&gt;
+Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;.045255
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Our worst score yet in this experiment!  Worse than any of my models so far, apart
+from the two FineWeb-Edu ones I did without optimised hyperparameters.&lt;/p&gt;
+
+&lt;p&gt;Now, the first draft of this post went straight to the results from here, but the story wasn't
+quite over yet...&lt;/p&gt;
+
+&lt;h3 id="test-set-contamination"&gt;Test set contamination&lt;/h3&gt;
+
+&lt;p&gt;GPT-6 Astra is &lt;em&gt;relentless&lt;/em&gt;.  Before I publish any of these posts, I run them past
+an &lt;a href="/2026/07/ai-use"&gt;editorial board of LLMs&lt;/a&gt; to look for issues.  GPT-6 Astra not
+only checked the text, it also visited the code I'd linked to to check that out too,
+and spotted something problematic.&lt;/p&gt;
+
+&lt;p&gt;It's obvious in retrospect, but my code to build the new datasets had a high risk
+of including the contents of the -- in theory held-back -- test set.  The way that
+the test set was generated was that
+I downloaded the 10B sample of FineWeb back in &lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch"&gt;December&lt;/a&gt;,
+splitting it into 99% training data and 1% "validation".  That validation split
+was about 100M tokens, and I was only using the first 19M or so for actual validation
+runs during training, so I (somewhat arbitrarily) designated about 19M other tokens
+starting at position 50M in there as my test set.&lt;/p&gt;
+
+&lt;p&gt;Now, my new dataset-generation code was just sampling randomly from the complete
+10B sample of FineWeb.  So there was nothing stopping it from pulling in data that
+was in that old validation split!  That meant that it was quite likely that my new
+"curated" and "50:50" datasets contained at least some of the test set that was meant to have
+been held back from the models during training.&lt;/p&gt;
+
+&lt;p&gt;On reflection, the problem was potentially even worse.  FineWeb-Edu is a subset of
+FineWeb; my existing FineWeb-Edu dataset came from the 10B sample of the Hugging Face
+original, and so it also could potentially contain documents that I'd put into the test
+set.&lt;/p&gt;
+
+&lt;p&gt;The first thing to do was to establish the size of the problem.  I wrote
+&lt;a href="https://github.com/gpjt/prepare-llm-training-dataset/blob/4ddd27b787ce3574e217d476ee6878578b27749e/generate-forbidden-doc-hashes.py"&gt;a script&lt;/a&gt; to
+take in a "forbidden" dataset and split; this was assumed to be formatted as one big tensor of GPT-2 tokens,
+which is what all of my datasets are.  It would then split it by end-of-text tokens, and
+generate a hash and a token count for each resulting "document".  Optionally, you could
+restrict it to only considering a subset -- the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; tokens starting at position &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;p&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; -- and
+it would then generate hashes/lengths for the documents inside that slice, or that overlapped
+it at the start or the end.&lt;/p&gt;
+
+&lt;p&gt;I ran that to generate a list of hashes for the entire validation set -- the validation
+split of &lt;a href="https://huggingface.co/datasets/gpjt/fineweb-gpt2-tokens"&gt;&lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt;&lt;/a&gt; -- and then
+used &lt;a href="https://github.com/gpjt/prepare-llm-training-dataset/blob/4ddd27b787ce3574e217d476ee6878578b27749e/check-training-set-for-contamination.py"&gt;a second script&lt;/a&gt;
+to check my various training sets (and the validation set itself) to see how much
+of a contamination problem there was.  I got these results:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;strong&gt;Dataset&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Split&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Contamination with validation set&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;validation&lt;/td&gt;
+  &lt;td&gt;102163003 out of 102163003 tokens (100.00%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;636166 out of 102163003 tokens (0.62%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fineweb-edu-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;672189 out of 102163003 tokens (0.66%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fw-fwedu-5050-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;49224580 out of 102163003 tokens (48.18%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fw-fwedu-simplewiki-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;44233824 out of 102163003 tokens (43.30%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/openwebtext-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;212 out of 102163003 tokens (0.00%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;So:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;The validation set was 100% "contaminated" with itself, which was a useful sanity
+check.&lt;/li&gt;
+&lt;li&gt;The training set of &lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt; had what I felt was a small level
+of contamination.  It was interesting that there was any at all -- I think that must
+mean that there are some repeated documents in the original dataset, and some of
+them wound up with copies in both my training and validation splits.&lt;/li&gt;
+&lt;li&gt;The &lt;code&gt;gpjt/fineweb-edu-gpt2-tokens&lt;/code&gt; dataset also had what felt like a reassuringly
+low level of contamination.&lt;/li&gt;
+&lt;li&gt;Both &lt;code&gt;gpjt/fw-fwedu-5050-gpt2-tokens&lt;/code&gt; and &lt;code&gt;gpjt/fw-fwedu-simplewiki-gpt2-tokens&lt;/code&gt;,
+however, looked problematic.  In both cases, the training datasets had more than 40% of
+the validation/test set in them.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;gpjt/openwebtext-gpt2-tokens&lt;/code&gt; was, as you'd expect, almost completely uncontaminated.
+It looks like maybe one document happened to have been picked up by both the
+OpenWebText and the FineWeb crawls and then included in the bit of FineWeb
+I was using for validation.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;However, these numbers -- while scary, at least for the 50:50 and the curated datasets -- were not quite the ones to use.  They showed
+how much of the full validation set showed up in the full training set; what I actually
+cared about was how much of the &lt;em&gt;test&lt;/em&gt; set -- those 19M tokens starting at position 50M in
+the validation split -- was in the actual subset of the training datasets that I actually
+trained on -- the first ~3.2B of them.&lt;/p&gt;
+
+&lt;p&gt;I re-ran the script to generate hashes for just the test set, and then re-ran the
+contamination-checking script, telling it just to look at the appropriate subset
+of the training tokens, and got this:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;strong&gt;Dataset&lt;/strong&gt; (first 3.2B tokens only)&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Split&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Contamination with test set&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;26557 out of 19632681 tokens (0.14%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fineweb-edu-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;32079 out of 19632681 tokens (0.16%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fw-fwedu-5050-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;2986889 out of 19632681 tokens (15.21%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/fw-fwedu-simplewiki-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;2682430 out of 19632681 tokens (13.66%)&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;gpjt/openwebtext-gpt2-tokens&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;train&lt;/td&gt;
+  &lt;td&gt;None&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;It was clear that there was a problem -- certainly with &lt;code&gt;gpjt/fw-fwedu-5050-gpt2-tokens&lt;/code&gt;
+and &lt;code&gt;gpjt/fw-fwedu-simplewiki-gpt2-tokens&lt;/code&gt;.  They'd seen what felt like a significant amount
+of the test set while training, so their results on the test loss eval were dubious
+at best.&lt;/p&gt;
+
+&lt;p&gt;I decided to train those two models afresh, and see what the result was in terms of loss.
+If the difference was huge, I'd look into the risks of the (much smaller) contamination
+of &lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt; and &lt;code&gt;gpjt/fineweb-edu-gpt2-tokens&lt;/code&gt;.  But if it was pretty
+small, I'd not worry about that too much.&lt;/p&gt;
+
+&lt;p&gt;I extended the script that &lt;a href="https://github.com/gpjt/prepare-llm-training-dataset/blob/6dcaa02f5019a78631567748872dd8fdcfc7c35f/prepare-dataset.py"&gt;prepared datasets&lt;/a&gt;
+so that the config file could specify a &lt;code&gt;forbidden_dataset&lt;/code&gt;.  Any documents in the
+source datasets that matched forbidden ones would be excluded from the output.  I then
+updated the config for &lt;code&gt;gpjt/fw-fwedu-5050-gpt2-tokens&lt;/code&gt; and &lt;code&gt;gpjt/fw-fwedu-simplewiki-gpt2-tokens&lt;/code&gt;
+so that the whole validation split of &lt;code&gt;gpjt/fineweb-gpt2-tokens&lt;/code&gt; was forbidden, and
+re-generated them.  You can see the updated datasets &lt;a href="https://huggingface.co/datasets/gpjt/fw-fwedu-5050-gpt2-tokens"&gt;here&lt;/a&gt;
+and &lt;a href="https://huggingface.co/datasets/gpjt/fw-fwedu-simplewiki-gpt2-tokens"&gt;here&lt;/a&gt;.
+Running the contamination-checker script against them showed that they were clear.&lt;/p&gt;
+
+&lt;p&gt;I then re-did the full training runs for those models; the uncontaminated version
+of the 50:50 split model is &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-5050"&gt;here&lt;/a&gt;,
+and the curated one is &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-simplewiki"&gt;here&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;And the good news: both of them actually did very slightly &lt;em&gt;better&lt;/em&gt; at the test
+loss eval than their equivalents that had been trained on the contaminated data:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;strong&gt;Model&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Contaminated&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Test loss&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, FineWeb/FineWeb-Edu 50:50&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;3.449257&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, FineWeb/FineWeb-Edu 50:50&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;3.462454&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, curated&lt;/td&gt;
+  &lt;td&gt;No&lt;/td&gt;
+  &lt;td&gt;3.534068&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, curated&lt;/td&gt;
+  &lt;td&gt;Yes&lt;/td&gt;
+  &lt;td&gt;3.542460&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;There are a number of possibilities that come to mind; perhaps learning from the
+test set just doesn't happen with tiny 163M models like this, or perhaps while the
+contaminated models were learning, the benefit they got from that was outweighed by
+the data that they got instead of the test set data being in some way better for
+training purposes, at least in terms of the loss eval.&lt;/p&gt;
+
+&lt;p&gt;But anyway, I felt that if the effect of seeing more than 10% of the test set data
+during training was so tiny, then the effect of seeing less than 0.2% -- which is what
+the FineWeb-Edu model in this set of training runs had, as did all of my other FineWeb-only
+models from previous experiments -- would be even smaller and I'd disregard it.&lt;/p&gt;
+
+&lt;p&gt;That was excellent news!  I didn't need to start all of my experiments from scratch.&lt;/p&gt;
+
+&lt;p&gt;For the rest of this post, I will include the numbers and results for the contaminated
+models as well as the uncontaminated ones -- they're interesting for several reasons --
+but for future posts I'll skip the contaminated ones.&lt;/p&gt;
+
+&lt;p&gt;So -- finally! -- let's start digging into the final results.&lt;/p&gt;
+
+&lt;h3 id="results"&gt;Results&lt;/h3&gt;
+
+&lt;p&gt;Firstly, I think it's worth taking a look at all of the test loss results in
+context.  Here they are in a table, with the new models in bold:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
+  &lt;td&gt;3.231442&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained one long epoch&lt;/td&gt;
+  &lt;td&gt;3.324953&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained two normal epochs&lt;/td&gt;
+  &lt;td&gt;3.326482&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.418784&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.420089&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb/FineWeb-Edu 50:50 (uncontaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.449257&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb/FineWeb-Edu 50:50 (contaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.462454&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;3.476802&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
+  &lt;td&gt;3.499677&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, curated (uncontaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.534068&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.538161&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, curated (contaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.542460&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb-Edu&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.632900&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;3.673623&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.683835&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.724507&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.729900&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;3.771478&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;3.943522&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, openwebtext&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;4.045255&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;4.134991&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;4.166892&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;I think there's something very clear here: with the new models, the more FineWeb that was in the training
+mix, the better the model did on this eval.  I think I might have been subconsciously
+expecting that in the predictions I did before running these experiments, but
+in retrospect it's so incredibly obvious that I feel silly for not mentioning it
+explicitly!&lt;/p&gt;
+
+&lt;p&gt;But that tells us something interesting.  From the description in the paper, whatever OpenAI
+did the GPT-2 training run on, it was not like FineWeb.  It was &lt;em&gt;probably&lt;/em&gt; more
+similar to OpenWebText -- and yet, that model was the one that performed the worst on
+this test eval, so if it is more like OpenWebText, there must be some other factor involved.&lt;/p&gt;
+
+&lt;p&gt;But moving on for now: how about the IFT test -- the one that kicked off all of
+this work in the first place?&lt;/p&gt;
+
+&lt;p&gt;I generated a set of IFT responses for all of the new models, and then ran them
+(plus responses for all of the other models on that table above) past GPT 5.5, and
+found that one of my new models was getting quite close to the original GPT-2 small
+weights!  So I did four more runs, so that I could get an average.&lt;/p&gt;
+
+&lt;p&gt;Here are the results -- the "IFT score" is the average
+across all five runs of the judge, and the "IFT rank" is based on that.  The "IFT epochs"
+was from the original result-generation script.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;IFT epochs&lt;/th&gt;
+  &lt;th&gt;IFT score&lt;/th&gt;
+  &lt;th&gt;IFT rank&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
+  &lt;td&gt;3.231442&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;42.36&lt;/td&gt;
+  &lt;td&gt;1&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained one long epoch&lt;/td&gt;
+  &lt;td&gt;3.324953&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;18.67&lt;/td&gt;
+  &lt;td&gt;7&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained two normal epochs&lt;/td&gt;
+  &lt;td&gt;3.326482&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;18.71&lt;/td&gt;
+  &lt;td&gt;6&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.418784&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;17.90&lt;/td&gt;
+  &lt;td&gt;8&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;3.420089&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;20.50&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb/FineWeb-Edu 50:50 (uncontaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.449257&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;17.69&lt;/td&gt;
+  &lt;td&gt;9&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb/FineWeb-Edu 50:50 (contaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.462454&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;19.30&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;3.476802&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;13.02&lt;/td&gt;
+  &lt;td&gt;21&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
+  &lt;td&gt;3.499677&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+  &lt;td&gt;25.19&lt;/td&gt;
+  &lt;td&gt;2&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, curated (uncontaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.534068&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;16.63&lt;/td&gt;
+  &lt;td&gt;10&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.538161&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.51&lt;/td&gt;
+  &lt;td&gt;19&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, curated (contaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.542460&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.58&lt;/td&gt;
+  &lt;td&gt;18&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.577761&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;10.19&lt;/td&gt;
+  &lt;td&gt;24&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb-Edu&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;3.632900&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;24.56&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;3.673623&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;16.59&lt;/td&gt;
+  &lt;td&gt;11&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.683835&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;15.15&lt;/td&gt;
+  &lt;td&gt;12&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;3.691526&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;13.64&lt;/td&gt;
+  &lt;td&gt;16&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.724507&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.59&lt;/td&gt;
+  &lt;td&gt;17&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;3.729900&lt;/td&gt;
+  &lt;td&gt;3&lt;/td&gt;
+  &lt;td&gt;10.79&lt;/td&gt;
+  &lt;td&gt;23&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;3.771478&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.70&lt;/td&gt;
+  &lt;td&gt;15&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;3.943522&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;11.87&lt;/td&gt;
+  &lt;td&gt;22&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, openwebtext&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;4.045255&lt;/td&gt;
+  &lt;td&gt;4&lt;/td&gt;
+  &lt;td&gt;13.28&lt;/td&gt;
+  &lt;td&gt;20&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;4.134991&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;14.29&lt;/td&gt;
+  &lt;td&gt;14&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;4.166892&lt;/td&gt;
+  &lt;td&gt;5&lt;/td&gt;
+  &lt;td&gt;14.69&lt;/td&gt;
+  &lt;td&gt;13&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;If you want to see the full numbers, they're &lt;a href="#appendix-all-ift-judge-runs"&gt;below&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;The number that initially surprised me, and made me decide to do multiple LLM-judge runs was the one for the "JAX, FineWeb-Edu" model.  In my
+first run it came in at 24.35 vs the OpenAI small weights' 24.93 -- so close that I wondered
+if it might even beat them on a re-run.  However, in the further four runs its score was
+consistently lower than the OpenAI model's, and the gap extended a bit in some.&lt;/p&gt;
+
+&lt;p&gt;So, was FineWeb-Edu the clear winner here?  Perhaps.  If you look at the contaminated/uncontaminated pairs,
+something interesting pops out.  For the 50:50 mix, the model trained with the contaminated
+dataset got 19.30, and the one trained on the uncontaminated one got 17.69 -- a difference
+of 1.61.  For the "curated" dataset, the situation was even more interesting: uncontaminated
+got 16.63, while contaminated got 13.58, a delta of 3.05 points.&lt;/p&gt;
+
+&lt;p&gt;Remember, the contamination issue is about whether or not the model saw the held-back
+test set during training.  It was an issue for the test loss that is based on that test set,
+but is entirely orthogonal to the IFT test.&lt;/p&gt;
+
+&lt;p&gt;From the IFT perspective, both contaminated and uncontaminated models in each case saw
+training data that was -- in theory, at least -- essentially the same in terms of quality.
+Indeed, the uncontaminated run saw almost the same data in the same order as the contaminated one,
+except that some items were omitted, and then extra ones were added to the end.&lt;/p&gt;
+
+&lt;p&gt;The purpose of this set of experiments was to see how data quality affected the results
+on the IFT test set.  But in the case of the curated model, something that should be
+unrelated to data quality changed the results by 3.05 points!&lt;/p&gt;
+
+&lt;p&gt;If something as simple as changing which data of the same quality the model is trained with can affect
+the IFT score so drastically, it makes it a bit harder to be certain as to whether or not data quality
+really had the effect we were looking for.&lt;/p&gt;
+
+&lt;p&gt;On the other hand, the FineWeb-Edu model came in at 24.56, which is 4.06 points better than
+the 20.50 that the closest other model got -- more than the 3.05 points we see in difference
+between the two curated dataset models.  And it's worth noting that the model with 20.50 is
+"JAX, no MHA bias, no dropout", which has a subtly different architecture -- no bias on the
+output projection of the multi-head attention blocks.  A better comparison might be
+"JAX, with MHA bias, no dropout", which got a score of 17.90, for a whacking great difference
+of 6.66 points.&lt;/p&gt;
+
+&lt;p&gt;I think that without doing a very large number of training runs on different datasets with
+different mixes, each one created with a different seed, it would be hard to work
+out exactly what is in the noise here and what is not.&lt;/p&gt;
+
+&lt;p&gt;However, that would cost a lot in terms of time.  I think that the best thing here
+is to chalk this up as a fairly decent indication that FineWeb-Edu improves matters for the IFT eval,
+but far from a certainty.  But it's certainly worth noting that whatever the noise is,
+it has a range of at least 3.05 points -- and the FineWeb-Edu model is just 0.63 points short of GPT-2 small!
+So there could well be something there.  Of course, we don't know whether that model
+got (by chance) the best possible balance of FineWeb-Edu tokens, and could never win -- or
+whether it got a bad balance and would actually beat GPT-2 with a better one.  So that's
+certainly worth keeping in mind.&lt;/p&gt;
+
+&lt;p&gt;As an aside, the result for the curated dataset really surprised me.  I had expected that it would be the best one,
+simply because it almost certainly contained more facts.  I took a look at its answers to the questions --
+one possibility that came to mind might be that it would get better responses to
+questions like "What is the chemical symbol for chlorine" or "Who wrote Pride and Prejudice"
+than the others, but would fail on less knowledge-based tasks.  But it was terrible
+at fact-based questions too:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Name the author of 'Pride and Prejudice'.&lt;br/&gt;
+  The author of 'Pride and Prejudice' is Priscilla Finch.&lt;/p&gt;
+  
+  &lt;p&gt;What is the periodic symbol for chlorine?&lt;br/&gt;
+  The periodic symbol for chlorine is H.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;As I understand it, many real-world training runs do include (often oversampled)
+amounts of highly educational training data like this model's dataset did.  But perhaps
+the models that I'm training are just too small to be able to make use of the data they gained that
+way -- maybe doing things this way and expecting
+good results is like asking six-year-old children to memorise stuff before they've learned enough
+to be able to make use of it &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;.  It's worth noting that the GPT-2 small model also
+failed on those factual questions.&lt;/p&gt;
+
+&lt;p&gt;Well, anyway: I think we have some useful results here, so let's work out what
+that means for next steps.&lt;/p&gt;
+
+&lt;h3 id="conclusion"&gt;Conclusion&lt;/h3&gt;
+
+&lt;p&gt;The results we got in these experiments point in two interesting directions.&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;The perfect connection between the amount of FineWeb in the training set and the
+result on the (FineWeb-based) test loss eval, while perfectly obvious in retrospect,
+really does highlight how mysterious it is that the OpenAI small weights do so well
+on that test.&lt;/li&gt;
+&lt;li&gt;The fact that FineWeb-Edu did well on the IFT test tells us that there
+does seem to be value in using richer training data -- though the less-spectacular
+results of the 50:50 mix and the curated one weaken that a bit, as does the indicator
+of what the noise due to data selection from equivalently high-quality datasets might be.  The OpenWebText
+result I think I'll ignore, given that -- while in theory it should be similar to
+what OpenAI trained on -- there are no guarantees, and it might differ in non-obvious
+ways for non-obvious reasons.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;I think that the right direction to take this going forward is to separate these two
+angles.&lt;/p&gt;
+
+&lt;p&gt;I should chase a higher IFT score, and then once I have nailed that down, I should see what (if anything) might
+allow me to get the resulting model to improve its test score.  But I will need to make
+sure that whatever dataset I use, I use various "mixes" of it -- versions created
+with different random seeds.&lt;/p&gt;
+
+&lt;p&gt;In my earlier experiments
+with overtraining, I did find that it didn't seem to improve the IFT results -- but it
+&lt;em&gt;did&lt;/em&gt; improve the test loss.  So perhaps identifying the right combination of other factors
+to boost the IFT score, then overtraining the result, might help?&lt;/p&gt;
+
+&lt;p&gt;Of course, my
+overtraining tests were with FineWeb, so the connection might not hold up as well if
+the starting model (as seems likely) was trained on a different dataset.&lt;/p&gt;
+
+&lt;p&gt;Also, while working through the results here, I've come to the conclusion that the set of
+models I'm using is a bit confusing -- there are now different hyperparameter settings,
+small architectural differences (the MHA bias thing), dropout settings during the pre-training,
+and now datasets.   I think that's OK for now; I should see this part of this series
+as more ideation than actually running the proper experiments.  But at the end, when I
+have some solid hypotheses with a reasonable amount of backup, I should start from scratch:
+a baseline model, then staged interventions to build up to what (hopefully) will be a model
+as good as GPT-2 small.&lt;/p&gt;
+
+&lt;p&gt;Anyway, I'll wrap this one up here.  I think that the next lever to pull is (perhaps
+surprisingly) going to be weight tying.  I had previously kind of disregarded that as
+a possibility, but while I was working on this post, something popped into my mind.
+The OpenAI models were originally trained with weight tying.  My codebase does actually
+support doing it -- but because I got the OpenAI weights I'm using from the code in
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
+when I'm running the IFT test, the weights are not actually tied!  We load up a model
+that has separate but identical embedding and output head matrices, and then we fine-tune
+that.  So those two matrices can vary independently during fine-tuning -- to put it
+another way, while GPT-2 small was pre-trained with 124M parameters, the IFT test is
+being done on a 163M-parameter version.  Does that
+give them some non-obvious advantage?  And would adding weight-tying to my own models
+help, either with or without the output heads being independent at fine-tuning time?&lt;/p&gt;
+
+&lt;p&gt;Stay tuned :-)&lt;/p&gt;
+
+&lt;h3 id="appendix-all-ift-judge-runs"&gt;Appendix: all IFT judge runs&lt;/h3&gt;
+
+&lt;p&gt;Here are the numbers for all of the IFT judge runs, included for completeness.  You
+can see that the LLM judge ranks models very consistently between runs, but there is variation --
+that is, on some runs it's in what I think of as a "better mood" than others, and
+if that's the case, it will give better scores -- but it will give them almost consistently
+between models, so all of the models do better.  Note that (unlike the table above)
+this one is sorted by the average IFT score rather than the test loss.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;strong&gt;Model&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Run 1&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Run 2&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Run 3&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Run 4&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Run 5&lt;/strong&gt;&lt;/th&gt;
+  &lt;th&gt;&lt;strong&gt;Average&lt;/strong&gt;&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
+  &lt;td&gt;42.24&lt;/td&gt;
+  &lt;td&gt;42.16&lt;/td&gt;
+  &lt;td&gt;42.95&lt;/td&gt;
+  &lt;td&gt;41.83&lt;/td&gt;
+  &lt;td&gt;42.61&lt;/td&gt;
+  &lt;td&gt;42.36&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
+  &lt;td&gt;24.93&lt;/td&gt;
+  &lt;td&gt;24.96&lt;/td&gt;
+  &lt;td&gt;25.39&lt;/td&gt;
+  &lt;td&gt;25.01&lt;/td&gt;
+  &lt;td&gt;25.66&lt;/td&gt;
+  &lt;td&gt;25.19&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb-Edu&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;24.35&lt;/td&gt;
+  &lt;td&gt;24.55&lt;/td&gt;
+  &lt;td&gt;24.3&lt;/td&gt;
+  &lt;td&gt;24.68&lt;/td&gt;
+  &lt;td&gt;24.9&lt;/td&gt;
+  &lt;td&gt;24.56&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;20.5&lt;/td&gt;
+  &lt;td&gt;19.9&lt;/td&gt;
+  &lt;td&gt;20.76&lt;/td&gt;
+  &lt;td&gt;21.25&lt;/td&gt;
+  &lt;td&gt;20.07&lt;/td&gt;
+  &lt;td&gt;20.50&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb/FineWeb-Edu 50:50 (contaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;19.16&lt;/td&gt;
+  &lt;td&gt;18.86&lt;/td&gt;
+  &lt;td&gt;19.61&lt;/td&gt;
+  &lt;td&gt;19.17&lt;/td&gt;
+  &lt;td&gt;19.7&lt;/td&gt;
+  &lt;td&gt;19.30&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained two normal epochs&lt;/td&gt;
+  &lt;td&gt;18.47&lt;/td&gt;
+  &lt;td&gt;18.29&lt;/td&gt;
+  &lt;td&gt;19.17&lt;/td&gt;
+  &lt;td&gt;18.69&lt;/td&gt;
+  &lt;td&gt;18.91&lt;/td&gt;
+  &lt;td&gt;18.71&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, overtrained one long epoch&lt;/td&gt;
+  &lt;td&gt;18.04&lt;/td&gt;
+  &lt;td&gt;18.71&lt;/td&gt;
+  &lt;td&gt;19.62&lt;/td&gt;
+  &lt;td&gt;18.41&lt;/td&gt;
+  &lt;td&gt;18.57&lt;/td&gt;
+  &lt;td&gt;18.67&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
+  &lt;td&gt;17.49&lt;/td&gt;
+  &lt;td&gt;17.35&lt;/td&gt;
+  &lt;td&gt;18.33&lt;/td&gt;
+  &lt;td&gt;17.73&lt;/td&gt;
+  &lt;td&gt;18.62&lt;/td&gt;
+  &lt;td&gt;17.90&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, FineWeb/FineWeb-Edu 50:50 (uncontaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;17.37&lt;/td&gt;
+  &lt;td&gt;17.73&lt;/td&gt;
+  &lt;td&gt;17.53&lt;/td&gt;
+  &lt;td&gt;18.01&lt;/td&gt;
+  &lt;td&gt;17.83&lt;/td&gt;
+  &lt;td&gt;17.69&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, curated (uncontaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;16.77&lt;/td&gt;
+  &lt;td&gt;16.03&lt;/td&gt;
+  &lt;td&gt;17.3&lt;/td&gt;
+  &lt;td&gt;16.08&lt;/td&gt;
+  &lt;td&gt;16.96&lt;/td&gt;
+  &lt;td&gt;16.63&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
+  &lt;td&gt;16.44&lt;/td&gt;
+  &lt;td&gt;16.23&lt;/td&gt;
+  &lt;td&gt;17.14&lt;/td&gt;
+  &lt;td&gt;16.62&lt;/td&gt;
+  &lt;td&gt;16.54&lt;/td&gt;
+  &lt;td&gt;16.59&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;14.85&lt;/td&gt;
+  &lt;td&gt;15.07&lt;/td&gt;
+  &lt;td&gt;15.19&lt;/td&gt;
+  &lt;td&gt;15.14&lt;/td&gt;
+  &lt;td&gt;15.51&lt;/td&gt;
+  &lt;td&gt;15.15&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
+  &lt;td&gt;14.37&lt;/td&gt;
+  &lt;td&gt;14.23&lt;/td&gt;
+  &lt;td&gt;15.08&lt;/td&gt;
+  &lt;td&gt;14.79&lt;/td&gt;
+  &lt;td&gt;15&lt;/td&gt;
+  &lt;td&gt;14.69&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
+  &lt;td&gt;14.4&lt;/td&gt;
+  &lt;td&gt;14.07&lt;/td&gt;
+  &lt;td&gt;13.82&lt;/td&gt;
+  &lt;td&gt;14.56&lt;/td&gt;
+  &lt;td&gt;14.61&lt;/td&gt;
+  &lt;td&gt;14.29&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
+  &lt;td&gt;13.37&lt;/td&gt;
+  &lt;td&gt;13.05&lt;/td&gt;
+  &lt;td&gt;13.85&lt;/td&gt;
+  &lt;td&gt;13.67&lt;/td&gt;
+  &lt;td&gt;14.57&lt;/td&gt;
+  &lt;td&gt;13.70&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;13.64&lt;/td&gt;
+  &lt;td&gt;13.36&lt;/td&gt;
+  &lt;td&gt;13.9&lt;/td&gt;
+  &lt;td&gt;13.32&lt;/td&gt;
+  &lt;td&gt;13.97&lt;/td&gt;
+  &lt;td&gt;13.64&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
+  &lt;td&gt;13.45&lt;/td&gt;
+  &lt;td&gt;13.32&lt;/td&gt;
+  &lt;td&gt;13.6&lt;/td&gt;
+  &lt;td&gt;13.51&lt;/td&gt;
+  &lt;td&gt;14.07&lt;/td&gt;
+  &lt;td&gt;13.59&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, curated (contaminated)&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;13.09&lt;/td&gt;
+  &lt;td&gt;13.48&lt;/td&gt;
+  &lt;td&gt;13.95&lt;/td&gt;
+  &lt;td&gt;13.23&lt;/td&gt;
+  &lt;td&gt;14.15&lt;/td&gt;
+  &lt;td&gt;13.58&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;13.37&lt;/td&gt;
+  &lt;td&gt;13.11&lt;/td&gt;
+  &lt;td&gt;14.04&lt;/td&gt;
+  &lt;td&gt;13.84&lt;/td&gt;
+  &lt;td&gt;13.17&lt;/td&gt;
+  &lt;td&gt;13.51&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;strong&gt;JAX, openwebtext&lt;/strong&gt;&lt;/td&gt;
+  &lt;td&gt;12.88&lt;/td&gt;
+  &lt;td&gt;12.7&lt;/td&gt;
+  &lt;td&gt;13.74&lt;/td&gt;
+  &lt;td&gt;13.53&lt;/td&gt;
+  &lt;td&gt;13.53&lt;/td&gt;
+  &lt;td&gt;13.28&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
+  &lt;td&gt;13.19&lt;/td&gt;
+  &lt;td&gt;12.86&lt;/td&gt;
+  &lt;td&gt;12.98&lt;/td&gt;
+  &lt;td&gt;12.85&lt;/td&gt;
+  &lt;td&gt;13.24&lt;/td&gt;
+  &lt;td&gt;13.02&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Local FineWeb train&lt;/td&gt;
+  &lt;td&gt;11.75&lt;/td&gt;
+  &lt;td&gt;11.75&lt;/td&gt;
+  &lt;td&gt;12.21&lt;/td&gt;
+  &lt;td&gt;11.46&lt;/td&gt;
+  &lt;td&gt;12.19&lt;/td&gt;
+  &lt;td&gt;11.87&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
+  &lt;td&gt;10.68&lt;/td&gt;
+  &lt;td&gt;10.2&lt;/td&gt;
+  &lt;td&gt;11.03&lt;/td&gt;
+  &lt;td&gt;10.55&lt;/td&gt;
+  &lt;td&gt;11.49&lt;/td&gt;
+  &lt;td&gt;10.79&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
+  &lt;td&gt;9.44&lt;/td&gt;
+  &lt;td&gt;9.79&lt;/td&gt;
+  &lt;td&gt;10.84&lt;/td&gt;
+  &lt;td&gt;10.2&lt;/td&gt;
+  &lt;td&gt;10.66&lt;/td&gt;
+  &lt;td&gt;10.19&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;A small boy asleep on his right side, the right arm stuck out, the right hand hanging limp over the edge of the bed. Through a round grating in the side of a box a voice speaks softly.&lt;/p&gt;
+  
+  &lt;p&gt;"The Nile is the longest river in Africa and the second in length of all the rivers of the globe. Although falling short of the length of the Mississippi-Missouri, the Nile is at the head of all rivers as regards the length of its basin, which extends through 35 degrees of latitude …"&lt;/p&gt;
+  
+  &lt;p&gt;At breakfast the next morning, "Tommy," some one says, "do you know which is the longest river in Africa?" A shaking of the head. "But don't you remember something that begins: The Nile is the …"&lt;/p&gt;
+  
+  &lt;p&gt;"The - Nile - is - the - longest - river - in - Africa - and - the - second - in - length - of - all - the - rivers - of - the - globe …" The words come rushing out. "Although - falling - short - of …"&lt;/p&gt;
+  
+  &lt;p&gt;"Well now, which is the longest river in Africa?"&lt;/p&gt;
+  
+  &lt;p&gt;The eyes are blank. "I don't know."&lt;/p&gt;
+  
+  &lt;p&gt;"But the Nile, Tommy."&lt;/p&gt;
+  
+  &lt;p&gt;"The - Nile - is - the - longest - river - in - Africa - and - second …"&lt;/p&gt;
+  
+  &lt;p&gt;"Then which river is the longest, Tommy?"&lt;/p&gt;
+  
+  &lt;p&gt;Tommy burst into tears. "I don't know," he howls.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;&lt;a href="https://www.huxley.net/bnw/two.html"&gt;&lt;em&gt;Brave New World&lt;/em&gt;&lt;/a&gt;, Aldous Huxley&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/10/why-do-openai-gpt2-weights-beat-mine-5-data-quality</guid>
+      <pubDate>Thu, 01 Oct 2026 17:30:00 +0000</pubDate>
+    </item>
     <item>
       <title>Extending Raschka's GPT-2: an MoE trained from scratch on an RTX 3090</title>
       <link>https://www.gilesthomas.com/2026/09/gpt-2-to-moe</link>
@@ -569,7 +2352,7 @@ next steps it's best to have something a bit more tangible in mind.&lt;/p&gt;
 
 &lt;p&gt;&lt;small id="diagram-5"&gt;&lt;strong&gt;Diagram 5&lt;/strong&gt;: The &lt;code&gt;xs&lt;/code&gt; tensor as a 3-D cuboid&lt;/small&gt;&lt;/p&gt;
 
-&lt;p&gt;&lt;img src="/post-assets/gpt-2-to-moe/xs-cuboid-3d.svg" alt="The &amp;lt;code&amp;gt;md5-320a91b4480a005a4873ddbfa5204f91&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" title="The &amp;lt;code&amp;gt;xs&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src="/post-assets/gpt-2-to-moe/xs-cuboid-3d.svg" alt="The &amp;lt;code&amp;gt;md5-3f7fd283d11fbb6a6a46413012f21c24&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" title="The &amp;lt;code&amp;gt;xs&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" /&gt;&lt;/p&gt;
 
 &lt;p&gt;Every dot in that cuboid is a single number.  A single context vector is the numbers
 as you follow a line from the "front" of the cube -- the &lt;code&gt;batch_size&lt;/code&gt; &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; &lt;code&gt;sequence_length&lt;/code&gt;
@@ -2876,9 +4659,9 @@ medium.  They were originally trained with dropout (or so it's believed --
 &lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the paper&lt;/a&gt; doesn't
 say, but "&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;"
 says that they were, and &lt;a href="https://huggingface.co/docs/transformers/v4.48.2/en/model_doc/gpt2#transformers.GPT2Config"&gt;this config on the Hugging Face GPT-2 code&lt;/a&gt;
-agrees).&lt;/p&gt;
+agrees).  But my config was fine-tuning them without!&lt;/p&gt;
 
-&lt;p&gt;But that actually made my original puzzle of why they outperformed my models on the IFT
+&lt;p&gt;That actually made my original puzzle of why they outperformed my models on the IFT
 test seem even more perplexing, at least in the light of this idea.  If dropout
 was a good thing for fine-tuning, then so far they had been penalised by &lt;em&gt;not&lt;/em&gt; using it -- that is,
 they were even further ahead of my own models than I thought they were.&lt;/p&gt;
@@ -2913,7 +4696,7 @@ the result files it got came from different models or the same one; it just prin
 out a mapping of result files to scores.  So I realised I could use it to do
 a comparison of all models with all possible dropout settings.&lt;/p&gt;
 
-&lt;p&gt;For all of the models, I ran the &lt;code&gt;ift_generate_test_responses.py&lt;/code&gt; three times, once
+&lt;p&gt;For all of the models, I ran &lt;code&gt;ift_generate_test_responses.py&lt;/code&gt; three times, once
 with each of the dropout settings: &lt;code&gt;model&lt;/code&gt;, &lt;code&gt;on&lt;/code&gt;, and &lt;code&gt;off&lt;/code&gt;.  Then I sent all of the
 resulting result files -- all models, and all dropout options for each -- to the LLM judge in
 one go, to see what it came up with.&lt;/p&gt;
@@ -3580,6 +5363,8 @@ learning rate to what the models are "used to" from pre-training and see if that
 &lt;/ul&gt;
 
 &lt;p&gt;So, plenty of further possibilities for this investigation.  Stay tuned!&lt;/p&gt;
+
+&lt;p&gt;&lt;a href="/2026/10/why-do-openai-gpt2-weights-beat-mine-5-data-quality"&gt;Here's a link to the next post in this series: improving the data quality&lt;/a&gt;.&lt;/p&gt;
 
 &lt;div class="footnotes"&gt;
 &lt;hr /&gt;
@@ -5708,7 +7493,7 @@ more, related to dropout.&lt;/p&gt;
 
 &lt;p&gt;My methodology to date has been that the IFT training runs
 should use the same dropout setting as the original base model training run (I'll
-come back to this in a later post).   However, due to differences between the JAX
+come back to this in &lt;a href="/2026/08/why-do-openai-gpt2-weights-beat-mine-4-ift-dropout"&gt;a later post&lt;/a&gt;).   However, due to differences between the JAX
 training script and the evaluation code (which is PyTorch), matching the dropout
 rate when evaluating those models is a bit fiddly and error-prone.&lt;/p&gt;
 
@@ -5795,7 +7580,7 @@ eval?&lt;/p&gt;
 
 &lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
 
-&lt;p&gt;There's probably a near-infinite amount of digging in that I could potentially do here.
+&lt;p&gt;There's probably a near-infinite amount of digging in that I could do here.
 But I think it's best to stop.  The bugfix was important because it meant that the
 eval was now doing what I thought it was doing.&lt;/p&gt;
 
@@ -5809,465 +7594,6 @@ And it means that I can now lean more confidently on the baseline numbers.&lt;/p
 </description>
       <guid isPermaLink="true">/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix</guid>
       <pubDate>Thu, 30 Jul 2026 19:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Why do OpenAI's GPT-2 weights beat mine?</title>
-      <link>https://www.gilesthomas.com/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro</link>
-      <description>&lt;p&gt;When I finished my project training an &lt;a href="/llm-from-scratch"&gt;LLM from scratch&lt;/a&gt;, I was
-left with a minor mystery.  Why were my models worse at instruction-following than the original OpenAI
-GPT-2 small weights?&lt;/p&gt;
-
-&lt;p&gt;I had an evaluation that I was running,
-based on the instruction fine-tuning code in chapter 7 of
-"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;".
-The process was to train a model on samples from the &lt;a href="https://crfm.stanford.edu/2023/03/13/alpaca.html"&gt;Alpaca&lt;/a&gt;
-instruction-following dataset until validation loss started rising, to use that instruction fine-tuned model to generate
-completions to a held-back test set, and then to use an LLM to compare the
-results from various different models.  The details are &lt;a href="/2026/04/llm-from-scratch-32l-interventions-instruction-fine-tuning-tests"&gt;here&lt;/a&gt;;
-let's call it the IFT eval.&lt;/p&gt;
-
-&lt;p&gt;OpenAI's original weights for GPT-2 small consistently beat my own
-models, even when mine got better results than theirs on a more technical
-evaluation, where I just measured the cross entropy loss for each model on a
-held-back set of test sequences.  This surprised me; I would have expected
-a reasonably close correlation between the two evals -- that better test loss would imply
-better instruction-following.&lt;/p&gt;
-
-&lt;p&gt;I have a couple of thoughts about why this might be, and given that I recently
-set up &lt;a href="/2026/07/poppy-the-training-box-1-the-beginnings"&gt;&lt;code&gt;poppy&lt;/code&gt;, my dedicated LLM training box&lt;/a&gt;
-I decided to inaugurate her with an experiment to test one of them; further
-experiments will come in time -- though I don't think this will be a focus for the blog.  More
-of a running theme, with occasional posts until either I solve the mystery, or
-give up in despair...&lt;/p&gt;
-
-&lt;p&gt;In this post I'll give a bit more detail about the nature of the problem, and
-list some of the things I've been thinking might be the cause.  In later posts,
-I'll dig into some of them.&lt;/p&gt;
-&lt;h2 id="more-on-the-mystery"&gt;More on the mystery&lt;/h2&gt;
-
-&lt;p&gt;Let's take a look at the results from my most recent runs of the IFT eval.  I've
-highlighted the OpenAI models in bold, and the table is sorted by the test loss -- that
-more technical evaluation that I mentioned earlier, where lower is better.&lt;/p&gt;
-
-&lt;p&gt;How well the model did
-with the IFT eval is in the last three columns.  The "IFT epochs" column shows
-how many epochs of training the model needed before its
-validation loss started rising, the score is the average mark out of 100 that (in this case)
-GPT 5.5 gives the model's answers to the IFT test set, and the rank is the position the
-model holds in terms of that average score.&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test loss&lt;/th&gt;
-  &lt;th&gt;IFT epochs&lt;/th&gt;
-  &lt;th&gt;IFT score&lt;/th&gt;
-  &lt;th&gt;IFT rank&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;strong&gt;OpenAI weights: medium&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;3.231442&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;2&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;41.62&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;1&lt;/strong&gt;&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;3.418784&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;19.25&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;3.420089&lt;/td&gt;
-  &lt;td&gt;3&lt;/td&gt;
-  &lt;td&gt;14.66&lt;/td&gt;
-  &lt;td&gt;11&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
-  &lt;td&gt;3.476802&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;12.94&lt;/td&gt;
-  &lt;td&gt;15&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;strong&gt;OpenAI weights: small&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;3.499677&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;2&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;26.73&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;2&lt;/strong&gt;&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.538161&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;17.79&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.577761&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;10.29&lt;/td&gt;
-  &lt;td&gt;16&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
-  &lt;td&gt;3.673623&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;20.71&lt;/td&gt;
-  &lt;td&gt;3&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.683835&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-  &lt;td&gt;15.11&lt;/td&gt;
-  &lt;td&gt;9&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.691526&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;14.74&lt;/td&gt;
-  &lt;td&gt;10&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
-  &lt;td&gt;3.724507&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;13.25&lt;/td&gt;
-  &lt;td&gt;14&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
-  &lt;td&gt;3.729900&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;14.50&lt;/td&gt;
-  &lt;td&gt;12&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
-  &lt;td&gt;3.771478&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;16.03&lt;/td&gt;
-  &lt;td&gt;8&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb train&lt;/td&gt;
-  &lt;td&gt;3.943522&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;13.73&lt;/td&gt;
-  &lt;td&gt;13&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
-  &lt;td&gt;4.134991&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;16.70&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
-  &lt;td&gt;4.166892&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;18.68&lt;/td&gt;
-  &lt;td&gt;5&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;For the IFT eval, the OpenAI weights are the best.  The "medium" model comes first, and the "small"
-one comes second -- and there's a noticeable gap between "small" and
-the score for my best model for that eval, "Cloud FineWeb, 8x A100 40 GiB": 26.73 vs 20.71.  That difference
-was consistent across multiple runs of the eval -- the relative rankings of my own
-models varied more.&lt;/p&gt;
-
-&lt;p&gt;It's not surprising that the "medium" model does better -- it's
-more than double the size of the others -- but the small model consistently beating mine was odd
-given that I had models with lower test loss.&lt;/p&gt;
-
-&lt;p&gt;Another thing that stands out is the number of epochs that the models were trained for.
-Remember, I trained them until the validation loss started rising -- that is, until the model
-started overfitting.  You can see that the OpenAI weights hit that after two epochs of
-training, whereas my models ranged between three and seven.&lt;/p&gt;
-
-&lt;h2 id="the-loss-landscape"&gt;The loss landscape&lt;/h2&gt;
-
-&lt;p&gt;My starting hypothesis was that the OpenAI weights were starting off from a better
-position in the IFT loss landscape than mine.  The loss landscape for the task the various
-models were originally pre-trained for -- "predict the next token for this sequence of
-text that was pulled from the web" -- is different to the loss landscape for the IFT task,
-which is something more like "predict the next token in a useful response to this request".
-Let's dig into that a bit.&lt;/p&gt;
-
-&lt;p&gt;The core idea behind the normal LLM training paradigm is that we can get a useful
-starting point for a model by pre-training -- training on a whole load of cheaply-available stuff from the web --
-and only then have to use our much more expensive task-specific datasets for fine-tuning.
-I've been training my models on approximately 3.2 billion tokens of the &lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb"&gt;fineweb&lt;/a&gt;
-dataset, which was generated from scrapes of the web, and then deduplicated and tidied up
-a bit.&lt;/p&gt;
-
-&lt;p&gt;If I had instead trained them on 3.2 billion tokens of instruction-following samples --
-essentially, pre-packaged Q&amp;amp;A sessions between a human and an assistant -- then they
-would almost certainly be much better than the models I have at instruction-following,
-for the same cost in compute used to do the training run.&lt;/p&gt;
-
-&lt;p&gt;But the cost of generating those 3.2 billion tokens would be incredibly high.
-Imagine hiring people to do it: the GPT-2 tokeniser averages about 0.75 words per token,
-and while I don't know how much you'd need to pay people to write 2.4 billion words, I
-suspect it would be rather a lot.  Even generating that much synthetic data from
-a larger LLM (as the Alpaca dataset was) would not be cheap -- I make it US$144,000 using GPT 5.6 Sol as of mid-2026.&lt;/p&gt;
-
-&lt;p&gt;Even worse, the LLM we trained on that kind of data would be "brittle" -- if you wanted
-it to solve an even slightly different task (for example, Alpaca is single-shot question
-and answer, so imagine if you wanted it to handle multi-turn conversations like a chatbot),
-it would be hard to train it to do that.&lt;/p&gt;
-
-&lt;p&gt;So: the idea is that if we pre-train a base LLM on less-structured -- but, importantly, still
-"real" -- data like scraped web pages, we'll get a general-purpose base LLM relatively cheaply.
-It will have discovered basic stuff like the structure of language, and hopefully some general
-knowledge (eg. maybe that the capital of France is Paris).  Once we have that, we can fine-tune
-it for specific uses.&lt;/p&gt;
-
-&lt;p&gt;Now, both the initial pre-training and -- in this IFT test -- the fine-tuning phase of building our model
-are done in essentially the same way: trying to minimise the cross entropy loss of the model's predictions against a
-dataset. &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;  What has changed between them is the targets we're trying to train the model to
-predict.  In the pre-training phase, we're trying to get it to predict web scrape data,
-in the fine-tuning, we're trying to predict responses to queries.&lt;/p&gt;
-
-&lt;p&gt;Putting that idea into slightly more mathematical language (albeit loosely enough that
-any real mathematicians reading this will probably scream with horror), if we're saying that
-a pre-trained model is useful as a base for instruction fine-tuning, what we have is
-an assumption that the loss landscape for the original pre-training phase is reasonably
-similar to the loss landscape for the fine-tuning.  We are hoping that a place that is
-nice and low on the pre-training landscape is reasonably close (in parameter space) to
-a place that is low on the fine-tuning landscape.&lt;/p&gt;
-
-&lt;p&gt;That's all very abstract; let's try to visualise it.  If we imagine the loss landscape for a model
-with two parameters, that's reasonably easy.   The two parameters make up
-two dimensions -- let's say left and right for one, forward and back for the other -- and
-the loss at any given point is the vertical dimension.  It's an uneven surface, a bit like a rolling
-landscape, with hills and mountains at points where the parameters have very high loss,
-and valleys and clefts where the loss is lower.&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;In reality, of course, we have &lt;em&gt;somewhat&lt;/em&gt; more than two parameters.  With the 163,009,536
-  parameters in my GPT-2-small-style models, the loss landscape is not a surface but
-  a 163,009,536-dimensional hypersurface &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt; in 163,009,537-dimensional space.  Good
-  luck visualising that.&lt;/p&gt;
-  
-  &lt;p&gt;While taking intuitions from levels of dimensionality that we can actually imagine
-  over to insanely high-dimensional spaces like that is often risky -- weird stuff starts
-  happening as the number of dimensions goes up -- for what we're specifically looking at here, it's
-  safe.  The landscape image works for intuition.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;So, we have one landscape like that for our pre-training phase.  When we start fine-tuning,
-the loss landscape changes to a different one.  What we're hoping is that the landscape
-is reasonably similar; that the low point that we wound up at in the pre-training landscape
-is close to a low point in the new fine-tuning landscape when that is swapped in. &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;The good news is that we know that this process of doing a pre-train then a fine-tune works.
-Most modern AI is trained using it as a foundation (though there's lots of extra stuff on top).
-And indeed, you'd intuitively expect it to work -- it would be kind of weird if there was
-no correlation at all between the "understand language" loss landscape and the "answer questions"
-one.&lt;/p&gt;
-
-&lt;p&gt;But this does mean that we can -- at least in a somewhat hand-wavey way -- characterise
-the manner in which the OpenAI weights are "better" than mine in terms of the loss landscape.&lt;/p&gt;
-
-&lt;p&gt;Both the OpenAI weights and mine have landed in places that were good from the pre-training viewpoint;
-that's what the "Test loss" results in the table above mean.  GPT-2 medium is doing better than any of
-my models -- given that it's about twice the size, it should -- and GPT-2 small is doing better
-than most of them.&lt;/p&gt;
-
-&lt;p&gt;But the places in the pre-train loss landscape where the OpenAI models landed were clearly better-matched to
-good places in the fine-tuning loss landscape than my own models' places were.  The fact that
-they took fewer epochs to start overfitting intuitively points in that direction -- after all,
-if you're closer to somewhere, then it takes less time to get there -- but the fact that they
-scored better after fine-tuning makes it pretty clear.&lt;/p&gt;
-
-&lt;p&gt;But something else that occurs to me as I write this is that the results on the test set
-also point to a superiority in the OpenAI weights -- one that hadn't occurred to me
-in the past.&lt;/p&gt;
-
-&lt;h2 id="openai-weights-better-than-we-thought"&gt;OpenAI weights: better than we thought!&lt;/h2&gt;
-
-&lt;p&gt;Let's think about what that test set is.  In order to get data that was
-pre-processed and ready to work with, I downloaded all of the 10 billion token
-version of FineWeb, and split it into 99% training and 1% validation and test.  I
-tokenised each sample in each of those splits, and then concatenated them together into
-a single sequence for each, separating the samples with &lt;code&gt;&amp;lt;|endoftext|&amp;gt;&lt;/code&gt; tokens.  My training script
-took the train split, broke it up into 1024-token sequences, assembled them into batches,
-and ran through 3.2B token's worth.&lt;/p&gt;
-
-&lt;p&gt;The loss test takes 19,660,800 tokens starting at position 50,000,000 in the validation/test
-split, and runs them through in batches of six, working out the average loss.&lt;/p&gt;
-
-&lt;p&gt;Now, the GPT-2 weights were trained on something that I &lt;em&gt;believe&lt;/em&gt; was constructed
-similarly -- get a load of text consisting of a bunch of documents from the web, tokenise them
-all and tack them together separated with &lt;code&gt;&amp;lt;|endoftext|&amp;gt;&lt;/code&gt;s, and then use that.&lt;/p&gt;
-
-&lt;p&gt;But, importantly, it was a &lt;em&gt;different&lt;/em&gt; dataset.  Annoyingly, we don't have access to OpenAI's
-"WebText" dataset, but I think it's reasonably safe to say that even if it is similar to what
-I came up with, it will be less similar to the sequences used for the loss test than
-my own training set is.&lt;/p&gt;
-
-&lt;p&gt;Given that the loss test for the OpenAI small weights came out with a better
-result than any of the models I trained in PyTorch, and was only narrowly beaten
-by the ones I trained with JAX (even then, I think, because the JAX models got lucky
-with their random weight initialisation before they started training), then I think we can say that
-the OpenAI weights are already considerably better than my own ones.
-They were already at a good place in their own loss landscape, but it happened to also
-be in a good place in my test set's.&lt;/p&gt;
-
-&lt;p&gt;An alternative analogy: if you imagine a group of 15 trail runners having a race on a route in a forest,
-where all but one of them regularly run on different routes in the same forest, but the
-odd one out is running there for the first time, if the newcomer gets a very
-close fourth place, then it's not unreasonable to think that they're probably the best runner
-of all of them. &lt;sup class="footnote-ref" id="fnref-4"&gt;&lt;a href="#fn-4"&gt;4&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;Finally -- I've been talking about the models as if they were all the same size (apart from
-the OpenAI medium weights), but there's one extra important
-difference with OpenAI's: they use weight tying, while mine don't.  That means that
-their small model is significantly &lt;em&gt;smaller&lt;/em&gt; than mine are -- closer to 124M parameters &lt;sup class="footnote-ref" id="fnref-5"&gt;&lt;a href="#fn-5"&gt;5&lt;/a&gt;&lt;/sup&gt; than the
-163M that mine have.
-Weight tying made a lot of sense back in 2019, when VRAM was even harder to come by
-than it is now, but when I &lt;a href="/2026/03/llm-from-scratch-32g-interventions-weight-tying"&gt;looked into it&lt;/a&gt;,
-it made loss much worse.&lt;/p&gt;
-
-&lt;p&gt;Carrying on with the trail runner metaphor, the OpenAI small weights not only don't know
-the forest well -- they're also (&lt;em&gt;scratches head looking for a good analogy&lt;/em&gt;) physically
-weaker.  Their performance is even more impressive.&lt;/p&gt;
-
-&lt;p&gt;So: OpenAI weights good, mine (relatively) bad.  Their smaller model, being tested for loss on a
-less-familiar-looking test set, does better -- or at least only a tiny bit worse than --
-my larger ones.  And when instruction fine-tuned, it converges on a better-performing
-result, and does it faster.&lt;/p&gt;
-
-&lt;p&gt;What could the difference be?&lt;/p&gt;
-
-&lt;h2 id="probably-not-dropout"&gt;Probably not dropout...?&lt;/h2&gt;
-
-&lt;p&gt;One thing that occurred to me while I was pondering this was dropout.  If, when training,
-we randomly ignore 10% of the activations, perhaps we get a more generalisable model?
-Most of what I've read recently about dropout has focused on how
-it helps to avoid memorisation in multi-epoch training runs, but when I first read about it
-&lt;a href="/2025/03/dropout-and-mandatory-vacation"&gt;I felt that the generalisation argument was also strong&lt;/a&gt;.
-If true, that might explain the lower number of epochs needed for instruction fine-tuning, and
-maybe even the performance.&lt;/p&gt;
-
-&lt;p&gt;Luckily, though, I'd accidentally done an experiment that suggested that this wasn't the difference.  As one
-of my JAX training runs, I'd trained one with dropout, and as you can see if you look back
-at the results table above, it was one of the worst performers in the IFT
-test.&lt;/p&gt;
-
-&lt;p&gt;One result is not a proof, but the fact that this one was bad compared to the others
-meant that I felt it was solid enough to ignore dropout as a possibility, at least initially.&lt;/p&gt;
-
-&lt;h2 id="data-quality"&gt;Data quality?&lt;/h2&gt;
-
-&lt;p&gt;Again, it's kind of annoying that WebText was never published.  All we know about it
-is from &lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the paper&lt;/a&gt;,
-where they say:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[W]e created a new web scrape which emphasizes
-  document quality. To do this we only scraped web pages
-  which have been curated/filtered by humans. Manually
-  filtering a full web scrape would be exceptionally expensive
-  so as a starting point, we scraped all outbound links from
-  Reddit, a social media platform, which received at least 3
-  karma. This can be thought of as a heuristic indicator for
-  whether other users found the link interesting, educational,
-  or just funny.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;How does this compare with FineWeb in terms of quality?  Without seeing the results,
-we really can't say.  FineWeb is more of a general web-scraping corpus, without the
-"filtering" provided by those Reddit upvotes.  On the other hand, we're talking about
-Reddit here, and all kinds of awful junk gets upvoted, so I'm not confident that it's
-&lt;em&gt;that&lt;/em&gt; strong a quality signal.  And FineWeb has been curated to some degree.&lt;/p&gt;
-
-&lt;p&gt;That said, I had previously noticed that the models I had trained on the
-&lt;a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu"&gt;FineWeb-Edu dataset&lt;/a&gt; ("the most educational web pages"
-from FineWeb) punched above their weight in the IFT test.  They got pretty poor
-loss on the test set, but didn't do too badly in IFT.&lt;/p&gt;
-
-&lt;p&gt;In retrospect, it's actually not that surprising that they did badly on the test loss eval;
-they were trained on a curated dataset of "good" stuff, and then were being evaluated
-against whatever less-curated stuff appears in the test set -- which you'll remember came
-from FineWeb.  If you train a model
-on Jane Austen and then evaluate against &lt;a href="https://www.chucktingle.com/"&gt;Chuck Tingle&lt;/a&gt;, then
-you're not going to get amazing results.&lt;/p&gt;
-
-&lt;p&gt;But then, there's the excellent performance of the OpenAI weights on that
-same FineWeb test set.  Even if WebText was higher quality than FineWeb, that clearly wasn't the
-whole story.&lt;/p&gt;
-
-&lt;p&gt;So data quality felt like it &lt;em&gt;might&lt;/em&gt; be part of it -- but it wasn't where I wanted
-to start.&lt;/p&gt;
-
-&lt;h2 id="overtraining"&gt;Overtraining?&lt;/h2&gt;
-
-&lt;p&gt;This, finally, is where I landed for a first experiment.  I'd been training my models on 20 tokens per parameter -- the Chinchilla-optimal
-number.  But that heuristic dates to 2022, and GPT-2 was trained in 2019.  While
-we don't know for sure, from what I've managed to dig up it looks like it
-was probably trained on much more data -- and probably over multiple epochs too.&lt;/p&gt;
-
-&lt;p&gt;Training on more tokens than the Chinchilla number is called overtraining (not to be confused with overfitting).  So:
-what happens if we overtrain the model?  Will we get the
-loss down?  And if so, will we start approaching GPT-2 small's results on the IFT
-eval?&lt;/p&gt;
-
-&lt;p&gt;Stay tuned :-)&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix"&gt;Here's a link to the next post in this series&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;Modern production LLMs tend to use reinforcement learning as a big part of the fine-tuning
-phase, and that works quite differently.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-2"&gt;
-&lt;p&gt;When I started reading up on this, I was hoping that it would be a manifold,
-largely because I like the word.  And it is!  A hypersurface is a specific kind
-of manifold.  :-D&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-3"&gt;
-&lt;p&gt;If you like fantasy, there are some neat parallels there; the different overlaid
-worlds the characters move between in Philip Pullman's &lt;em&gt;His Dark Materials&lt;/em&gt; series
-(aka &lt;em&gt;The Golden Compass&lt;/em&gt;), China Miéville's &lt;em&gt;Un Lun Dun&lt;/em&gt;, V. E. Schwab's &lt;em&gt;Shades of Magic&lt;/em&gt;,
-and Charlie Stross's &lt;em&gt;The Merchant Princes&lt;/em&gt; series come to mind.
-Even the Upside Down in &lt;em&gt;Stranger Things&lt;/em&gt; works, though then you have to decide
-which of your loss landscapes is the evil one, and that muddies the analogy annoyingly.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-4"&gt;
-&lt;p&gt;Sharp-eyed readers might have noticed that there are 16 models in the table above.
-I'm excluding the OpenAI medium weights.  If you want to extend the analogy, that model
-is an Olympic runner who happens to have stopped by for the race...&amp;#160;&lt;a href="#fnref-4" class="footnoteBackLink" title="Jump back to footnote 4 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-5"&gt;
-&lt;p&gt;The paper says 117M, but the released weights are larger.  I can successfully
-load them into my code with a model config that has 124,439,808 parameters.&amp;#160;&lt;a href="#fnref-5" class="footnoteBackLink" title="Jump back to footnote 5 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro</guid>
-      <pubDate>Wed, 29 Jul 2026 15:30:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
