@@ -5,7 +5,1520 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 09 Oct 2026 08:42:16 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 09 Oct 2026 15:58:41 +0000</lastBuildDate>
+    <item>
+      <title>Fun with low-rank vocab matrices (and a bonus test loss reduction?)</title>
+      <link>https://www.gilesthomas.com/2026/10/low-rank-vocab-matrices</link>
+      <description>&lt;p&gt;I was &lt;a href="https://xkcd.com/356/"&gt;nerdsniped&lt;/a&gt;!  On the HF discussion page for one of the
+models I created for my &lt;a href="/2026/10/why-do-openai-gpt2-weights-beat-mine-5-data-quality"&gt;previous post&lt;/a&gt;,
+&lt;a href="https://huggingface.co/AndrewThompson1233"&gt;&lt;code&gt;AndrewThompson1233&lt;/code&gt;&lt;/a&gt;
+asked if I'd considered trying out &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-5050-DEPRECATED/discussions/1"&gt;factorised embeddings&lt;/a&gt;
+-- something he's using for his model, Maba, and which was previously used in some other models, like
+&lt;a href="https://arxiv.org/abs/1909.11942v6"&gt;ALBERT&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;It's a really nifty idea; you use a similar trick to LoRA as a way of reducing the
+number of parameters used for your embeddings and your output head.  And for small
+models, those can be  a disproportionate number of the total.&lt;/p&gt;
+
+&lt;p&gt;For example, with my 163 million parameter GPT-2 small-style models, the embeddings
+are about &lt;a href="/2026/07/llm-parameter-counts"&gt;39 million of them&lt;/a&gt;; the output head is
+the same size, so with those two taken together,
+that's half the model just getting stuff in and out rather than actually doing the
+thinking.  Even if you use weight tying, like the original GPT-2 models did, you'll
+wind up spending 30% of your "budget" on the single matrix shared between embeddings
+and the output head.&lt;/p&gt;
+
+&lt;p&gt;Similarly, while larger models have a smaller percentage spent that way, even medium-sized MoE models
+can wind up spending a lot of the &lt;em&gt;active&lt;/em&gt;
+parameters on embeddings; I &lt;a href="/2026/07/benchmarking-qwen-3-6-35b-moe-rtx-3090"&gt;calculated&lt;/a&gt;
+that for Qwen 3.6 35B MoE, with 3B active parameters, there were about 1B of them used
+across both the input embeddings and the output head.&lt;/p&gt;
+
+&lt;p&gt;So anything that can reduce that -- so long as it doesn't come at a high cost in terms
+of the model's capabilities -- is worth considering.  You save on your parameter count,
+which either means smaller models and potentially quicker training, or allows you to "invest" the savings
+in more thinking parameters -- that is, a wider network with a higher embedding dimensionality,
+or a deeper one with more layers.&lt;/p&gt;
+
+&lt;p&gt;Andrew reported that the impact of using this trick was minimal:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;At rank 128 on a 50k vocabulary, the penalty on validation cross-entropy is
+  negligible (typically within +0.02 to +0.04 loss, or &amp;lt;0.5 perplexity delta).&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Now, that suggests that he's getting a loss of around 2.5 (that being the point
+where a loss increase of 0.04 implies a perplexity change of 0.5), which is much lower than
+I typically get with my
+GPT-2 architecture (3.5 is more like it for me), but still, perhaps I'd get good numbers too?
+I decided to train a few models to see what happened.&lt;/p&gt;
+
+&lt;p&gt;The results were interesting!  I found that using this trick on both the embeddings
+and the output head caused a somewhat larger increase in loss than Andrew described
+ -- about 0.07 in my first test, 0.10 in the second, and
+0.14 in the third.  Those are relatively large,
+though potentially recoverable from further training or larger models.&lt;/p&gt;
+
+&lt;p&gt;But more surprisingly, I found that using the trick on the input embeddings only
+seemed to &lt;em&gt;reduce&lt;/em&gt; test loss.  Before I'd started, I'd expected it to be less harmful
+on the input side than it was on the output side, but seeing an improvement was certainly
+unexpected.  Getting loss down by reducing your number of parameters is not what normally
+happens!&lt;/p&gt;
+
+&lt;p&gt;So, it's definitely worth digging in a bit.  Let's start with the theory: what are these factorised embeddings, and how do they work?  Like LoRA, they rely on
+low-rank factors, so firstly I'll define those.&lt;/p&gt;
+&lt;h3 id="low-rank-factors"&gt;Low-rank factors&lt;/h3&gt;
+
+&lt;p&gt;Our models are made up of a large set of matrices -- embeddings, output heads, attention
+weights, FFN linear layers, and so on.  Making them smaller obviously reduces the number
+of parameters for the model, though you would expect it to come at a cost.  The idea behind
+low-rank factors is that you can replace a larger matrix with two smaller ones that will
+contain most of the important information.&lt;/p&gt;
+
+&lt;p&gt;Imagine that you've got a matrix of size &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.  Now, from matrix multiplication,
+we know that if you multiply an &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; matrix by an &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; one, you'll get
+a result that is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.  If we do that, then we've factorised the matrix (in the
+same way as we might factorise 12 into 3 and 4 because &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;12&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;), and the value &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is referred to (logically enough) as the &lt;em&gt;rank&lt;/em&gt; of the factorisation.
+If &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is sufficiently smaller than &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, then
+these two matrices -- the &lt;em&gt;low-rank factors&lt;/em&gt; -- combined will contain fewer parameters than the full matrix.&lt;/p&gt;
+
+&lt;p&gt;Let's make this specific, using the output head of
+a GPT-2 style model without weight tying.  It takes in the embeddings that result from
+the Transformer layers (after normalisation), and converts them into logits across
+the vocabulary.  For the GPT-2 small size, our embeddings are 768-dimensional, and the
+vocab size is 50,257 tokens.  So when we use a linear layer to do that mapping, it
+has &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;768&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;50257&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;38597376&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; parameters.&lt;/p&gt;
+
+&lt;p&gt;If we were to replace it with two matrices -- say, one of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;768&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;128&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; and one
+of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;128&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;50257&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;, then combined they would take
+up &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;768&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;128&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;50257&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;128&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;98304&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;6432896&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;6531200&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; parameters.  That
+is almost six times smaller!&lt;/p&gt;
+
+&lt;p&gt;So: the idea is that instead of creating our model with an &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; matrix, we
+create it with a pair, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, and train those instead.  If all goes
+well, that pair will be almost as capable of learning what we want as the full one would
+have been, so we'll get results that are close enough.&lt;/p&gt;
+
+&lt;p&gt;The maths and the implementation work out simply, too.  For a linear layer with no bias,
+we can write the matrix multiplication that takes our inputs &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and a weight matrix &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, and
+produces an output &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;Z&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, like this: &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mi&gt;Z&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;Now, if we're using a pair of low-rank factor matrices &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; instead of a full one, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, we can say the
+"virtual" weights we want to use for the calculation are &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; such that:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;So that means that our calculation for this neural network is this:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mi&gt;Z&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;Matrix multiplication is associative, which means that you can rewrite that as:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mi&gt;Z&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...which hopefully you can see is the same as feeding &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; through a layer
+using &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; as its weights, and then feeding the result through a second one using &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.  In
+code, you've taken something like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;d_emb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;vocab_size&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;out_head&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;embeddings&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and replaced it with this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;out_head_A&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;d_emb&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;r&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;out_head_B&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;r&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;vocab_size&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="n"&gt;intermediate&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;out_head_A&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;embeddings&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;out_head_B&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;intermediate&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;It's probably intuitively obvious, though, that this comes at a cost.  If you have
+fewer parameters then you can store less information, so this part of your model
+is "dumber".  If it's not clear, though, imagine that &lt;code&gt;r&lt;/code&gt; in the code above was one.
+You would be taking the (for GPT-2 small) 768-dimensional embedding, converting it
+to a single number, and then expanding that single number out to a 50,257-dimensional
+set of logits.  Stuff is going to get lost -- the idea behind low-rank factors is that,
+so long as you choose an appropriate value for &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; (which is often referred to as the
+width of the &lt;em&gt;low-rank bottleneck&lt;/em&gt;), you won't lose the &lt;em&gt;important&lt;/em&gt; stuff.&lt;/p&gt;
+
+&lt;p&gt;This works surprisingly well in many cases -- in particular, LoRA, which allows you to
+fine-tune models that are too hard to fully train on your hardware, or to fine-tune them faster,
+uses it to easily train something like low rank factor "diffs" to your weight matrices &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
+
+&lt;p&gt;But for this post, we'll try the simplest version: what if we replace both the input embeddings and the output head -- the vocabulary
+matrices -- in their entirety with low-rank bottlenecks?&lt;/p&gt;
+
+&lt;h3 id="introducing-lore"&gt;Introducing LoRE&lt;/h3&gt;
+
+&lt;p&gt;Low-rank factorisation of the vocabulary matrices is a bit of a
+mouthful, so based on the name "LoRA", I decided to call this trick LoRE, for low-rank embeddings.
+It's not strictly accurate (after all, we're doing it both to the embedding matrix
+at the start of the LLM and to the output head at the end), and I don't expect it
+to take off, but I rather like it and will use it in this post :-)&lt;/p&gt;
+
+&lt;p&gt;The argument behind it is that the embeddings are just a simple lookup table, so are
+exactly the kind of place you'd expect to be able to make savings by only considering
+the important parts of our huge matrix; the same &lt;em&gt;might&lt;/em&gt; apply to the output head at
+the end, though personally I was less convinced by this part.&lt;/p&gt;
+
+&lt;p&gt;It's worth looking into that asymmetry a bit.  My intuition was that while embeddings
+really are a lookup table, the output head is doing something a bit more subtle.  It's
+projecting from the continuous embeddings that come out of our Transformer layers into
+logits, which we interpret (via softmax) as a probability distribution over possible next
+tokens.  That's a significantly less simple job than mapping from "cat" to
+the appropriate embedding: as a (simplified) example, if you have an embedding that means
+something adjacent to "cat", "dog", "gerbil", "household pet" and so on, then projecting
+that to the appropriate values for the next token is non-trivial. &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;Still, implementation-wise, it was really simple.  I decided to extend the PyTorch code that
+I had from &lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
+by adding an optional &lt;code&gt;lore&lt;/code&gt; section to the model config JSON.  This would allow us
+to switch on LoRE mode for the input embeddings and the output head independently,
+and would specify the rank -- that is, the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; in the section above, which says how wide
+the low-rank bottleneck between matrices &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; would be.&lt;/p&gt;
+
+&lt;p&gt;So, in code, my first cut changed this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Embedding&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...to this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt; &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;input_embeddings&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Sequential&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Embedding&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]),&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Embedding&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+            &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+        &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...became this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt; &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;output_head&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Sequential&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+                &lt;span class="p"&gt;),&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+                &lt;span class="p"&gt;),&lt;/span&gt;
+            &lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+            &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That in itself was a perfectly reasonable implementation of the underlying concept.
+But it had a problem.  I wanted to compare the loss with and without LoRE, and also
+find out what the effects of input embedding-only and output-head-only LoRE would be.
+But I've found in other experiments that the initial random weights that my models start with
+can have a significant effect on the loss that the resulting model gets.  The code
+above would give quite different random weights with different configurations.  The fix was
+simple, though:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;lore_tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Sequential&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Embedding&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]),&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+            &lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;normal_tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Embedding&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt; &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;input_embeddings&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;lore_tok_emb&lt;/span&gt;
+        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tok_emb&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;normal_tok_emb&lt;/span&gt;
+
+        &lt;span class="o"&gt;...&lt;/span&gt;
+
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;lore_out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Sequential&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+                &lt;span class="p"&gt;),&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+                &lt;span class="p"&gt;),&lt;/span&gt;
+            &lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;normal_out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+            &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+        &lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt; &lt;span class="ow"&gt;and&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;output_head&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;lore_out_head&lt;/span&gt;
+        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;normal_out_head&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;With that code, so long as there is any LoRE config, we create the same weights
+regardless of whether it's used in the input embeddings or the output head.  I would
+need to train a baseline which had config for LoRE but just had both &lt;code&gt;input_embeddings&lt;/code&gt; and
+&lt;code&gt;output_head&lt;/code&gt; set to &lt;code&gt;False&lt;/code&gt; there -- that would actually be a normal, non-LoRE model
+but would have the same initial random weights in any parts that it shared with an
+equivalent model that did use LoRE.&lt;/p&gt;
+
+&lt;p&gt;Additionally, Andrew had &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-5050-DEPRECATED/discussions/1#6aa983b11bcc35c715a81e94"&gt;said&lt;/a&gt; that we need to be careful about initialisation:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;The main failure mode to watch for during training is early gradient spikes:
+  scaling the bottleneck projection initialization to 1 / sqrt(r) keeps variance
+  uniform and ensures training dynamics match the full-rank baseline from step 1.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;...and &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-5050-DEPRECATED/discussions/1#6aa9979704d7f855a3bbc3d5"&gt;later&lt;/a&gt;:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Keep standard GPT-2 init on the embedding table, but scale the inner linear projection matrices by std = 1.0 / math.sqrt(128).&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;(The 128 in there is because we were talking about a setup with &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;128&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;, which is
+actually what I wound up using.)&lt;/p&gt;
+
+&lt;p&gt;Now, I was using PyTorch's default initialisation rather than the classic GPT-2
+setup, but I went ahead and added a &lt;code&gt;smart_initialize&lt;/code&gt; flag to handle the scaling as
+Andrew described: if it was set, then right at the
+end of the model creation I applied the initialisation
+to the low rank factor matrices that were innermost in my model (as in, closest to
+the Transformer layers):&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;smart_initialize&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;normal_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;lore_tok_emb&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+                &lt;span class="p"&gt;)&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;normal_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;lore_out_head&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+                &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Even though that was not run for every configuration, because it happened right at
+the end of the model creation, it would not affect the other weights, so I figured
+that it would be safe.&lt;/p&gt;
+
+&lt;p&gt;You can see the full diff from the normal GPT-2 code &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/compare/0d1aa53...d223121"&gt;here&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Those changes looked correct to me, and I asked GPT-6 Astra (on "extra high" thinking)
+to confirm that it looked right to it in the context
+of the discussion, which it did.  That done, I &lt;a href="https://huggingface.co/AndrewThompson1233/maba-v1-architecture/discussions/1"&gt;double-checked with Andrew&lt;/a&gt;,
+as I really wanted this to be a clean attempt at a repro of his results.  He confirmed,
+so it was time to train some models!&lt;/p&gt;
+
+&lt;h3 id="the-first-training-runs"&gt;The first training runs&lt;/h3&gt;
+
+&lt;p&gt;I decided that I wanted five training runs to check this out thoroughly:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;A baseline.  As I said earlier, the LoRE stuff would have an effect on the randomness
+used for the initial weights, so I wanted to train one model with LoRE "enabled"
+but not actually used.  Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-1-baseline-disabled/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-1-baseline-disabled/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;A model trained with LoRE enabled on both the input embeddings and the output
+head, but without the smart initialisation of the low-rank matrices.  This was
+simply to confirm to myself that it was required.   Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-2-both-ordinary-init/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-2-both-ordinary-init/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;A model with LoRE on both ends, &lt;em&gt;with&lt;/em&gt; the smart initialisation -- essentially,
+what Andrew had described.   Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-3-both-smart-init/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-3-both-smart-init/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;A model with LoRE on the input embeddings only, using smart initialisation if that had
+turned out to be necessary, and not using it if it had not.  I deliberately made
+the config invalid, using &lt;code&gt;TODO&lt;/code&gt; instead of &lt;code&gt;true&lt;/code&gt; or &lt;code&gt;false&lt;/code&gt; for the
+&lt;code&gt;smart_initialize&lt;/code&gt; flag, so that I'd be reminded to fill those in later.
+Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-4-input-only/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-4-input-only/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;A model with LoRE on the output head only, with smart initialisation the same as with (4).
+Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-5-output-only/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/runs/8xa100m40-lore-5-output-only/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;To save time, I decided to train them in the cloud: the first three, and then the last two,
+in two batches of parallel runs.  I used 8x A100 machines with 40 GiB VRAM per GPU on &lt;a href="https://lambda.ai/"&gt;Lambda&lt;/a&gt;.  I'll break
+with my normal tradition of giving detailed runthroughs of each training run,
+as there are (spoiler) quite a lot of them in this post!  However, for reproducibility,
+the commands I ran for each one looked like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;git clone https://github.com/gpjt/ddp-base-model-from-scratch.git&lt;/span&gt;
+&lt;span class="go"&gt;cd ddp-base-model-from-scratch/&lt;/span&gt;
+&lt;span class="go"&gt;git checkout lore-experiment&lt;/span&gt;
+&lt;span class="go"&gt;./setup_lambda.sh&lt;/span&gt;
+&lt;span class="go"&gt;uv sync&lt;/span&gt;
+&lt;span class="go"&gt;uv run torchrun --nproc_per_node=8 ddp_train.py 8xa100m40-lore-1-baseline-disabled datasets&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...with the run ID, &lt;code&gt;8xa100m40-lore-1-baseline-disabled&lt;/code&gt;, replaced with the appropriate
+one for the given &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/6ec817f0bbf525f65444574ab7b6a572a06d8461/runs"&gt;run settings&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Here are the results from the first three runs: the baseline, and the ones with
+LoRE at both ends, with and without smart initialisation.  The model name links go to
+the uploaded models on Hugging Face.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;Model&lt;/th&gt;
+  &lt;th&gt;Parameters&lt;/th&gt;
+  &lt;th&gt;Training time (s)&lt;/th&gt;
+  &lt;th&gt;Initial training loss&lt;/th&gt;
+  &lt;th&gt;Final training loss&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;Cost (US$)&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-1-baseline-disabled"&gt;&lt;code&gt;8xa100m40-lore-1-baseline-disabled&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;163,009,536&lt;/td&gt;
+  &lt;td&gt;9,339&lt;/td&gt;
+  &lt;td&gt;10.992&lt;/td&gt;
+  &lt;td&gt;3.579&lt;/td&gt;
+  &lt;td&gt;3.599611&lt;/td&gt;
+  &lt;td&gt;43.96&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-2-both-ordinary-init"&gt;&lt;code&gt;8xa100m40-lore-2-both-ordinary-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;8,057&lt;/td&gt;
+  &lt;td&gt;10.89&lt;/td&gt;
+  &lt;td&gt;3.703&lt;/td&gt;
+  &lt;td&gt;3.723328&lt;/td&gt;
+  &lt;td&gt;38.55&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-3-both-smart-init"&gt;&lt;code&gt;8xa100m40-lore-3-both-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;est. 8,100&lt;/td&gt;
+  &lt;td&gt;11.865&lt;/td&gt;
+  &lt;td&gt;unknown&lt;/td&gt;
+  &lt;td&gt;3.671585&lt;/td&gt;
+  &lt;td&gt;41.44&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;You can see that I had some issues with the last run; there were shortages of available
+instances, and I wound up starting one in Japan.  Connectivity to it from my home in
+Portugal was really slow and unreliable; when I tried to download the model after the training run,
+&lt;code&gt;scp&lt;/code&gt; was predicting 10 hours (which at the machine's cost of US$15.92/hour would have been insane).  However,
+I was able to copy it to my &lt;a href="https://www.pythonanywhere.com/"&gt;PythonAnywhere&lt;/a&gt; account
+quickly, perhaps because that is in a US Amazon datacenter and had better connectivity to Japan, and then I could copy it from
+there to my machine, again quite quickly.  Unfortunately while scrabbling around with that I didn't capture
+all of the output.&lt;/p&gt;
+
+&lt;p&gt;Still, the important data at this stage was in the test loss column.  As expected,
+using LoRE made the test loss worse.  And smart initialisation did seem to help reduce that
+penalty.&lt;/p&gt;
+
+&lt;p&gt;The loss delta, at +0.07, was worse than the +0.02 to +0.04 that Andrew described
+in his message, but not wildly different -- certainly small enough that it seemed
+plausible that you could recover it, and perhaps more, by investing the 64M parameter
+difference in a deeper or wider model.  Promising!&lt;/p&gt;
+
+&lt;p&gt;The cost and time savings were real, too: the
+run in Japan had its cost bumped up by all of the woes I had copying the model down,
+so the &lt;code&gt;8xa100m40-lore-2-both-ordinary-init&lt;/code&gt; one is the best indication: US$38.55 rather than
+US$43.96, so a saving of more than 10%.  And while going down from a bit more than 2h30m
+to 2h14m might not seem like much, with a larger model or a longer training run, an almost 14% reduction
+could be valuable in and of itself.  (And that's not even considering the alternative of
+"reinvesting" the saved parameters in larger models.)&lt;/p&gt;
+
+&lt;p&gt;So that was pretty good news!  It was time to do the ablation runs to see whether
+having LoRE just on the token embeddings, or just on the output head, made things
+any different.  I switched the &lt;code&gt;smart_initialize&lt;/code&gt; setting for the remaining two
+models to &lt;code&gt;true&lt;/code&gt;, and kicked them off.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;Model&lt;/th&gt;
+  &lt;th&gt;Parameters&lt;/th&gt;
+  &lt;th&gt;Training time (s)&lt;/th&gt;
+  &lt;th&gt;Initial training loss&lt;/th&gt;
+  &lt;th&gt;Final training loss&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;Cost (US$)&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-4-input-only"&gt;&lt;code&gt;8xa100m40-lore-4-input-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;9,225&lt;/td&gt;
+  &lt;td&gt;10.978&lt;/td&gt;
+  &lt;td&gt;3.505&lt;/td&gt;
+  &lt;td&gt;3.526610&lt;/td&gt;
+  &lt;td&gt;44.83&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-5-output-only"&gt;&lt;code&gt;8xa100m40-lore-5-output-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;8,202&lt;/td&gt;
+  &lt;td&gt;11.817&lt;/td&gt;
+  &lt;td&gt;3.717&lt;/td&gt;
+  &lt;td&gt;3.737128&lt;/td&gt;
+  &lt;td&gt;41.59&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;Now, there's a bunch of interesting stuff in there, but let's focus on the test
+loss.  My lab notes for this bit say "well, that's a bit of a shocker!"
+Quite amazingly -- at least to me -- we got &lt;em&gt;lower&lt;/em&gt; test loss with the input-only LoRE,
+with 3.526610, than we did with the no-LoRE baseline, which got 3.599611.&lt;/p&gt;
+
+&lt;p&gt;Things get even more interesting when you compare the different versions (excluding
+the non-smart-init) against each other, in terms of their difference from the no-LoRE
+baseline (which I'll call the delta for conciseness below).  Rounding to 3dps:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Output LoRE off&lt;/th&gt;
+  &lt;th&gt;Output LoRE on&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE off&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+  &lt;td&gt;0.138&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE on&lt;/td&gt;
+  &lt;td&gt;-0.073&lt;/td&gt;
+  &lt;td&gt;0.072&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;If you add the two single-LoRE loss deltas together -- the 0.138 and the -0.073 --
+you get 0.065, which is surprisingly close to the delta of 0.072 for the dual-LoRE option, just
+0.007 away.&lt;/p&gt;
+
+&lt;p&gt;Could we be looking at two almost independent effects, one for each option of where to
+apply the LoRE?  And was that apparent benefit of the input-only LoRE a real thing?
+Or was it due to chance -- perhaps we had "good luck" when initialising the LoRE weights,
+and "bad luck" when initialising the non-LoRE ones.  If there was an overlap between
+the best loss you could get with LoRE and the worst loss you could get without, then
+this result could be within the noise.&lt;/p&gt;
+
+&lt;p&gt;I decided I was going to do a second batch of training runs to see if I could get
+evidence one way or the other.  But before we get into that, it's worth taking a look at
+some of the other numbers in those two tables.&lt;/p&gt;
+
+&lt;p&gt;Firstly, let's take a look at the training time.  The training machines looked
+like they were running at close to 100% during all of the runs, so tentatively let's
+assume that time taken is proportional to compute.  Unsurprisingly, the baseline run
+came in with the longest time, at 9,339s.  And equally unsurprisingly, the full-LoRE run
+that we have timing for was much faster, at 8,057s.
+It certainly makes sense that replacing big matrices with pairs of (much)
+smaller low-rank factors will mean fewer calculations on both the forward and the backward
+pass, meaning that the training run is faster.&lt;/p&gt;
+
+&lt;p&gt;There was something that initially surprised me with the single-LoRE runs.  Using
+LoRE on the output head sped things up quite a lot, but input embedding LoRE had much
+less effect.&lt;/p&gt;
+
+&lt;p&gt;However, after thinking about it a bit, it became clear what was going on.  An embedding
+module in a network is actually really quick to run, both on the forward and backward pass.
+While I like to think of embeddings as &lt;em&gt;conceptually&lt;/em&gt; being a projection of a one-hot
+vector in vocab space into embedding space via a matrix multiplication, and I still think
+that's an excellent model of interpreting what's going on, in practice it's just something
+much more like an array lookup, with almost zero cost.  Likewise on the backward pass,
+we only need to work out gradients for the chosen embedding, so that should be faster too.&lt;/p&gt;
+
+&lt;p&gt;Indeed, with that all in mind, it might not have been surprising if input-only LoRE
+had turned out to be a bit &lt;em&gt;slower&lt;/em&gt; than the baseline, as it, at least, needed to do
+forward and backward passes through actual matrices, even though they were fairly small.&lt;/p&gt;
+
+&lt;p&gt;Doing another of those delta tables, the time difference in seconds (using the
+"ordinary init" run for the both-on number):&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Output LoRE off&lt;/th&gt;
+  &lt;th&gt;Output LoRE on&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE off&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+  &lt;td&gt;-1,137&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE on&lt;/td&gt;
+  &lt;td&gt;-114&lt;/td&gt;
+  &lt;td&gt;-1,282&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;You can see that if you add the delta of the single-LoRE options, you get -1,251,
+which is pleasingly close to the delta of the dual-LoRE one.  And that is much less
+surprising than the loss result -- with training compute, you really would expect
+improvements like this to be additive.&lt;/p&gt;
+
+&lt;p&gt;Finally, there was something interesting in the initial training loss.  Because my
+training code prints out the loss it got on the first global step, I decided to note it down.
+There's something in this data that will become important later: in both of the training
+runs with LoRE on the output head &lt;em&gt;and&lt;/em&gt; smart initialisation, it went up noticeably.&lt;/p&gt;
+
+&lt;p&gt;Normally, the initial training loss on my GPT-2-style models is a bit less than 11.  This
+fits in well with the architecture; you'd expect that a model that was predicting tokens
+purely randomly (well, strictly, uniformly) would have a perplexity roughly equal to the vocab size; the vocab
+size for the GPT-2 tokeniser is 50,257, and loss is the natural logarithm of perplexity,
+so that implies a loss of roughly 10.82.&lt;/p&gt;
+
+&lt;p&gt;But both of those smart-init models with LoRE on the output head had an initial loss about
+one point higher, at 11.865 and 11.817, meaning that they were significantly &lt;em&gt;worse&lt;/em&gt; than
+random.  What might be going on here?  We'll find out later :-)&lt;/p&gt;
+
+&lt;p&gt;Anyway, for now, that was an interesting set of results.  I wanted to dig in more; in particular, would that
+surprising improvement of test loss for the input-only LoRE model reproduce if I tried
+again with a different random seed?&lt;/p&gt;
+
+&lt;h3 id="the-second-set-of-models"&gt;The second set of models&lt;/h3&gt;
+
+&lt;p&gt;I had two working hypotheses at this point; either&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;What we were seeing was due to luck of the draw with the random initialisation
+of the weights -- good luck with LoRE, bad luck without.&lt;/li&gt;
+&lt;li&gt;There really was an effect here: input-only LoRE actually improved test loss in the
+resulting model.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;A solid and simple test to try to distinguish between these was just to train another
+set of models, with a different random seed.  If I got the same kind of results, input LoRE beating
+non-LoRE, that
+would be evidence in favour of (2) rather than (1), whereas if
+things changed, it would work the other way.&lt;/p&gt;
+
+&lt;p&gt;I decided not to bother with a non-smart-init model this time, so I set things up for
+four new models.  My training code &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/d2231213d6749921cf86f71e210d3f48da87f9da/ddp_train.py#L762"&gt;uses a random seed of 42&lt;/a&gt;
+by default, but allows it to be overridden in the &lt;code&gt;train.json&lt;/code&gt; config file, so I decided
+to use 123 for these, and created:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;A new baseline with no LoRE.  Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-6-new-seed-baseline-disabled/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-6-new-seed-baseline-disabled/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;An input-only LoRE.  I wanted to run this one as the first non-baseline one, because
+if it got &lt;em&gt;worse&lt;/em&gt; (higher) loss than the baseline, then it would look rather
+like the effect I'd previously seen was due to random weight initialisation,
+so I might want to consider stopping there.
+Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-7-new-seed-input-only/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-7-new-seed-input-only/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;If I decided to continue, the next one would be LoRE on both the input and output sides.
+Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-8-new-seed-both-smart-init/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-8-new-seed-both-smart-init/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;Finally, I'd do an output head LoRE only one.  Config: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-9-new-seed-output-only/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/804cb3f60aba5157ce3ded2c3295de653bca6526/runs/8xa100m40-lore-9-new-seed-output-only/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Once I had the config together, it was time to train the models -- but it was hard to
+get available instances on Lambda.  I wound up having to use my &lt;a href="/2026/04/automating-starting-lambda-instances"&gt;&lt;code&gt;lambda-manager&lt;/code&gt;&lt;/a&gt;
+script to start things up, but after a few hours I got an alert on my phone that I had
+instances running, and could kick things off.&lt;/p&gt;
+
+&lt;p&gt;The second training run with input-only LoRE came in with a test loss that once again
+beat the baseline, so I did the full set of runs, and here are the results:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;Model&lt;/th&gt;
+  &lt;th&gt;Parameters&lt;/th&gt;
+  &lt;th&gt;Training time (s)&lt;/th&gt;
+  &lt;th&gt;Initial training loss&lt;/th&gt;
+  &lt;th&gt;Final training loss&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;Cost (US$)&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-6-new-seed-baseline-disabled"&gt;&lt;code&gt;8xa100m40-lore-6-new-seed-baseline-disabled&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;163,009,536&lt;/td&gt;
+  &lt;td&gt;9,409&lt;/td&gt;
+  &lt;td&gt;11.006&lt;/td&gt;
+  &lt;td&gt;3.577&lt;/td&gt;
+  &lt;td&gt;3.597584&lt;/td&gt;
+  &lt;td&gt;45.03&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-7-new-seed-input-only"&gt;&lt;code&gt;8xa100m40-lore-7-new-seed-input-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;9,163&lt;/td&gt;
+  &lt;td&gt;10.989&lt;/td&gt;
+  &lt;td&gt;3.563&lt;/td&gt;
+  &lt;td&gt;3.584511&lt;/td&gt;
+  &lt;td&gt;43.03&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-8-new-seed-both-smart-init"&gt;&lt;code&gt;8xa100m40-lore-8-new-seed-both-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;8,102&lt;/td&gt;
+  &lt;td&gt;11.829&lt;/td&gt;
+  &lt;td&gt;3.678&lt;/td&gt;
+  &lt;td&gt;3.698644&lt;/td&gt;
+  &lt;td&gt;37.91&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-9-new-seed-output-only"&gt;&lt;code&gt;8xa100m40-lore-9-new-seed-output-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;8,192&lt;/td&gt;
+  &lt;td&gt;11.806&lt;/td&gt;
+  &lt;td&gt;3.693&lt;/td&gt;
+  &lt;td&gt;3.712537&lt;/td&gt;
+  &lt;td&gt;38.32&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;Another matrix of deltas against the baseline:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Output LoRE off&lt;/th&gt;
+  &lt;th&gt;Output LoRE on&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE off&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+  &lt;td&gt;0.115&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE on&lt;/td&gt;
+  &lt;td&gt;-0.013&lt;/td&gt;
+  &lt;td&gt;0.101&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;So, once again, input-only LoRE improved test loss (though at -0.013, it
+was a smaller effect than the -0.073 the previous set of models had).&lt;/p&gt;
+
+&lt;p&gt;And once again, the sum of the input-only and output-only LoRE deltas was close
+to the combined-LoRE model's -- indeed it was even closer, 0.102 being just
+0.001 away from 0.101.&lt;/p&gt;
+
+&lt;p&gt;The training time results and the higher initial training loss for models with
+LoRE on the output head also held up, which was good to see.  So at this point it
+was time to wrap things up -- or was it?&lt;/p&gt;
+
+&lt;h3 id="the-smart_initialize-problem"&gt;The &lt;code&gt;smart_initialize&lt;/code&gt; problem&lt;/h3&gt;
+
+&lt;p&gt;While I was doing the second batch of training runs, I started writing up this
+experiment.  As I &lt;a href="/2026/07/ai-use"&gt;normally do&lt;/a&gt;, I ran a draft past various AI
+models, and Claude Opus 5.5 on max thinking spotted something.&lt;/p&gt;
+
+&lt;p&gt;Andrew had &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-5050-DEPRECATED/discussions/1#6aa9979704d7f855a3bbc3d5"&gt;written&lt;/a&gt;:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;Keep standard GPT-2 init on the embedding table, but scale the inner linear projection matrices by std = 1.0 / math.sqrt(128).&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;I'd interpreted that "inner" as meaning that the "innermost" matrices in our low rank
+factors -- the ones that were closest to the Transformer layers -- should be initialised
+as he said, with values drawn from a normal distribution with a
+standard deviation of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt;, and a mean of zero.&lt;/p&gt;
+
+&lt;p&gt;So that implied the second matrix in the
+embeddings, and the first one in the output head:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;smart_initialize&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;normal_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;lore_tok_emb&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+                &lt;span class="p"&gt;)&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;normal_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;lore_out_head&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+                &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Claude felt that it should be the second low-rank factor in both cases -- that is,
+we should change&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;                    &lt;span class="n"&gt;lore_out_head&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...to&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;                    &lt;span class="n"&gt;lore_out_head&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;It made a very good case for doing things that way, and digging into that is useful because
+it changes this "smart" initialisation from being a blindly-implemented "secret sauce"
+into something actually meaningful.&lt;/p&gt;
+
+&lt;p&gt;Let's imagine that we're not using LoRE, and consider the output head only.  It is
+a PyTorch &lt;a href="https://docs.pytorch.org/docs/2.14/generated/torch.nn.Linear.html"&gt;&lt;code&gt;nn.Linear&lt;/code&gt;&lt;/a&gt;,
+which means that:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;...the values are initialized from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x1D4B0;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;,
+  where &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mtext&gt;in_features&lt;/mtext&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;So, we have a matrix, which we can call &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, that is full of numbers drawn from that probability distribution --
+a uniform (flat) distribution within the range from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt; to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
+
+&lt;p&gt;For LoRE, we're replacing &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; with two separate matrices, which we'll call &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;            &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Sequential&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+                &lt;span class="p"&gt;),&lt;/span&gt;
+                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Linear&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;vocab_size&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;bias&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;
+                &lt;span class="p"&gt;),&lt;/span&gt;
+            &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Let's say that &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is shaped &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, which means that &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;,
+and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.  We want the combined effect of those two
+matrices &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; to start off with random numbers that look like -- in terms of
+their randomness -- the full matrix &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
+
+&lt;p&gt;But what do the numbers actually look like in our "virtual" matrix &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; with the code above?  On the face of it,
+it sounds unlikely to be anything like the probability distribution for &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.  After
+all, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; was initialised based on a formula that used &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mtext&gt;in_features&lt;/mtext&gt;&lt;/mrow&gt;&lt;/math&gt;.
+You can see that &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; will have been initialised using the same distribution, as it has
+the same number of input features, but the
+number of input features for &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, so its random numbers will have been based on
+that instead.  Their combination into &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; will presumably blend something from each of
+those two different probability distributions.&lt;/p&gt;
+
+&lt;p&gt;We can actually work out what that will be.  Maths incoming: &lt;a href="#correcting-the-smart-initialisation"&gt;click here to skip&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;Per &lt;a href="https://en.wikipedia.org/wiki/Distribution_of_the_product_of_two_random_variables"&gt;Wikipedia&lt;/a&gt;,
+the variance of the product of two independent random scalar variables (so, not matrices, but
+we'll come back to that) &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is this:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mtext&gt;Var&lt;/mtext&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003BC;&lt;/mi&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003BC;&lt;/mi&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003BC;&lt;/mi&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003BC;&lt;/mi&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...where &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt; is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;'s variance, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;&amp;#x003BC;&lt;/mi&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; is its mean, and likewise for &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
+
+&lt;p&gt;Now, let's say that the mean is zero for both &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; (like it is for PyTorch's distribution for the initial weights, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x1D4B0;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;k&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;).
+That simplifies the above:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mtext&gt;Var&lt;/mtext&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;Y&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;How does that apply to our matrices?&lt;/p&gt;
+
+&lt;p&gt;Well, let's write out how we calculate &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; by multiplying &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, assuming that &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;m&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;, and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x0005B;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x0005D;&lt;/mo&gt;&lt;mo&gt;&amp;#x0005B;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x0005D;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;By normal matrix maths, the value at position &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; in the result will be the dot product of the zeroth
+row in the first matrix (taken as a vector) and the zeroth column in the second:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msubsup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;We can rewrite that for an arbitrary low rank bottleneck &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; like this:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msubsup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msubsup&gt;&lt;mo&gt;&amp;#x02211;&lt;/mo&gt;&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msubsup&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...and even more generally, we can define all of the items in &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; like this:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;i&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;j&lt;/mi&gt;&lt;/mrow&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msubsup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msubsup&gt;&lt;mo&gt;&amp;#x02211;&lt;/mo&gt;&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msubsup&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;i&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;j&lt;/mi&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;So, every element is the sum of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; products, where each product multiplies a number from
+whatever distribution was used to initialise &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;'s elements by a number from whatever was used
+for &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;'s.&lt;/p&gt;
+
+&lt;p&gt;Using the notation from above, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;'s elements have variance &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;'s have variance &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt;.
+So that means that the variance of each component of that sum is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt;.
+There are &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; of them; if you add together independent variables, their variances add,
+so that means that the variance of the elements of our resulting &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; is:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mtext&gt;Var&lt;/mtext&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;Now, let's remember that our matrix &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; actually already was initialised in the way
+we would have liked our non-LoRE version &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; to have been done.  The distribution of the random initial weights for an &lt;code&gt;nn.Linear&lt;/code&gt; is
+dependent entirely on the number of input features -- and of course &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; has the same number
+of input features as &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
+
+&lt;p&gt;So how can we make &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mtext&gt;Var&lt;/mtext&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt; be &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt;?  We need to
+make &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, and then the equation above drops out like this:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mtext&gt;Var&lt;/mtext&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;Now, let's look at the code (with Claude's correction in there):&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;                &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;normal_&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+                    &lt;span class="n"&gt;lore_out_head&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;weight&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;0.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;std&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;math&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;lore&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;][&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;rank&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+                &lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;We're setting the weights on our &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; matrix to be drawn from a distribution with a standard deviation of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt;.  SD is, of course,
+the square root of the variance (which is why we've been using things
+like &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msubsup&gt;&lt;/mrow&gt;&lt;/math&gt; with that squaring in there to represent variance -- &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003C3;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; on its
+own is used for standard deviation).  So the variance of the matrix after we've called
+that &lt;code&gt;normal_&lt;/code&gt; on it will be &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; as desired, and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; will have random initial weights
+with the same variance as &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; would have done if we'd created it directly.&lt;/p&gt;
+
+&lt;p&gt;That's rather satisfying :-)&lt;/p&gt;
+
+&lt;p&gt;So that's the output head.  How about the input embeddings?  They're
+&lt;a href="https://docs.pytorch.org/docs/2.14/generated/torch.nn.Embedding.html"&gt;&lt;code&gt;nn.Embedding&lt;/code&gt;&lt;/a&gt;s,
+which are initialised somewhat differently:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;initialized from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x1D4A9;&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;That's a normal distribution, with a mean of 0 and a variance (and thus also a
+standard deviation) of 1.  The maths above applied to any distribution with a mean
+of zero -- so the smart initialisation should work for those too.  Our &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; matrix would
+have the correct variance, 1, and a mean of zero, and therefore so would &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, given that
+(for embeddings) &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; already had the smart initialisation.&lt;/p&gt;
+
+&lt;p&gt;So does that mean that our &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; "virtual" matrix created by
+multiplying &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is identical in terms of randomness to the matrix &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; that
+it's replacing?   Well, not quite.&lt;/p&gt;
+
+&lt;p&gt;Remember that the output head had numbers drawn from a uniform distribution, and
+the embeddings from a normal distribution.  We're multiplying the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; matrices that are the
+"input" low rank factor matrices by &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;s that are initialised from a normal distribution.
+The variance of the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; matrices is maintained by the smart initialisation, as we've
+shown, and the mean (being zero) is going to come through cleanly too.  But the shape will change.&lt;/p&gt;
+
+&lt;p&gt;I did a bit of digging around and it started to feel like
+a bit of a rabbit hole, but the one thing I was able to be certain of is that a variable
+drawn from a uniform distribution multiplied by another from a normal distribution gives a
+result that is neither uniform nor normal, and that normal times normal gives something
+called a normal product distribution (or also a product-normal distribution), which is also
+neither uniform nor normal.&lt;/p&gt;
+
+&lt;p&gt;Remember that each element of our &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; matrix is defined by this:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;msubsup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;i&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;j&lt;/mi&gt;&lt;/mrow&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msubsup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msubsup&gt;&lt;mo&gt;&amp;#x02211;&lt;/mo&gt;&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/msubsup&gt;&lt;msub&gt;&lt;mi&gt;a&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;i&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000B7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;mo&gt;&amp;#x0002C;&lt;/mo&gt;&lt;mi&gt;j&lt;/mi&gt;&lt;/mrow&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;So each one is a sum of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; numbers, each of which is drawn from a product normal distribution
+(for embeddings) or from whatever the uniform &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; normal distribution is called.  What shape
+would that be?  Again: rabbit hole, but the central limit theorem states (&lt;a href="https://mathworld.wolfram.com/CentralLimitTheorem.html"&gt;per Wolfram MathWorld&lt;/a&gt;):&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;the normalized sum of independent random variates with finite variances approaches a normal distribution&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;So, for large &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;r&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, we can say that the result is going to be close to a normal distribution. &lt;sup class="footnote-ref" id="fnref-4"&gt;&lt;a href="#fn-4"&gt;4&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;What the smart initialisation does is make sure that our "virtual"
+weights, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, have the same mean and variance as the ones we're trying to
+approximate, &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;.  But it won't keep the same shape for the distribution that they're drawn from -- certainly not for the output head,
+which goes from uniform to normal-ish.  The embeddings are less impacted (though not
+completely untouched) because they were normal and are still almost so.&lt;/p&gt;
+
+&lt;p&gt;Still, it's a neat trick!  Was it what Andrew had actually meant?&lt;/p&gt;
+
+&lt;h3 id="correcting-the-smart-initialisation"&gt;Correcting the smart initialisation&lt;/h3&gt;
+
+&lt;p&gt;Having convinced myself that the smart initialisation code I'd been using was wrong,
+I decided to check with Andrew.  My first thought was that perhaps he was using weight
+tying -- remember, with weight tying, the embedding matrix is just re-used in transposed
+form for the output head.  That would mean that the embeddings would be &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, and
+you'd use the smart initialisation on &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, but the output head -- being that transpose --
+would use &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;mi&gt;T&lt;/mi&gt;&lt;/mrow&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;mi&gt;T&lt;/mi&gt;&lt;/msup&gt;&lt;msup&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;mi&gt;T&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; for the same &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt;, so the smart initialisation would be
+the other way around.&lt;/p&gt;
+
+&lt;p&gt;But as it turned out, it was &lt;a href="https://huggingface.co/AndrewThompson1233/maba-v1-architecture/discussions/1#6abfe78119024613efda8f02"&gt;just a miscommunication&lt;/a&gt;.
+He said that he keeps his weights untied, and had been using the word
+"inner" in "inner linear projection matrices" to mean something different to what I'd
+interpreted it as.  He confirmed that the real smart init code should always be
+applied to the second matrix, as the maths (and Claude) suggested.&lt;/p&gt;
+
+&lt;p&gt;So that was a simple change.  You can see &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/commit/6ec817f0bbf525f65444574ab7b6a572a06d8461"&gt;the diff here&lt;/a&gt;,
+but in short:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;I changed the &lt;code&gt;smart_initialize&lt;/code&gt; config parameter so that instead of just being
+&lt;code&gt;False&lt;/code&gt; or &lt;code&gt;True&lt;/code&gt;, it could be &lt;code&gt;False&lt;/code&gt;, &lt;code&gt;"original"&lt;/code&gt; for the original incorrect
+interpretation, or &lt;code&gt;"corrected"&lt;/code&gt; for the fixed one.&lt;/li&gt;
+&lt;li&gt;I updated all of the existing training configurations that had &lt;code&gt;smart_initialize&lt;/code&gt; set
+to &lt;code&gt;True&lt;/code&gt; to be &lt;code&gt;"original"&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;I added on yet more config for some more training runs to test this, setting
+&lt;code&gt;smart_initialize&lt;/code&gt; to the new &lt;code&gt;"corrected"&lt;/code&gt; option.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Now, the good news (both for my own sanity and my wallet) was that testing this fix
+was not going to require another four training runs.   My training code is essentially deterministic
+-- no dropout or any other randomness is used after the model is created &lt;sup class="footnote-ref" id="fnref-5"&gt;&lt;a href="#fn-5"&gt;5&lt;/a&gt;&lt;/sup&gt;.
+Because the smart initialisation code was at the end of the model creation, and
+smart initialisation of the output head was right at the end, that meant that changing
+it would not affect any other code that used randomness.&lt;/p&gt;
+
+&lt;p&gt;So if I did two training
+runs -- with LoRE switched on for the output head only, and with it switched on for both
+embeddings and output -- then those would be "compatible" with earlier training
+runs that had no LoRE at all, and that only had it on the embeddings.  You can see
+the configs here (with no explicit random seed, so they'd use my default of 42):&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Both: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/6ec817f0bbf525f65444574ab7b6a572a06d8461/runs/8xa100m40-lore-10-both-corrected-smart-init/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/6ec817f0bbf525f65444574ab7b6a572a06d8461/runs/8xa100m40-lore-10-both-corrected-smart-init/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;li&gt;Output-only: &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/6ec817f0bbf525f65444574ab7b6a572a06d8461/runs/8xa100m40-lore-11-output-only-corrected-smart-init/model.json"&gt;&lt;code&gt;model.json&lt;/code&gt;&lt;/a&gt;,
+&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/6ec817f0bbf525f65444574ab7b6a572a06d8461/runs/8xa100m40-lore-11-output-only-corrected-smart-init/train.json"&gt;&lt;code&gt;train.json&lt;/code&gt;&lt;/a&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Here are the results; I've put them into a table with their counterparts from the
+original seed-42 training run:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;Model&lt;/th&gt;
+  &lt;th&gt;Parameters&lt;/th&gt;
+  &lt;th&gt;Training time (s)&lt;/th&gt;
+  &lt;th&gt;Initial training loss&lt;/th&gt;
+  &lt;th&gt;Final training loss&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+  &lt;th&gt;Cost (US$)&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-1-baseline-disabled"&gt;&lt;code&gt;8xa100m40-lore-1-baseline-disabled&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;163,009,536&lt;/td&gt;
+  &lt;td&gt;9,339&lt;/td&gt;
+  &lt;td&gt;10.992&lt;/td&gt;
+  &lt;td&gt;3.579&lt;/td&gt;
+  &lt;td&gt;3.599611&lt;/td&gt;
+  &lt;td&gt;43.96&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-10-both-corrected-smart-init"&gt;&lt;code&gt;8xa100m40-lore-10-both-corrected-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;8,069&lt;/td&gt;
+  &lt;td&gt;10.987&lt;/td&gt;
+  &lt;td&gt;3.722&lt;/td&gt;
+  &lt;td&gt;3.741209&lt;/td&gt;
+  &lt;td&gt;37.65&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-4-input-only"&gt;&lt;code&gt;8xa100m40-lore-4-input-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;9,225&lt;/td&gt;
+  &lt;td&gt;10.978&lt;/td&gt;
+  &lt;td&gt;3.505&lt;/td&gt;
+  &lt;td&gt;3.526610&lt;/td&gt;
+  &lt;td&gt;44.83&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-11-output-only-corrected-smart-init"&gt;&lt;code&gt;8xa100m40-lore-11-output-only-corrected-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;8,194&lt;/td&gt;
+  &lt;td&gt;10.986&lt;/td&gt;
+  &lt;td&gt;3.766&lt;/td&gt;
+  &lt;td&gt;3.785209&lt;/td&gt;
+  &lt;td&gt;38.19&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;Before we look at the test loss, check out that "Initial training loss" column.  The
+weirdness that I'd noticed earlier, where that value was much worse than uniform, is gone!
+That actually makes some kind of sense.  With the smart initialisation on the wrong
+part of the low-rank output head, our variance was completely wrong, and so the model
+was initially producing particularly bad results. &lt;sup class="footnote-ref" id="fnref-6"&gt;&lt;a href="#fn-6"&gt;6&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;So that was promising!  But the test loss results were even more interesting.  In
+our original seed-42 results with the incorrect init, the output-head-LoRE-only model got a test loss of
+3.737128, but here we got 3.785209.  It was actually worse with the corrected smart
+initialisation!  And that carried through to the result for models with LoRE on both
+input and output; the original model with the incorrect init got 3.671585, and here
+we got 3.741209 -- an even bigger worsening.&lt;/p&gt;
+
+&lt;p&gt;Combining those two together, an image I like in terms of the loss landscape is that
+previously we were starting on a mountain that was near a deep valley -- we started with high loss,
+but there was a low-loss place nearby.  But with the smart initialisation fixed,
+we were now starting on a hill with a less-deep valley nearby.&lt;/p&gt;
+
+&lt;p&gt;So what happens if we do one of our test loss delta tables showing
+how each model performed against the baseline?&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;&lt;/th&gt;
+  &lt;th&gt;Output LoRE off&lt;/th&gt;
+  &lt;th&gt;Output LoRE on&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE off&lt;/td&gt;
+  &lt;td&gt;-&lt;/td&gt;
+  &lt;td&gt;0.186&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;Input LoRE on&lt;/td&gt;
+  &lt;td&gt;-0.073&lt;/td&gt;
+  &lt;td&gt;0.142&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;If we add up the effect of the input-only test loss delta of -0.073 and the
+output-only delta of 0.186, we get 0.113 -- quite different to the delta of
+0.142 that we actually got with them both.  That nice "additive" property that
+we had, where the delta from input LoRE only plus the delta from output LoRE only
+summed to almost exactly the same as the delta for LoRE on both ends, appears to have
+gone away :-(&lt;/p&gt;
+
+&lt;p&gt;Still, an interesting set of results!  Let's bring everything together.&lt;/p&gt;
+
+&lt;h3 id="the-results"&gt;The results&lt;/h3&gt;
+
+&lt;p&gt;Here are all of the training runs together in one table.  I've removed the columns for
+the cost, the end training loss, and the training time to keep things manageable,
+and I've sorted it by the test loss.&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;Model&lt;/th&gt;
+  &lt;th&gt;Parameters&lt;/th&gt;
+  &lt;th&gt;Input LoRE&lt;/th&gt;
+  &lt;th&gt;Output LoRE&lt;/th&gt;
+  &lt;th&gt;Seed&lt;/th&gt;
+  &lt;th&gt;Smart init&lt;/th&gt;
+  &lt;th&gt;Initial training loss&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-4-input-only"&gt;&lt;code&gt;8xa100m40-lore-4-input-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;42&lt;/td&gt;
+  &lt;td&gt;original&lt;/td&gt;
+  &lt;td&gt;10.978&lt;/td&gt;
+  &lt;td&gt;3.526610&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-7-new-seed-input-only"&gt;&lt;code&gt;8xa100m40-lore-7-new-seed-input-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;123&lt;/td&gt;
+  &lt;td&gt;original&lt;/td&gt;
+  &lt;td&gt;10.989&lt;/td&gt;
+  &lt;td&gt;3.584511&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-6-new-seed-baseline-disabled"&gt;&lt;code&gt;8xa100m40-lore-6-new-seed-baseline-disabled&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;163,009,536&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;123&lt;/td&gt;
+  &lt;td&gt;none&lt;/td&gt;
+  &lt;td&gt;11.006&lt;/td&gt;
+  &lt;td&gt;3.597584&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-1-baseline-disabled"&gt;&lt;code&gt;8xa100m40-lore-1-baseline-disabled&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;163,009,536&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;42&lt;/td&gt;
+  &lt;td&gt;none&lt;/td&gt;
+  &lt;td&gt;10.992&lt;/td&gt;
+  &lt;td&gt;3.599611&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-3-both-smart-init"&gt;&lt;code&gt;8xa100m40-lore-3-both-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;42&lt;/td&gt;
+  &lt;td&gt;original&lt;/td&gt;
+  &lt;td&gt;11.865&lt;/td&gt;
+  &lt;td&gt;3.671585&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-8-new-seed-both-smart-init"&gt;&lt;code&gt;8xa100m40-lore-8-new-seed-both-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;123&lt;/td&gt;
+  &lt;td&gt;original&lt;/td&gt;
+  &lt;td&gt;11.829&lt;/td&gt;
+  &lt;td&gt;3.698644&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-9-new-seed-output-only"&gt;&lt;code&gt;8xa100m40-lore-9-new-seed-output-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;123&lt;/td&gt;
+  &lt;td&gt;original&lt;/td&gt;
+  &lt;td&gt;11.806&lt;/td&gt;
+  &lt;td&gt;3.712537&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-2-both-ordinary-init"&gt;&lt;code&gt;8xa100m40-lore-2-both-ordinary-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;42&lt;/td&gt;
+  &lt;td&gt;none&lt;/td&gt;
+  &lt;td&gt;10.89&lt;/td&gt;
+  &lt;td&gt;3.723328&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-5-output-only"&gt;&lt;code&gt;8xa100m40-lore-5-output-only&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;42&lt;/td&gt;
+  &lt;td&gt;original&lt;/td&gt;
+  &lt;td&gt;11.817&lt;/td&gt;
+  &lt;td&gt;3.737128&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-10-both-corrected-smart-init"&gt;&lt;code&gt;8xa100m40-lore-10-both-corrected-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;98,877,184&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;42&lt;/td&gt;
+  &lt;td&gt;corrected&lt;/td&gt;
+  &lt;td&gt;10.987&lt;/td&gt;
+  &lt;td&gt;3.741209&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-lore-11-output-only-corrected-smart-init"&gt;&lt;code&gt;8xa100m40-lore-11-output-only-corrected-smart-init&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;130,943,360&lt;/td&gt;
+  &lt;td&gt;no&lt;/td&gt;
+  &lt;td&gt;yes&lt;/td&gt;
+  &lt;td&gt;42&lt;/td&gt;
+  &lt;td&gt;corrected&lt;/td&gt;
+  &lt;td&gt;10.986&lt;/td&gt;
+  &lt;td&gt;3.785209&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;A few things stand out:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;The input-only LoRE models lead the pack -- though it's a close-run thing,
+and the gap between &lt;code&gt;8xa100m40-lore-7-new-seed-input-only&lt;/code&gt; and
+&lt;code&gt;8xa100m40-lore-6-new-seed-baseline-disabled&lt;/code&gt; could well be
+&lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;within the noise&lt;/a&gt;
+at 0.013.  In that post, I trained three models with different weight initialisation seeds,
+and got models that differed by up to ~0.017.&lt;/li&gt;
+&lt;li&gt;The two models with the corrected smart initialisation are the worst -- even worse
+than the model with no extra initialisation, &lt;code&gt;8xa100m40-lore-2-both-ordinary-init&lt;/code&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;So what does that all tell us?&lt;/p&gt;
+
+&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
+
+&lt;p&gt;The numbers above suggest three things -- with important caveats below:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;LoRE can reduce the number of parameters in these models dramatically even if
+only applied to the input embeddings, and that comes with potentially an
+&lt;em&gt;improvement&lt;/em&gt; in test loss (0.073 in one test, 0.013 in a second).&lt;/li&gt;
+&lt;li&gt;When applied to the output head, it has the same size of reduction in the parameter
+count, and causes a &lt;em&gt;worsening&lt;/em&gt; in test loss (over three tests,
+0.115, 0.138 and 0.186).&lt;/li&gt;
+&lt;li&gt;The results with LoRE on both ends seemed to come in somewhere around (in two of the
+three cases, very close to) the sum of the input-only and output-only deltas,
+though it doesn't seem to be a strictly additive relationship.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Even more caveated, we might say:&lt;/p&gt;
+
+&lt;ol start="4"&gt;
+&lt;li&gt;The mathematically cleaner implementation of what I've been calling "smart initialisation"
+actually worked worse than the mistaken version I used originally, though this
+was only tested with one seed, so the evidence is much weaker.&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;Neither the larger of the two apparent improvements from input-only LoRE nor the worsening from output-only
+were small -- when I was trying various
+&lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud#the-interventions"&gt;interventions&lt;/a&gt; into
+my GPT-2 models (like removing dropout, scheduling the learning rate, gradient clipping and
+so on), many of them had a similar or smaller level of effect.  Similarly, training a comparable non-LoRE model on double the number
+of Chinchilla-optimal tokens (ie. on 40 per parameter rather than 20) improved loss
+by 0.09, while investing the same compute resources to do a Chinchilla-optimal training
+run on a larger model improved it by roughly 0.13 over the baseline (see &lt;a href="/2026/08/chinchilla-check"&gt;this post&lt;/a&gt;
+for the raw numbers).&lt;/p&gt;
+
+&lt;p&gt;So, is input-only LoRE One Weird Trick To Improve Your Test Loss?  Of course not.  Are output-only LoRE
+and both-ends LoRE Bad Things?  Not necessarily.&lt;/p&gt;
+
+&lt;p&gt;The first thing to remember is that this is a really limited set of experiments.
+Although I wound up spending about US$450 on training runs (I really should be investing
+in building my machine &lt;a href="/2026/07/poppy-the-training-box-1-the-beginnings"&gt;&lt;code&gt;poppy&lt;/code&gt;&lt;/a&gt; up as a better
+training box to save on Lambda costs), I was only able to test:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Against my own GPT-2 style model (important differences from the original: no weight
+tying or bias on the QKV weights, no dropout, and PyTorch default weight initialisation).&lt;/li&gt;
+&lt;li&gt;With two seeds.&lt;/li&gt;
+&lt;li&gt;With two options for smart initialisation, and one of them only with one seed.&lt;/li&gt;
+&lt;li&gt;Over a number of tokens chosen to be Chinchilla-optimal for the baseline non-LoRE model. &lt;sup class="footnote-ref" id="fnref-7"&gt;&lt;a href="#fn-7"&gt;7&lt;/a&gt;&lt;/sup&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Even in order to say anything definitive about whether LoRE works for this specific
+architecture, it would be necessary to do tests over a much larger number of random
+seeds and different lengths (in terms of number of tokens) of training run:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Maybe the effect was just limited to the seeds I tested?  Two is better than one,
+but three would be better still, four even better, and so on.&lt;/li&gt;
+&lt;li&gt;Maybe the effect disappears in longer training runs?  Perhaps LoRE causes some kind
+of loss in capacity that stops models from improving past some point.  Intuitively
+that could make sense -- if you imagine training as being in some sense compressing information
+from the training data into the parameters, having fewer parameters is clearly going
+to limit your capacity in some sense.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;To get solid results on whether smart initialisation is a good thing, you'd need to try
+a number of seeds to see whether the poor performance of the "correct" smart initialisation
+against the "incorrect" one worked out as a general result.  And if it did, why might that
+be?&lt;/p&gt;
+
+&lt;p&gt;Beyond that: the apparent improvement in the loss from input-only LoRE is something
+that came up in these experiments.  Maybe it would turn out to be a real thing, maybe not,
+but the real benefit that Andrew mentioned in his &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-fw-fwedu-5050-DEPRECATED/discussions/1#6aa94b7ff679b1d676c0a74a"&gt;original message&lt;/a&gt;
+was about something quite different: LoRE saves a &lt;em&gt;lot&lt;/em&gt; of parameters and only (as he
+said later) costs a small amount of loss.  If you reinvest those saved parameters in
+a deeper network with more layers, you can hopefully gain back the loss that you,
+um, lost, and then some -- and wind up with a more capable model.&lt;/p&gt;
+
+&lt;p&gt;So important further tests (which I think I will do, but later on) would be:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Isoparameter tests:
+&lt;ul&gt;
+&lt;li&gt;Input-only LoRE saves 32M parameters, so what happens if you
+"spend" that on extra layers?  Or alternatively make the model wider (in terms
+of its embedding dimension)?  Or some combination of both?&lt;/li&gt;
+&lt;li&gt;Output-only LoRE likewise.&lt;/li&gt;
+&lt;li&gt;And, of course, both input and output.&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;li&gt;Isocompute tests.  Notably, input-only LoRE doesn't save you much compute, as
+I mentioned earlier -- embedding layers are cheap in terms of compute, if not in terms
+of parameters.  So here perhaps it would be more interesting to see what happens
+if you did output-only LoRE, but trained the model on more data so that the total
+training compute budget matched.  Would you gain back the lost loss?&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;It's worth noting that in my Chinchilla experiments, I scaled up the model by &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt;.
+That's about a 41% increase, which is quite close to the 39% we save by using LoRE on
+both ends.  So if the loss improvements
+carried over, perhaps it might work?  On the other hand, those
+models were also trained on 41% more tokens, so...&lt;/p&gt;
+
+&lt;p&gt;So there's a huge number of further experiments that would be needed to build out these
+results -- and that's even before we move beyond this specific architecture.  Andrew
+reports solid results with his setup, and his model Maba does appear to be quite different.
+But would it extend to a Qwen-style one?  Or Mistral?&lt;/p&gt;
+
+&lt;p&gt;Next, there's what happens with scaling.  LoRE is valuable in small models because
+embeddings and the output head are such a large proportion of the total parameter
+count.  My guess is that it would become increasingly unhelpful as models got larger.&lt;/p&gt;
+
+&lt;p&gt;To take an extreme case, looking at &lt;a href="https://arxiv.org/abs/2607.24653"&gt;the Kimi K3 paper&lt;/a&gt;, it has a vocab size
+of 160k, and its hidden dimension (which I'll assume is what the embeddings are using)
+is 7,168.  That means that the embedding layer uses something like 1,146,880,000 parameters, as
+does the output head, for a total of ~2.3B parameters (assuming they're not using weight tying,
+which seems likely for a monster like this).
+It has 104.2B active parameters
+per token, so if it were to use LoRE you'd save something of the order of 2% of the active parameter
+count.  But for purposes of "reinvesting" in further layers, the real comparison point is the
+total number of parameters, not the active ones, and with about 2.8T total, the
+number used for embeddings is less than 0.1%.  It doesn't sound
+like it would help much.&lt;/p&gt;
+
+&lt;p&gt;Unless, of course, the benefit of the input-only LoRE loss improvement actually turned
+out to be a real thing, and didn't weaken as the model was scaled...&lt;/p&gt;
+
+&lt;p&gt;But anyway, that's speculation.  I think a good set of experiments for that would
+be to try the same training runs as before, but for larger models.  Maybe just trying
+GPT-2 medium and large sizes would be a good start?&lt;/p&gt;
+
+&lt;p&gt;Lots of work.  If I had access to Google's resources then I think I'd be kicking
+off a bunch of training runs.  OTOH if I had access to Google's resources I probably
+wouldn't be blogging about this...&lt;/p&gt;
+
+&lt;p&gt;I think that there's one thing I'm going to take away from this.  LoRE is an
+interesting intervention -- and I think is well worth trying out on any new model
+where vocab matrices are a significant fraction of the parameters,
+just to see if it helps.  I'll be doing that in future.&lt;/p&gt;
+
+&lt;p&gt;And if anyone else out there wants to try LoRE-style training runs, I'd love to hear
+from you.  Any results, positive or negative, would be really interesting.&lt;/p&gt;
+
+&lt;p&gt;Thanks for reading!  And many, many thanks to Andrew for suggesting this as an idea
+to play around with -- it's been fun :-)&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;This is often written &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;Z&lt;/mi&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mi&gt;X&lt;/mi&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;T&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt; to reflect the fact that weights are generally
+kept in &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;out&lt;/mtext&gt;&lt;/msub&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;in&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; format, at least in PyTorch, but that's
+really &lt;a href="/2025/02/basic-neural-network-matrix-maths-part-2"&gt;an implementation detail&lt;/a&gt;.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;I'll write more about LoRA in the future -- I've been playing with it a bit -- but
+essentially, what you do is:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Freeze all of the matrices that make up your parameters (eg. in PyTorch, set
+&lt;code&gt;requires_grad&lt;/code&gt; to &lt;code&gt;False&lt;/code&gt;).&lt;/li&gt;
+&lt;li&gt;&lt;p&gt;For each matrix that you want to train (which might not be all of them -- for fine-tuning,
+people often only train a subset), you add on a &lt;em&gt;low-rank adapter&lt;/em&gt;, which
+is a pair of matrices like our &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;A&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;B&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; above, and which sits "beside" the
+existing one, like this:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/diagrams/low-rank-vocab-matrices/lora.svg" alt="LoRA schematic" title="LoRA schematic" style="width: 50%"&gt;&lt;/p&gt;
+
+&lt;p&gt;Gradient tracking is &lt;em&gt;enabled&lt;/em&gt; on the matrices in the low-rank adapter, and
+its results are added to the results of the original weights.&lt;/p&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;The idea is that the adapter pair learns to create a "diff" to the results of
+the original weights, which allows a certain amount of training of that part of
+your model.&lt;/p&gt;
+
+&lt;p&gt;And it works surprisingly well.  Again: I'll write about this in more depth in the future.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;When I was discussing this with an LLM -- sadly I've forgotten which -- the
+&lt;em&gt;softmax bottleneck&lt;/em&gt; came up here, as it did in later correspondence with Andrew.
+That's a reference to &lt;a href="https://arxiv.org/abs/1711.03953"&gt;this paper&lt;/a&gt;.  I'll need to
+work through it carefully at some later point, but the relevant point appears to be
+that the rank (which we can loosely read as how many independent ways the predictions can vary from one context to another) of the values coming out of softmax
+is limited by the rank of what is going into it.  If we force our (in my GPT-2
+small case) 768-dimensional embeddings through a 128-dimensional bottleneck, we're
+reducing their inherent rank, and it's that reduced rank that will drive softmax's,
+so the results will be worse than what you'd get with the original 768.  Seems logical enough.&lt;/p&gt;
+
+&lt;p&gt;Linkrot-proof reference: Yang, Z., Dai, Z., Salakhutdinov, R., &amp;amp; Cohen, W. W. (2018). Breaking the
+softmax bottleneck: A high-rank RNN language model. In &lt;em&gt;International Conference on Learning Representations (ICLR)&lt;/em&gt;.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-4"&gt;
+&lt;p&gt;Thanks to Claude Opus 5.5 for pointing me at the central limit theorem.  I definitely need to brush
+up on my statistics, and I'm sure I knew about it at some point back in the
+90s...&amp;#160;&lt;a href="#fnref-4" class="footnoteBackLink" title="Jump back to footnote 4 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-5"&gt;
+&lt;p&gt;Modulo CUDA jitter of various flavours -- though even then, &lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;a while back&lt;/a&gt; I did
+two training runs on 8x A100 machines with the same config, months apart, and
+the Safetensors files were identical bit-for-bit.  So I think the effect of that
+in my setup is minuscule.&amp;#160;&lt;a href="#fnref-5" class="footnoteBackLink" title="Jump back to footnote 5 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-6"&gt;
+&lt;p&gt;The temptation to dig into the details of why, and exactly what the mistaken
+smart initialisation did to the variance of the "virtual" weights &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mi&gt;W&lt;/mi&gt;&lt;mi&gt;&amp;#x02032;&lt;/mi&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;/math&gt;, is strong.
+But I will resist.&amp;#160;&lt;a href="#fnref-6" class="footnoteBackLink" title="Jump back to footnote 6 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-7"&gt;
+&lt;p&gt;When I ran a draft of this post past my &lt;a href="/2026/07/ai-use"&gt;editorial board of LLMs&lt;/a&gt;,
+Grok made the point that perhaps the apparent benefit of having LoRE
+only on the input embeddings might have been due to that model seeing significantly
+more tokens per parameter.  It's an interesting thought!  If we do the maths,
+the input-only and output-only LoRE models were trained on ~25 tokens per parameter
+and the both-ends ones were trained on about 33, vs 20 for the non-LoRE ones.&lt;/p&gt;
+
+&lt;p&gt;However, in my Chinchilla
+experiments, I only got 0.09 improvement in loss by training on 40 tokens per parameter
+rather than 20.  Now, I'm sure that gain mostly happened early in the run -- overtraining
+is subject to diminishing returns -- but the result of 0.073 for input-only LoRE would
+imply that almost all of it happened in the first extra 5 tokens per parameter, which seems dubious.&lt;/p&gt;
+
+&lt;p&gt;Those are different training runs with different seeds, and were using my JAX code, which has a
+better baseline loss than my PyTorch code, so we can't compare
+them directly.  But it feels unlikely that the effect would be drastically different.&lt;/p&gt;
+
+&lt;p&gt;Also, if we use &lt;em&gt;reductio ad absurdum&lt;/em&gt; on Grok's logic, it does sound a bit weak --
+if we get rid of parameters but train on the same number of
+tokens, the higher tokens per parameter will not in general counteract the damage from the smaller model.
+Imagine, for example, removing 32M parameters worth of Transformer layers and training
+on the Chinchilla-optimal tokens for the size of the model before you did that.  I'm not
+going to run the experiment, but I'd be... somewhat more than surprised if it improved the model.&amp;#160;&lt;a href="#fnref-7" class="footnoteBackLink" title="Jump back to footnote 7 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/10/low-rank-vocab-matrices</guid>
+      <pubDate>Fri, 09 Oct 2026 16:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Why do OpenAI's GPT-2 weights beat mine?  Part five: data quality</title>
       <link>https://www.gilesthomas.com/2026/10/why-do-openai-gpt2-weights-beat-mine-5-data-quality</link>
@@ -2352,7 +3865,7 @@ next steps it's best to have something a bit more tangible in mind.&lt;/p&gt;
 
 &lt;p&gt;&lt;small id="diagram-5"&gt;&lt;strong&gt;Diagram 5&lt;/strong&gt;: The &lt;code&gt;xs&lt;/code&gt; tensor as a 3-D cuboid&lt;/small&gt;&lt;/p&gt;
 
-&lt;p&gt;&lt;img src="/post-assets/gpt-2-to-moe/xs-cuboid-3d.svg" alt="The &amp;lt;code&amp;gt;md5-51d64b5df1cbb927ae70832f73bfe7cb&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" title="The &amp;lt;code&amp;gt;xs&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src="/post-assets/gpt-2-to-moe/xs-cuboid-3d.svg" alt="The &amp;lt;code&amp;gt;md5-b962c69554a46862150bf876b8a9d572&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" title="The &amp;lt;code&amp;gt;xs&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" /&gt;&lt;/p&gt;
 
 &lt;p&gt;Every dot in that cuboid is a single number.  A single context vector is the numbers
 as you follow a line from the "front" of the cube -- the &lt;code&gt;batch_size&lt;/code&gt; &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; &lt;code&gt;sequence_length&lt;/code&gt;
@@ -7206,394 +8719,6 @@ compare models easily.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" t
 </description>
       <guid isPermaLink="true">/2026/07/why-do-openai-gpt2-weights-beat-mine-3-overtraining</guid>
       <pubDate>Fri, 31 Jul 2026 01:15:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Why do OpenAI's GPT-2 weights beat mine?  Part two: the bugfix</title>
-      <link>https://www.gilesthomas.com/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix</link>
-      <description>&lt;p&gt;I'm digging into why my GPT-2 style models score worse on an instruction-following eval than OpenAI's original weights;
-I gave the details in &lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro"&gt;this post&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;While I was writing up the results of my first experiment into possible causes,
-I ran the post past ChatGPT -- I always use an "editorial board" of AIs to check my
-posts for flow, style, and any technical errors (though all writing is always mine).
-It took a look at the eval code that I was running, and highlighted a bug.&lt;/p&gt;
-
-&lt;p&gt;Luckily, it doesn't change the important results -- OpenAI's models continue to be
-better than mine at instruction-following. But it was
-enough to change the baseline numbers, re-ordering how well my own models did.
-So I fixed it and regenerated the baseline
-so that future experiments are based on solid ground.&lt;/p&gt;
-&lt;h2 id="the-bug"&gt;The bug&lt;/h2&gt;
-
-&lt;p&gt;The eval takes a model, and trains it over multiple epochs on a split of a subset of the Alpaca
-instruction-following dataset.  At the end of each epoch, it evaluates
-the resulting model against a held-back validation split; if the eval loss starts
-rising, it bails out.  Finally, it runs a test split of the dataset through the resulting
-model, and saves the result.&lt;/p&gt;
-
-&lt;p&gt;Once I've run it for a bunch of different models, I use an LLM-as-a-judge script
-to get GPT 5.5 to score results -- for each question-answering result, it sees all
-of the responses for all of the models &lt;a href="/2026/01/llm-from-scratch-30-digging-into-llm-as-a-judge"&gt;in the same prompt&lt;/a&gt;, shuffled in order each time,
-to try to make it judge models against each other as consistently as possible.&lt;/p&gt;
-
-&lt;p&gt;Now, the idea was that the generation of the test split answers would use the model from the epoch prior
-to the rising-loss one.  So I had code like this:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;epoch&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;100&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-        &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;train&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;input_batch&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;target_batch&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;tqdm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;train_loader&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;desc&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Epoch &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;epoch&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-            &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;zero_grad&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-            &lt;span class="n"&gt;loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calc_loss_batch&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
-                &lt;span class="n"&gt;input_batch&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;target_batch&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;device&lt;/span&gt;
-            &lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="n"&gt;loss&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;backward&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-            &lt;span class="n"&gt;optimizer&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;step&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-        &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eval&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-        &lt;span class="n"&gt;val_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;calc_loss_loader&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;val_loader&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;device&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;eval_iter&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;last_val_loss&lt;/span&gt; &lt;span class="ow"&gt;is&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt; &lt;span class="ow"&gt;or&lt;/span&gt; &lt;span class="n"&gt;last_val_loss&lt;/span&gt; &lt;span class="o"&gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;val_loss&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="n"&gt;last_val_loss&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;val_loss&lt;/span&gt;
-            &lt;span class="n"&gt;last_params&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;state_dict&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-            &lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Val loss still decreasing, continuing&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-        &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
-            &lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Val loss rising, bailing out&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-            &lt;span class="k"&gt;break&lt;/span&gt;
-
-    &lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;load_state_dict&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;last_params&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Each time the validation loss went down, I wanted to store the model's parameters
-in &lt;code&gt;last_params&lt;/code&gt; so that they could be restored later in that last line.&lt;/p&gt;
-
-&lt;p&gt;If you look closely, the error is pretty obvious.  &lt;code&gt;model.state_dict()&lt;/code&gt; does not return
-a copy of the model's parameters -- it produces a dictionary containing references
-to the parameters inside the model.  So although I was trying to stash away the parameters
-in &lt;code&gt;last_params&lt;/code&gt; each time loss went down, so that we had a copy of the ones that
-were live in the epoch prior to the rising-loss one, what I was actually doing was
-just pointlessly saving a reference to the "live" params.  The call to
-&lt;code&gt;model.load_state_dict(last_params)&lt;/code&gt; was essentially a no-op.&lt;/p&gt;
-
-&lt;p&gt;The solution was simple enough:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;copy&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;deepcopy&lt;/span&gt;
-&lt;span class="o"&gt;...&lt;/span&gt;
-        &lt;span class="n"&gt;last_params&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;deepcopy&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;state_dict&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That was enough to make the code do what it was meant to do.&lt;/p&gt;
-
-&lt;p&gt;While I was there, I also noticed that the evaluation code was only using the first
-five batches in my eval dataset.  This code was originally adapted from an eval
-in "&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
-where the eval was run much more frequently and had to be super-fast.  Because
-my own code ran it more rarely, it made more sense to use all of it.
-Given that I was going to completely re-run
-the script to generate the test responses, I figured that I might as well fix that
-at the same time.&lt;/p&gt;
-
-&lt;h2 id="a-new-baseline"&gt;A new baseline&lt;/h2&gt;
-
-&lt;p&gt;I re-ran the fixed script on all of the models I'm comparing, and ran that past
-the GPT 5.5 judge; here's what I got:&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test loss&lt;/th&gt;
-  &lt;th&gt;Old IFT epochs&lt;/th&gt;
-  &lt;th&gt;Old IFT score&lt;/th&gt;
-  &lt;th&gt;Old IFT rank&lt;/th&gt;
-  &lt;th&gt;New IFT epochs&lt;/th&gt;
-  &lt;th&gt;New IFT score&lt;/th&gt;
-  &lt;th&gt;New IFT rank&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
-  &lt;td&gt;3.231442&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;41.62&lt;/td&gt;
-  &lt;td&gt;1&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;42.41&lt;/td&gt;
-  &lt;td&gt;1&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;3.418784&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;19.25&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;18.12&lt;/td&gt;
-  &lt;td&gt;5&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;3.420089&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;3&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;14.66&lt;/td&gt;
-  &lt;td&gt;11&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;5&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;20.72&lt;/td&gt;
-  &lt;td&gt;3&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
-  &lt;td&gt;3.476802&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;4&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;12.94&lt;/td&gt;
-  &lt;td&gt;15&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;7&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;16.98&lt;/td&gt;
-  &lt;td&gt;8&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
-  &lt;td&gt;3.499677&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;26.73&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;26.11&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.538161&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;17.79&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;13.68&lt;/td&gt;
-  &lt;td&gt;11&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.577761&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;10.29&lt;/td&gt;
-  &lt;td&gt;16&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;9.81&lt;/td&gt;
-  &lt;td&gt;15&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
-  &lt;td&gt;3.673623&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;7&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;20.71&lt;/td&gt;
-  &lt;td&gt;3&lt;/td&gt;
-  &lt;td&gt;&lt;strong&gt;6&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;19.45&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.683835&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-  &lt;td&gt;15.11&lt;/td&gt;
-  &lt;td&gt;9&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-  &lt;td&gt;13.39&lt;/td&gt;
-  &lt;td&gt;12&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.691526&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;14.74&lt;/td&gt;
-  &lt;td&gt;10&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;14.64&lt;/td&gt;
-  &lt;td&gt;9&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
-  &lt;td&gt;3.724507&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;13.25&lt;/td&gt;
-  &lt;td&gt;14&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;13.84&lt;/td&gt;
-  &lt;td&gt;10&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
-  &lt;td&gt;3.729900&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;14.50&lt;/td&gt;
-  &lt;td&gt;12&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;11.30&lt;/td&gt;
-  &lt;td&gt;14&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
-  &lt;td&gt;3.771478&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;16.03&lt;/td&gt;
-  &lt;td&gt;8&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;11.82&lt;/td&gt;
-  &lt;td&gt;13&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb train&lt;/td&gt;
-  &lt;td&gt;3.943522&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;13.73&lt;/td&gt;
-  &lt;td&gt;13&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;8.93&lt;/td&gt;
-  &lt;td&gt;16&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
-  &lt;td&gt;4.134991&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;16.70&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;17.10&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
-  &lt;td&gt;4.166892&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;18.68&lt;/td&gt;
-  &lt;td&gt;5&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;17.28&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;Let's dig into those numbers.&lt;/p&gt;
-
-&lt;h2 id="training-epochs"&gt;Training epochs&lt;/h2&gt;
-
-&lt;p&gt;Let's look into the number of training epochs first; I've highlighted the models for which it changed.&lt;/p&gt;
-
-&lt;p&gt;For the "Cloud FineWeb, 8x A100 40 GiB" model, I think that was a result of the change
-to the number of validation samples.&lt;/p&gt;
-
-&lt;p&gt;For the two JAX models, it's a bit more of a mystery.  There may be some part of the
-same "more eval data" variation there, but I have a suspicion that there's something
-more, related to dropout.&lt;/p&gt;
-
-&lt;p&gt;My methodology to date has been that the IFT training runs
-should use the same dropout setting as the original base model training run (I'll
-come back to this in &lt;a href="/2026/08/why-do-openai-gpt2-weights-beat-mine-4-ift-dropout"&gt;a later post&lt;/a&gt;).   However, due to differences between the JAX
-training script and the evaluation code (which is PyTorch), matching the dropout
-rate when evaluating those models is a bit fiddly and error-prone.&lt;/p&gt;
-
-&lt;p&gt;I am 100% sure that
-I got it right this time around -- I've checked and double-checked the specific commands
-I ran.
-But I think -- from what I remember doing -- that
-I might have messed it up the previous time.
-That's not certain, though -- just a suspicion based on half-memories
-of some commands I ran several weeks ago, which never wound up in my &lt;code&gt;.bash_history&lt;/code&gt;
-(too many terminals open at once).&lt;/p&gt;
-
-&lt;h2 id="the-ranking"&gt;The ranking&lt;/h2&gt;
-
-&lt;p&gt;For the IFT scores, remember that they're not strongly comparable between runs.
-Let's imagine that the LLM judge is given the following answers to the question "Who was the author of &lt;em&gt;Pride and Prejudice&lt;/em&gt;?"&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;"Jane Austen"&lt;/li&gt;
-&lt;li&gt;"The author of 'Pride and Prejudice' was Jane Austen"&lt;/li&gt;
-&lt;li&gt;"The author of 'Pride and Prejudice' was Sarah Palin"&lt;/li&gt;
-&lt;li&gt;"The author of 'Pride and Prejudice' was 'Pride and Prejudice'"&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;In some cases it might treat the first two as being 100/100, in others it
-might give the second 95/100 for being too wordy.  Likewise, in some cases it might
-rank the last two as 0/100 for being wrong, in others it might give the "Sarah Palin"
-one 5/100 for at least being the name of a person rather than complete nonsense.&lt;/p&gt;
-
-&lt;p&gt;Now, we always ask the LLM to judge all of the models' answers for a given question in
-one go, so at least we can be sure that it will be consistent for a given prompt about
-a given question.  But what we can't keep consistent is which way it leans between
-different runs, or different questions within the same run.  Sometimes it might be
-feeling "generous" and give the Sarah Palin answer a bit of grace, other times
-it might be harsher.&lt;/p&gt;
-
-&lt;p&gt;So there's a significant amount of noise there; my rule of thumb is that a variation of
-a point or two is within that noise, so OpenAI medium going from 41.62 to 42.41 is
-pretty much meaningless, and likewise "JAX, with MHA bias, no dropout"'s move from
-19.25 to 18.12.&lt;/p&gt;
-
-&lt;p&gt;So what's important is the relative ranking -- which is first, which is second,
-and so on.  Naturally, you have to allow for the fact that -- for example -- if one
-model goes from position 11 to position 3, like "JAX, no MHA bias, no dropout"
-did, then the previous number 3 will have to become number 4, 4 will
-become 5, and so on.  You can see that happening in the results table.  Obviously,
-as other models rise and fall, that has further knock-on effects.&lt;/p&gt;
-
-&lt;p&gt;Anyway, with all of those caveats, the good news is that my original mystery remains.
-The OpenAI models were still doing noticeably better than my own ones.  GPT-2 medium
-continued to lead the pack (unsurprisingly, given that it's a bigger model), and
-GPT-2 small was still in second place.  If that had changed, it would have made
-a rather disappointing end to this series: "mystery explained, it was a bug in the
-eval :-("&lt;/p&gt;
-
-&lt;p&gt;But now let's look at my models.&lt;/p&gt;
-
-&lt;p&gt;Firstly, it looked like the "no MHA bias" models might have benefited
-from the extra training -- or from having their dropout settings corrected.  They rose from
-positions 11 and 15 to 3 and 8 respectively -- a huge swing for "JAX, no MHA bias, no dropout",
-and a solid improvement for "JAX, no MHA bias, with dropout".&lt;/p&gt;
-
-&lt;p&gt;Most of the other changes in relative rankings can be explained by those two models
-having been promoted, but there are some other changes.  In particular, three models
-dropped significantly in score (and, as a result, ranking):&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/li&gt;
-&lt;li&gt;"Cloud FineWeb, 8x B200 160 GiB"&lt;/li&gt;
-&lt;li&gt;"Local FineWeb train"&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;My suspicion -- a very weakly-held hypothesis, but an interesting one -- is that those models had previously been &lt;em&gt;benefiting&lt;/em&gt; from the bug.&lt;/p&gt;
-
-&lt;p&gt;Remember that the signal we're using to stop training is that the validation loss
-starts rising.  We're using that as a proxy for overfitting, which in turn we're using as
-a proxy for "this model has had as much training
-on this data as it needs for the eval".&lt;/p&gt;
-
-&lt;p&gt;But there's no guarantee that the connection is there.  Perhaps the models weren't
-overfitting and if we'd waited for another epoch or two, the validation loss might have
-started falling again.  Or maybe some amount of overfitting would be beneficial for this
-eval?&lt;/p&gt;
-
-&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
-
-&lt;p&gt;There's probably a near-infinite amount of digging in that I could do here.
-But I think it's best to stop.  The bugfix was important because it meant that the
-eval was now doing what I thought it was doing.&lt;/p&gt;
-
-&lt;p&gt;Importantly, it doesn't change the puzzling
-fact that my models were worse at this eval than OpenAI's, which is what I'm trying to untangle.
-And it means that I can now lean more confidently on the baseline numbers.&lt;/p&gt;
-
-&lt;p&gt;So now it's time to actually start changing things to see if I can close the gap!&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-3-overtraining"&gt;Here's a link to the next post in this series: does overtraining help?&lt;/a&gt;.&lt;/p&gt;
-</description>
-      <guid isPermaLink="true">/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix</guid>
-      <pubDate>Thu, 30 Jul 2026 19:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
