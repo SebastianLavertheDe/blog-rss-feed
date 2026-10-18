@@ -7,7 +7,588 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Sun, 18 Oct 2026 14:24:17 +0000</lastBuildDate>
+    <lastBuildDate>Sun, 18 Oct 2026 17:56:09 +0000</lastBuildDate>
+    <item>
+      <title>Inside the Intel 8087 chip: floating-point addition and subtraction</title>
+      <link>http://www.righto.com/2026/10/8087-addition-subtraction-microcode.html</link>
+      <description>&lt;p&gt;In 1980, Intel introduced the 8087, a chip that made floating-point operations much faster
+in the IBM PC and other systems.
+Although the 8087 supports advanced operations such as tangents, square roots, and logarithms,
+this article focuses on basic arithmetic operations: addition and subtraction.
+The 8087 provided a spectacular speed improvement over the 8086 processor, speeding up
+addition by a factor of almost 100, and complicated operations by even more.&lt;span id="fnref:speedup"&gt;&lt;a class="ref" href="#fn:speedup"&gt;1&lt;/a&gt;&lt;/span&gt;
+In this article, I examine the 8087's microcode and circuitry to explain exactly how
+floating-point addition and subtraction are implemented, including numerous special
+cases for infinities and other special values.&lt;/p&gt;
+&lt;p&gt;To explore the 8087's circuitry, I popped the lid off a chip with a chisel
+and used a microscope to create the high-resolution image below.
+The microcode ROM is the large rectangular region in the center of the die, holding the 1648 micro-instructions that control the chip.
+The bottom half of the chip (red box) is the datapath, the circuitry that performs floating-point calculations on 80-bit values.&lt;span id="fnref:bits"&gt;&lt;a class="ref" href="#fn:bits"&gt;2&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/8087-datapath-zoom-diagram.jpg"&gt;&lt;img alt="A close-up of the 8087's datapath, showing functional blocks that are used for addition and subtraction. Click this image (or any other) for a larger version." class="hilite" height="729" src="https://static.righto.com/images/8087-fadd/8087-datapath-zoom-diagram-w600.jpg" title="A close-up of the 8087's datapath, showing functional blocks that are used for addition and subtraction. Click this image (or any other) for a larger version." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A close-up of the 8087's datapath, showing functional blocks that are used for addition and subtraction. Click this image (or any other) for a larger version.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;Zooming in on the datapath shows the functional blocks that are important for
+addition and subtraction. 
+The key component is the integer adder, located in the center. It receives one argument from
+the B register and another argument from a component such as the temporary registers or
+the stack registers.
+The adder's output is stored in the sum register.
+The shifter can shift the bits in a value to the left or the right.
+The shifter occupies a lot of space on the die because its circuitry allows a value to
+be rapidly shifted by an arbitrary number of bits.
+Floating-point operations make heavy use of the shifter to align values; the leading zero
+circuitry counts the number of zero bits or bytes on the left of a value so they can
+be shifted away.
+The exponent converter processes exponents, detecting
+overflows and underflows.
+These specialized circuits helped the 8087 achieve its high performance.&lt;/p&gt;
+&lt;h2&gt;Floating-point addition and subtraction&lt;/h2&gt;
+&lt;p&gt;Most computers use integers as their basic representation for numbers.
+But many applications need to use numbers with a fractional part, such as 1.23.
+Moreover, integers have a very limited range: a 32-bit integer can express numbers from
+about -2 billion to 2 billion.
+To solve these problems,&lt;span id="fnref:problems"&gt;&lt;a class="ref" href="#fn:problems"&gt;3&lt;/a&gt;&lt;/span&gt; computers usually implement floating-point numbers, which provide
+fractional numbers over an enormous range.&lt;/p&gt;
+&lt;p&gt;In most cases, a floating-point number is represented by &lt;i&gt;sign&lt;/i&gt; &amp;times; &lt;i&gt;significand&lt;/i&gt; × 2&lt;sup&gt;&lt;i&gt;exponent&lt;/i&gt;&lt;/sup&gt;.
+The significand is a binary number of the form &lt;code&gt;1.bbb…&lt;/code&gt;:
+a leading 1, followed by the binary point (the binary equivalent of the decimal point) and the rest of the bits.&lt;span id="fnref:leading-one"&gt;&lt;a class="ref" href="#fn:leading-one"&gt;4&lt;/a&gt;&lt;/span&gt;
+In a binary number, each bit represents a power of 2. For the fractional part, the part
+after the binary point, the powers of 2 are negative: 2&lt;sup&gt;-1&lt;/sup&gt;, 2&lt;sup&gt;-2&lt;/sup&gt;,
+and so forth.
+So the binary number 1.1 is 1 + 1/2, or 1.5 in decimal. Similarly, binary 1.0011 is
+1 + 1/8 + 1/16 or 1.1875.
+The exponent allows numbers to escape the limited range of the significand.
+For instance, 1.1 (binary) &amp;times; 2&lt;sup&gt;8&lt;/sup&gt; is 384.
+With larger exponents, floating-point numbers can cover a huge range;
+even a 32-bit short floating-point number covers a range exceeding 10&lt;sup&gt;-36&lt;/sup&gt; to 10&lt;sup&gt;38&lt;/sup&gt;.&lt;/p&gt;
+&lt;p&gt;Floating-point addition and subtraction are more complicated than
+integer operations. Before the numbers can be added (or subtracted), their binary points
+must be aligned, the same as aligning the decimal points for decimal numbers.
+After the operation, the exponent of the result must be adjusted, normalizing the
+significand so it starts with a 1 bit.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/add1.jpg"&gt;&lt;img alt="The steps for a simple floating-point addition." class="hilite" height="189" src="https://static.righto.com/images/8087-fadd/add1-w350.jpg" title="The steps for a simple floating-point addition." width="350" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The steps for a simple floating-point addition.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;The diagram above illustrates a simple floating-point addition: &lt;code&gt;13.5+3.5&lt;/code&gt;.
+The first two lines show the two arguments expressed with an exponent and significand.
+Both arguments are normalized, so the leftmost bit is a 1.
+Before adding, the second argument must be aligned&amp;mdash;making the exponents equal&amp;mdash;by shifting it two positions
+to the right. (The difference between the exponents in this case is two.)
+The values are then added, using integer addition on the aligned significands.
+In this case, adding the values causes an overflow, an "extra" bit
+on the left.
+The result must be normalized by shifting it one position to the right and incrementing the
+exponent by 1.&lt;/p&gt;
+&lt;p&gt;Floating-point subtraction is similar, but has a few more complications.
+The result can be positive, negative, or zero. The result can be orders of magnitude smaller than the arguments.
+The figure below shows a basic subtraction, 8-7.5.
+As with addition, the second argument is shifted right so the exponents match (i.e., the binary points line up).  The two significands are subtracted with integer subtraction.
+The result is normalized by shifting to the left so the top bit is a 1. Unlike the addition case, normalization may require a large shift.
+In this case, the shift is four bits and the exponent is decremented by 4 to yield the result.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/sub1.jpg"&gt;&lt;img alt="A simple floating-point subtraction." class="hilite" height="191" src="https://static.righto.com/images/8087-fadd/sub1-w320.jpg" title="A simple floating-point subtraction." width="320" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A simple floating-point subtraction.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;One complication with subtraction is that the result can be negative. If that occurs,
+the significand is made positive, and the sign of the result is flipped.
+Subtraction can also result in zero. In this case, normalization cannot be performed; instead,
+a special value +0 or -0 is returned as appropriate.&lt;/p&gt;
+&lt;h2&gt;Relevant hardware details of the 8087&lt;/h2&gt;
+&lt;p&gt;In this section, I'll explain some features of the 8087 that play important roles
+in the microcode implementation of addition and subtraction.&lt;/p&gt;
+&lt;p&gt;The 8087 supports a variety of data types, but
+internally, the 8087 stores numbers in an 80-bit format called "temporary real".
+A temporary real number has a sign bit, a 15-bit exponent, and a 64-bit significand.
+The 15-bit exponent allows numbers that are absurdly large, over 10&lt;sup&gt;4932&lt;/sup&gt;.
+The 64-bit significand supports extremely accurate numbers.
+The exponent is stored with a "bias" of 16383 added to it. Thus, the stored exponent is always positive, even if the real
+exponent is negative. For instance, an exponent of 1 is stored as &lt;code&gt;0x4000&lt;/code&gt;, and an exponent of -16 is stored as &lt;code&gt;0x3fef&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/registers.jpg"&gt;&lt;img alt="The 80-bit temporary real format and the register formats. The dot indicates the binary point, analogous to the decimal point." class="hilite" height="209" src="https://static.righto.com/images/8087-fadd/registers-w550.jpg" title="The 80-bit temporary real format and the register formats. The dot indicates the binary point, analogous to the decimal point." width="550" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The 80-bit temporary real format and the register formats. The dot indicates the binary point, analogous to the decimal point.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;The 8087 has eight internal registers, organized as a stack.
+The programmer uses these registers when programming the 8087.
+Each register holds an 80-bit floating-point number.
+To optimize performance,
+each value in the register stack also has an associated "tag" value:
+zero, valid, special, or empty.
+A value of zero is tagged as &lt;em&gt;zero&lt;/em&gt;.
+A "normal" floating-point value is tagged as &lt;em&gt;valid&lt;/em&gt;. If the value is infinity, Not a Number (NaN), or a denormalized value,
+then it is tagged as &lt;em&gt;special&lt;/em&gt;.
+Finally, an &lt;em&gt;empty&lt;/em&gt; tag indicates that a register does not hold a value; this allows detection of
+stack underflow (reading an empty register) or stack overflow (storing to a non-empty
+register).&lt;/p&gt;
+&lt;p&gt;The 8087 also has temporary registers that it uses internally.
+&lt;code&gt;tmpA&lt;/code&gt; and &lt;code&gt;tmpB&lt;/code&gt; are 80-bit registers, along
+with two tag bits.
+However, &lt;code&gt;tmpC&lt;/code&gt; is different: it doesn't have a sign, exponent, or tag.
+Moreover,
+the significand is 68 bits; &lt;code&gt;tmpC&lt;/code&gt; has an additional
+bit to prevent overflow and three additional low-order bits for rounding, known as
+&lt;em&gt;guard&lt;/em&gt;, &lt;em&gt;round&lt;/em&gt;, and &lt;em&gt;sticky&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;In the microcode,
+each 16-bit micro-instruction performs one low-level operation.
+Many of the operations move data from one register to another.
+Other operations provide conditional jumps, subroutine calls, and returns.&lt;/p&gt;
+&lt;p&gt;The heart of the 8087's processing is the 69-bit integer adder, which I discussed &lt;a href="https://www.righto.com/2026/06/intel-8087-adder-reverse-engineered.html"&gt;here&lt;/a&gt;.
+(The adder has more than 64 bits because it has three rounding bits and a couple of
+additional high-order bits for overflow and multiplication.)
+Integer addition takes two micro-instructions. The first micro-instruction
+specifies the first argument to add and selects various options such as
+carry and rounding.
+(For subtraction, an option complements the second argument.)
+The second argument to the adder always comes from the &lt;code&gt;B&lt;/code&gt; register, which confusingly is
+unrelated to the &lt;code&gt;tmpB&lt;/code&gt; register.
+The result of the addition operation is placed in a special register called the sum register.
+A second micro-instruction (which may be many instructions after the first) moves the result from the sum register to a destination.&lt;/p&gt;
+&lt;p&gt;Floating-point also makes extensive use of the bit shifter, which shifts a 68-bit value
+by an arbitrary number of positions, left or right; I wrote about it &lt;a href="https://www.righto.com/2020/05/die-analysis-of-8087-math-coprocessors.html"&gt;here&lt;/a&gt;.
+Like the adder, a bit shift operation takes two micro-instructions: the first moves a value to the shifter and
+configures the direction and amount of shift. The second micro-instruction
+moves the result from the shifter to a destination.&lt;/p&gt;
+&lt;h2&gt;The addition/subtraction microcode&lt;/h2&gt;
+&lt;p&gt;The 8087 implements almost all of its operations in microcode.
+The basic math operations (addition, subtraction, multiplication,
+and division) start by executing the same microcode (at decimal address &lt;code&gt;#0001&lt;/code&gt;.
+The microcode moves the two arguments into temporary registers &lt;code&gt;tmpA&lt;/code&gt; and &lt;code&gt;tmpB&lt;/code&gt;.
+Normally, these arguments are taken from the stack registers. The arguments can also
+be taken from memory, but I won't discuss that here.&lt;/p&gt;
+&lt;p&gt;Next, the microcode does a micro-subroutine call to handle the specific operation type.
+The 8087's microcode engine has a tiny ROM that holds a table of addresses, targets for microcode jumps or
+subroutine calls.
+Target 0 is special, however; it has three different addresses for multiplication, division,
+or addition/subtraction.
+(This is implemented by special-case circuitry in the ROM. When you're designing the chip, you can
+do weird, hacky optimizations like this if you want.)&lt;/p&gt;
+&lt;p&gt;The addition/subtraction micro-subroutine starts at address &lt;code&gt;#0232&lt;/code&gt;; this microcode
+is shown below.  The control flow is complicated, so I've put a flowchart in the footnotes.&lt;span id="fnref:flowchart"&gt;&lt;a class="ref" href="#fn:flowchart"&gt;5&lt;/a&gt;&lt;/span&gt;
+The microcode first handles the zero cases 0+0 or 0-0.
+Next, it subtracts the exponents of the two arguments.
+If the first argument has a smaller exponent (i.e., the result is negative), the arguments
+are swapped so the argument with the larger argument is first.
+(The 8087 keeps track of the sign of the result in the "sign latch"; if exchanging
+the arguments would change the sign, the latch is toggled at &lt;code&gt;#0244&lt;/code&gt;.)&lt;/p&gt;
+&lt;style&gt;
+  pre.microcode {font-family: courier, fixed; padding: 10px; background-color: #f5f5f5; display:inline-block;border:none;font-size:90%; height: 200px; overflow-y: scroll; resize:vertical;}
+  pre.microcode span {color: green; font-style:italic; font-family: sans-serif; font-size: 90%;}
+&lt;/style&gt;
+&lt;pre class="microcode"&gt;
+#0232 jmp #0236 if not tmpA:tag ZERO &lt;span&gt;Check for 0+0&lt;/span&gt;
+#0233 jmp #0236 if not tmpB:tag ZERO
+#0234 return if not unsigned sub &lt;span&gt;0+0 same signs&lt;/span&gt;
+#0235 jmp #0263            &lt;span&gt;handle 0+0 different signs&lt;/span&gt;
+#0236 tmpA sign -&gt; sign latch &lt;span&gt;nonzero: tmpA sign to sign latch&lt;/span&gt;
+#0237 tmpB:exp -&gt; Breg
+#0238 adder: tmpA:exp - Breg cin=1 &lt;span&gt;compare exponents&lt;/span&gt;
+#0239 jmp #0245 if adder pos
+#0240 sumreg:frac -&gt; Breg  &lt;span&gt;swap if tmpB's exponent larger&lt;/span&gt;
+#0241 adder: zero - Breg cin=1
+#0242 xchg tmp
+#0243 jmp #0245 if not unsigned sub
+#0244 !sign latch -&gt; sign latch &lt;span&gt;toggle sign if swapping matters&lt;/span&gt;
+#0245 xchg tmp             &lt;span&gt;continue&lt;/span&gt;
+#0246 shift zero R 0 bytes, 0 bits zero
+#0247 call CREATE_DENORM   &lt;span&gt;shift tmpB to match exponents&lt;/span&gt;
+#0248 xchg tmp
+#0249 zero -&gt; tmpB:exp     &lt;span&gt;store exp adjustment in tmpB:exp&lt;/span&gt;
+#0250 jmp #0269 if not unsigned sub &lt;span&gt;base addition?&lt;/span&gt;
+#0251 adder: tmpA:frac - Breg cin=1, roundmode &lt;span&gt;tmp A - tmpB&lt;/span&gt;
+#0252 jmp #0256 if adder pos
+#0253 sumreg:frac,rnd -&gt; Breg/rnd &lt;span&gt;negate frac&lt;/span&gt;
+#0254 adder: zero - Breg cin=1, roundmode
+#0255 !sign latch -&gt; sign latch &lt;span&gt;toggle sign&lt;/span&gt;
+#0256 jmp #0275 if Sum register is zero &lt;span&gt;jump if result zero&lt;/span&gt;
+#0257 shift R -&gt; tmpB:frac &lt;span&gt;orig tmpB, from CREATE_DENORM&lt;/span&gt;
+#0258 jmp #0282 if tmpA top bit &lt;span&gt;tmpA not denorm?&lt;/span&gt;
+#0259 jmp #0282 if tmpB:frac[63] &lt;span&gt;tmpB not denorm?&lt;/span&gt;
+#0260 jmp #0289            &lt;span&gt;skip normalization if both denorms&lt;/span&gt;
+#0261 tmpA:exp -&gt; expConv  &lt;span&gt;handle zero&lt;/span&gt;
+#0262 jmp #0264 if not tmpA top bit
+#0263 zero -&gt; tmpA         &lt;span&gt;handle zero cases&lt;/span&gt;
+#0264 0 -&gt; tmpA sign       &lt;span&gt;+0&lt;/span&gt;
+#0265 zero -&gt; tmpA:frac
+#0266 return if not round chop
+#0267 1 -&gt; tmpA sign       &lt;span&gt;return -0&lt;/span&gt;
+#0268 return
+#0269 adder: tmpA:frac + Breg cin=0, roundmode &lt;span&gt;base addition: tmpA + tmpB&lt;/span&gt;
+#0270 jmp #0289 if not sumreg[64] &lt;span&gt;check for overflow&lt;/span&gt;
+#0271 shift 1 sumreg:sign,frac,rnd R &lt;span&gt;shift right 1 bit to normalize&lt;/span&gt;
+#0272 shift R -&gt; sumreg:frac,sign,rnd
+#0273 expAdj++             &lt;span&gt;increment exp adjustment&lt;/span&gt;
+#0274 jmp #0289            &lt;span&gt;wrap up addition&lt;/span&gt;
+#0275 shift sumreg:frac,rnd L 0 bytes, 3 bits &lt;span&gt;zero? shift to get rounding bits&lt;/span&gt;
+#0276 shift L -&gt; sumreg:frac
+#0277 jmp #0261 if Sum register is zero &lt;span&gt;jump if no rounding bits&lt;/span&gt;
+#0278 zero -&gt; sumreg:frac  &lt;span&gt;clear result&lt;/span&gt;
+#0279 jmp #0289 if not tmpA top bit &lt;span&gt;denorm?&lt;/span&gt;
+#0280 expAdj--             &lt;span&gt;if not denorm, adjust exp down&lt;/span&gt;
+#0281 1 -&gt; sumreg:frac,rnd &lt;span&gt;set lowest bit in result&lt;/span&gt;
+#0282 lzcount -&gt; shiftcountH &lt;span&gt;leading zero adjust: handle bytes&lt;/span&gt;
+#0283 shift sumreg:frac,rnd L count byte sticky
+#0284 shift L -&gt; sumreg:frac,rnd
+#0285 lzcount -&gt; shiftcountL &lt;span&gt;handle leading zero bits&lt;/span&gt;
+#0286 shift sumreg:frac,rnd L count bit sticky
+#0287 shift L -&gt; sumreg:frac,rnd
+#0288 shiftcount -&gt; tmpB:exp &lt;span&gt;remember the bit shift amount&lt;/span&gt;
+#0289 sign latch -&gt; tmpA sign &lt;span&gt;store sign&lt;/span&gt;
+#0290 call ADJUST_PRECISION if not FBLD/FBSTP &lt;span&gt;adjust precision if necessary&lt;/span&gt;
+#0291 sumreg:frac -&gt; tmpA:frac &lt;span&gt;store adjusted frac part&lt;/span&gt;
+#0292 tmpB:exp -&gt; Breg     &lt;span&gt;get exp&lt;/span&gt;
+#0293 adder: tmpA:exp - Breg cin=0 &lt;span&gt;adjust by Breg&lt;/span&gt;
+#0294 expAdj -&gt; Breg
+#0295 adder: sumreg:frac + Breg cin=0 &lt;span&gt;adjust by expAdj&lt;/span&gt;
+#0296 sumreg:frac -&gt; expConv &lt;span&gt;exp in expConv to check for overflow, etc&lt;/span&gt;
+#0297 sumreg:frac -&gt; tmpA:exp &lt;span&gt;store exp in tmpA&lt;/span&gt;
+#0298 return               &lt;span&gt;done&lt;/span&gt;
+&lt;/pre&gt;
+
+&lt;p&gt;At address &lt;code&gt;#0247&lt;/code&gt;, the important alignment step takes place, shifting &lt;code&gt;tmpB&lt;/code&gt; so the
+binary point lines up with &lt;code&gt;tmpA&lt;/code&gt;. This is done by the microcode subroutine &lt;code&gt;CREATE_DENORM&lt;/code&gt;.
+The number of positions to shift &lt;code&gt;tmpB&lt;/code&gt; is passed in the sum register; the difference
+between the two exponents was calculated in the previous subtraction.
+(If the difference was negative, it was complemented, so the value passed in is positive.)&lt;/p&gt;
+&lt;p&gt;Typically, the exponent of the result will be the same as the exponent of the (larger) value,
+but not always.
+Changes to the exponent are tracked in two places. First, a special two-bit register that I
+call the exponent adjustment (&lt;code&gt;expAdj&lt;/code&gt;) holds adjustments due to one-bit shifts left or
+right. The hardware initializes the &lt;code&gt;expAdj&lt;/code&gt; register to 1 so there is room for a decrement.
+Larger exponent changes are tracked in the &lt;code&gt;tmpB&lt;/code&gt; register's exponent field;
+the microcode initializes it to 0 at &lt;code&gt;#0249&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;At address &lt;code&gt;#0250&lt;/code&gt;, the microcode makes a key decision: is the low-level operation
+unsigned addition
+or unsigned subtraction?
+Depending on the signs involved, the high-level operation (addition or subtraction) may
+not match the low-level operation.
+For example, for 2+3, -2-3, -2+(-3), and so forth, the two unsigned numbers are added; the result is 5, either positive or negative.
+But for -2+3, 2-3, 3-2, and so forth, the two unsigned numbers are subtracted; the result is 1, either positive or negative.
+I'll use "unsigned addition" to refer to the former cases, where the unsigned magnitudes are added,
+and "unsigned subtraction" to refer to the latter cases, where the unsigned magnitudes are subtracted.
+The key point is that an addition instruction may result in unsigned addition or subtraction,
+and the same with a subtraction instruction.&lt;/p&gt;
+&lt;p&gt;The 8087 has specialized circuitry to determine whether the low-level unsigned operation is addition or subtraction, allowing this to be tested with a conditional.
+The &lt;code&gt;tmpA&lt;/code&gt; and &lt;code&gt;tmpB&lt;/code&gt; values have sign bits of 1 for negative, 0 for positive.
+If you assign 1 to subtraction and 0 to addition, then &lt;code&gt;tmpAsign⊕&amp;#8203;tmpBsign⊕op&lt;/code&gt; yields 1 if the unsigned operation is subtraction and 0 if the unsigned operation is addition.
+The 8087 also has a conditional to test if the signs are the same or different.&lt;/p&gt;
+&lt;h3&gt;Unsigned addition&lt;/h3&gt;
+&lt;p&gt;Since the unsigned addition path is simpler, I'll start with it, at address &lt;code&gt;#0269&lt;/code&gt;.
+The steps are essentially the same as described earlier: aligning the numbers, adding them,
+and normalizing.
+First, the smaller number, in &lt;code&gt;tmpB&lt;/code&gt;, is shifted right until the exponents match.
+Then the (unsigned) values are added.
+If there is a carry from the top bit, the result is shifted right at &lt;code&gt;#0271&lt;/code&gt;.
+Because the result is shifted right one bit,
+the special two-bit &lt;code&gt;expAdj&lt;/code&gt; counter is incremented to track the required exponent adjustment.&lt;/p&gt;
+&lt;p&gt;At &lt;code&gt;#0289&lt;/code&gt;, the result's sign is updated with the value in the sign register.
+The 8087 supports three sizes of values: 80-bit temporary reals, 64-bit reals, or 32-bit
+reals.
+For the smaller sizes, the microcode subroutine &lt;code&gt;ADJUST_PRECISION&lt;/code&gt; trims the value to the
+appropriate size.
+(This is not as trivial as it sounds, since rounding up the result could
+require an adjustment to
+the result's exponent, recorded in the &lt;code&gt;expAdj&lt;/code&gt; register.)
+Finally, the result's exponent is calculated from the initial exponent (in &lt;code&gt;tmpA&lt;/code&gt;),
+subtracting the adjustment value in &lt;code&gt;tmpB&lt;/code&gt;'s exponent (normally 0), adding the
+adjustment value in the &lt;code&gt;expAdj&lt;/code&gt; register, and subtracting 1 (because &lt;code&gt;expAdj&lt;/code&gt; starts at 1).
+The exponent is stored in the result but also stored in the "exponent converter",
+a circuit that evaluates the exponent to detect overflow or underflow.&lt;/p&gt;
+&lt;p&gt;At this point, the addition/subtraction micro-subroutine returns to the common microcode.
+The common microcode checks if there was an overflow or underflow, indicating the value
+doesn't fit in a float.
+In this case, the subroutine &lt;code&gt;NONNORMAL_RESULT&lt;/code&gt; is called to handle the value, which can involve
+triggering an interrupt, returning infinity, or returning zero.
+(For details, see my &lt;a href="https://www.righto.com/search?q=nonnormal_result#:~:text=Handling%20a%20non%2Dnormal%20result"&gt;previous article&lt;/a&gt;.)&lt;/p&gt;
+&lt;p&gt;The result is pushed on the stack by writing it to the appropriate stack register.
+If the original instruction specified a stack pop at the end, the top of stack is marked
+empty, and the stack pointer is updated.
+Finally, the Run Next Instruction micro-instruction indicates the end of the microcode
+for the current instruction. The floating-point instruction has finally completed.&lt;/p&gt;
+&lt;h3&gt;Unsigned subtraction&lt;/h3&gt;
+&lt;p&gt;I'll switch now to the unsigned subtraction path, starting at &lt;code&gt;#0251&lt;/code&gt;.
+(Keep in mind that the instruction could be addition, for example, -2 + 3.)
+The microcode uses the 64-bit adder to perform an unsigned subtraction: &lt;code&gt;tmpA-tmpB&lt;/code&gt;;
+the second argument is negated to perform subtraction.
+The result can be either positive or negative, depending on which value is larger.
+The rest of the path is the same as addition: setting the sign, adjusting the precision, and computing the final exponent.&lt;/p&gt;
+&lt;p&gt;If the subtraction result is zero, &lt;code&gt;#0275&lt;/code&gt; tests the three
+rounding bits. If a rounding bit is set, then the low bit
+of the result is set, and the exponent adjustment is decreased by 1 to
+counteract this.
+(For a denorm, the result is cleared since there's no "extra" room to promote the rounding bit.)
+There's a special path &lt;code&gt;#0261&lt;/code&gt; if the result is really zero, because the microcode needs to determine if the result is +0 or -0.
+Subtracting 0-0 joins into this code path to handle the various possibilities for adding or subtracting +0 and/or -0.
+Generally, positive and negative zeros work as you'd expect from a zero that "leans" one way.
+For instance, ⁺0 + ⁺0 is ⁺0 and ⁻0 - ⁺0 = ⁻0.
+But what if the zeros cancel? E.g.
+⁺0 + ⁻0 or ⁻0 - ⁻0? In these cases, rounding down yields ⁻0 while the other rounding modes yield ⁺0.&lt;/p&gt;
+&lt;!-- see S-71 in the manual --&gt;
+
+&lt;p&gt;The leading zero circuit counts the number of leading zeros to determine how much to shift.
+To keep the circuitry manageable, the leading zero shift is done in two steps.
+First, the result is shifted left by the number of leading zero bytes.
+Next, the leading zero circuitry counts the number of remaining leading zero bits, which will be 0 to 7 at this point.
+The result is shifted left by that many bits.
+The total shift amount is stored in &lt;code&gt;tmpB&lt;/code&gt;'s exponent.&lt;/p&gt;
+&lt;p&gt;The unsigned subtraction path merges at &lt;code&gt;#0289&lt;/code&gt; with the unsigned addition path described earlier,
+adjusting the precision, computing the exponent, and storing the result.
+The micro-subroutine then returns to the common code that also handles multiplication and division.&lt;/p&gt;
+&lt;h3&gt;Special-case handling in the common microcode&lt;/h3&gt;
+&lt;p&gt;The 8087 handles many special cases for infinities, zeros, Not-a-Number, denormals,
+and other special values.
+The designers of the 8087 carefully thought about these special cases and attempted
+to handle them in mathematically reasonable ways.&lt;span id="fnref:kahan"&gt;&lt;a class="ref" href="#fn:kahan"&gt;6&lt;/a&gt;&lt;/span&gt;
+The table below is just part of the special cases that the 8087 handles.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/infinities.jpg"&gt;&lt;img alt="Part of the special-case handling of infinities as described in the User's Manual." class="hilite" height="295" src="https://static.righto.com/images/8087-fadd/infinities-w400.jpg" title="Part of the special-case handling of infinities as described in the User's Manual." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Part of the special-case handling of infinities as described in the &lt;a href="https://archive.org/details/8086familyusersm00inte/page/n85/mode/2up"&gt;User's Manual&lt;/a&gt;.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;While these special cases make the 8087 more accurate mathematically, they
+make the microcode much more complicated.
+The microcode below is common to addition, subtraction, multiplication, and division.
+It loads arguments and stores the result as described above, but for the most part,
+it handles special cases.
+This microcode is "spaghetti code", with 18 conditional branches in a row to handle numerous
+special cases.
+I'll describe it at a high level here; the flowchart in the footnotes&lt;span id="fnref:flowchart2"&gt;&lt;a class="ref" href="#fn:flowchart2"&gt;7&lt;/a&gt;&lt;/span&gt; provides details.&lt;/p&gt;
+&lt;pre class="microcode"&gt;
+#0001 call MEM_OP if mem op &lt;span&gt;maybe get args from memory&lt;/span&gt;
+#0002 jmp #0004 if mem op
+#0003 st(i) -&gt; tmpB        &lt;span&gt;get from stack&lt;/span&gt;
+#0004 jmp #0018 if DE (denormalized) interrupt &lt;span&gt;quit if denormalized interrupt&lt;/span&gt;
+#0005 st(0) -&gt; tmpA        &lt;span&gt;top of stack to tmpA&lt;/span&gt;
+#0006 jmp #0008 if not reverse bit &lt;span&gt;no jump if FSUBR, FMUL, FDIVR?&lt;/span&gt;
+#0007 xchg tmp             &lt;span&gt;reverse arguments&lt;/span&gt;
+#0008 jmp #0019 if tmp anomalous &lt;span&gt;handle anomalous values&lt;/span&gt;
+#0009 call INSTR_SWITCH    &lt;span&gt;switch on instruction type: J1(mul), J2(add/sub), J3(div)&lt;/span&gt;
+#0010 call NONNORMAL_RESULT if not exp normal &lt;span&gt;Back, finish up instruction&lt;/span&gt;
+#0011 jmp #0014 if dst st(i) &lt;span&gt;test d destination bit&lt;/span&gt;
+#0012 tmpA -&gt; st(0)        &lt;span&gt;destination st(0)&lt;/span&gt;
+#0013 RNI
+#0014 tmpA -&gt; st(i)        &lt;span&gt;exit: destination st(i)&lt;/span&gt;
+#0015 jmp #0018 if not pop at end &lt;span&gt;RNI if not pop&lt;/span&gt;
+#0016 empty -&gt; SP(0) tag   &lt;span&gt;mark top of stack empty&lt;/span&gt;
+#0017 stackPtr++           &lt;span&gt;pop&lt;/span&gt;
+#0018 RNI
+#0019 call SPECIAL_TMPS    &lt;span&gt;handle special values&lt;/span&gt;
+#0020 jmp #0023 if not flag
+#0021 jmp #0011 if expConv[0] &lt;span&gt;jump to finish&lt;/span&gt;
+#0022 jmp #0009            &lt;span&gt;switch on instruction type&lt;/span&gt;
+#0023 cond3b -&gt; sign latch &lt;span&gt;more conditions&lt;/span&gt;
+#0024 jmp #0039 if expConv[0]
+#0025 jmp #0032 if not tmpB:tag ZERO
+#0026 jmp #0035 if tmpA:tag ZERO
+#0027 except:zero div
+#0028 NaN -&gt; tmpA          &lt;span&gt;NaN, finish&lt;/span&gt;
+#0029 high bit -&gt; tmpA:frac
+#0030 sign latch -&gt; tmpA sign
+#0031 jmp #0037            &lt;span&gt;finish up&lt;/span&gt;
+#0032 jmp #0035 if not tmpA:tag ZERO &lt;span&gt;divide by denorm/0&lt;/span&gt;
+#0033 tmpB:frac -&gt; sumreg:frac &lt;span&gt;divide by 0&lt;/span&gt;
+#0034 jmp #0055 if not Sum register is zero
+#0035 except:invalid
+#0036 NaN -&gt; tmpA
+#0037 jmp #0018 if intr    &lt;span&gt;jump to RNI&lt;/span&gt;
+#0038 jmp #0011            &lt;span&gt;finish&lt;/span&gt;
+#0039 jmp #0051 if not tmpA:tag SPECIAL &lt;span&gt;more conditions&lt;/span&gt;
+#0040 jmp #0046 if not tmpB:tag SPECIAL
+#0041 jmp #0028 if FMUL
+#0042 jmp #0035 if FDIV FDIVR
+#0043 jmp #0035 if not affine ∞ &lt;span&gt;∞×∞: test if affine&lt;/span&gt;
+#0044 jmp #0035 if unsigned sub &lt;span&gt;test if ∞ add or subtract&lt;/span&gt;
+#0045 jmp #0038
+#0046 jmp #0049 if not FMUL
+#0047 jmp #0035 if tmpB:tag ZERO
+#0048 jmp #0028
+#0049 jmp #0028 if FDIV FDIVR
+#0050 jmp #0038
+#0051 jmp #0054 if not FMUL
+#0052 jmp #0035 if tmpA:tag ZERO &lt;span&gt;divide by 0?&lt;/span&gt;
+#0053 jmp #0028
+#0054 jmp #0057 if not FDIV FDIVR
+#0055 zero -&gt; tmpA         &lt;span&gt;0÷denorm or n÷∞&lt;/span&gt;
+#0056 jmp #0030            &lt;span&gt;do something and finish up&lt;/span&gt;
+#0057 xchg tmp
+#0058 jmp #0061 if sign mismatch
+#0059 jmp #0062 if unsigned sub &lt;span&gt;test if adding or subtracting&lt;/span&gt;
+#0060 jmp #0038            &lt;span&gt;finish&lt;/span&gt;
+#0061 jmp #0038 if unsigned sub &lt;span&gt;finish&lt;/span&gt;
+#0062 tmpA sign -&gt; sign latch &lt;span&gt;complement sign&lt;/span&gt;
+#0063 !sign latch -&gt; tmpA sign
+#0064 jmp #0038            &lt;span&gt;finish&lt;/span&gt;
+&lt;/pre&gt;
+
+&lt;p&gt;Looking at &lt;code&gt;#0008&lt;/code&gt;, the 8087 micro-architecture includes a conditional test that will check if either temporary
+register is empty or is tagged with a special value.
+If so, a subroutine that I call &lt;code&gt;SPECAL_TMPS&lt;/code&gt; is called.&lt;span id="fnref:special_tmps"&gt;&lt;a class="ref" href="#fn:special_tmps"&gt;8&lt;/a&gt;&lt;/span&gt;
+It examines the two temporary registers and sets two flags to indicate what special
+handling needs to be done.&lt;/p&gt;
+&lt;p&gt;If both flags are set, one of the arguments was tagged empty, typically indicating a stack underflow. In this case, the microcode returns Not-a-Number (NaN).
+If the second flag is clear, then one of the arguments was a denormal number, a special value very close to zero. The arithmetic operation continues in that case.&lt;/p&gt;
+&lt;p&gt;The remaining code paths get complicated, for example, branching on the signs of the arguments,
+the specific arithmetic operation, or if an argument is zero or infinity.
+Eight code paths return Not-a-Number:
+n÷denorm, 0÷0, 0÷pseudo-zero, ∞×0, ∞÷∞, 0×∞, ∞ op ∞ proj, and ∞-∞ affine.
+Many of these are straightforward&amp;mdash;0×∞ has no meaningful value, for instance&amp;mdash;but the
+last two need a bit more explanation.&lt;/p&gt;
+&lt;p&gt;The 8087 has two different modes for infinity, selected by a bit in the control register.
+With "affine closure", infinity is signed, so +∞ and -∞ are two different values.
+The recommended mode is "projective closure", where infinity is unsigned.
+In affine mode, ∞+∞ is perfectly valid, yielding positive infinity.
+However, ∞-∞ is meaningless; an answer of 0 would be arbitrary, so NaN is returned.
+In projective mode, none of the operations on infinity make sense because infinity is both
+infinitely positive and infinitely negative.&lt;/p&gt;
+&lt;p&gt;The microcode has eight different paths to return infinity:
+n÷0, ∞×n, ∞×∞, n×∞, ∞÷x, x±∞, ∞±x, and ∞+∞ affine.
+(The first case assumes that the divide-by-zero exception has been masked.)
+For the first five cases, the microcode generates the sign for infinity by combining the
+signs of the arguments.
+However, the last three cases take the sign from the infinity argument and ignore the other
+sign. In other words, multiplication and division can flip the sign of an infinity, but
+addition and subtraction can't.&lt;/p&gt;
+&lt;p&gt;Two paths deal with special-case 0 results: 0÷denorm and n÷∞.
+The microcode generates 0 with the correct sign, based on the signs of the arguments.&lt;/p&gt;
+&lt;h2&gt;The leading zeros circuitry&lt;/h2&gt;
+&lt;p&gt;With subtraction, digits can cancel out, leaving leading zeros that need to be removed
+by shifting the value.
+The 8087's shifter can shift a 64-bit value by an arbitrary number of bits.
+The job of the leading-zero circuitry is to count the leading zeros to determine how
+much to shift.
+That is, it counts how many zeros are to the left of the first 1 bit and turns this 
+into a binary value.
+This is basically the same as a priority encoder that encodes the position of the first 1 bit.&lt;/p&gt;
+&lt;p&gt;Leading-zero circuits are somewhat complicated because each binary output bit depends on
+all the input bits; a 64-bit detector has 64 bits coming in.
+One approach is to take the truth table and optimize it, ending up with a pile of logic.
+Another approach is to use a hierarchical approach, a tree with log(N) stages.
+The 8087 takes a simpler path: one pass to eliminate leading zeros a byte at a time,
+and a second pass to eliminate the remaining 0 to 7 leading zero bits.
+Each pass requires a separate 8-input leading zero detector circuit.
+This approach is slower, but the circuitry is much simpler: two 8-bit leading zero detectors
+instead of a 64-bit leading zero detector.&lt;/p&gt;
+&lt;p&gt;The schematic below shows the circuit that converts 0 to 7 leading zeros into a 3-digit
+binary value.
+To simplify the schematic, I've replaced the first layer of logic with a bitmask that represents
+the 8-bit input.
+For instance, &lt;code&gt;x01xxxxx&lt;/code&gt; indicates that the signal is high if the second bit is 0, the
+third bit is 1, and the remaining bits are arbitrary.
+I've added text descriptions; due to optimizations, the descriptions have some exceptions.
+For instance, &lt;code&gt;x01xxxxx&lt;/code&gt; matches anything with two leading zeros.
+It also matches some patterns with no leading zeros, but those don't change the result.
+The important thing is that it matches &lt;em&gt;everything&lt;/em&gt; with 2 leading zeros and &lt;em&gt;nothing&lt;/em&gt; with
+1 or 3 leading zeros.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/leading-zeros.jpg"&gt;&lt;img alt="The circuitry to detect 0 to 7 leading zero bits. The same approach is used to detect leading zero bytes." class="hilite" height="353" src="https://static.righto.com/images/8087-fadd/leading-zeros-w600.jpg" title="The circuitry to detect 0 to 7 leading zero bits. The same approach is used to detect leading zero bytes." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The circuitry to detect 0 to 7 leading zero bits. The same approach is used to detect leading zero bytes.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;The output from the circuit is a 3-bit binary value representing the number of leading zeros.
+The top NOR gate generates the low bit, set for 1, 3, 5, or 7 leading zeros.
+The high bit is generated by the bottom NOR gate: set for 4, 5, 6, or 7.
+The middle bit is trickier, with an additional layer of logic to determine if there are 4 or 5 leading zeros
+(or maybe 0 or 1). The two 1 cases block four zeros, while the 00 pair
+means that four leading zeros would turn into at least 6.
+(This is a hand-waving explanation, but one can enumerate the 256 cases and verify
+that they all produce the correct answer.)&lt;/p&gt;
+&lt;p&gt;To count the number of &lt;em&gt;bytes&lt;/em&gt; with leading zeros, similar logic is used.
+However, each group of 8 bits goes through an OR gate to detect if any bits are
+set in the byte. Thus, the logic determines how many bytes of leading zeros are present.&lt;/p&gt;
+&lt;p&gt;On the die, the leading zero logic is immediately to the left of the sum register, examining each
+bit of the sum register.&lt;/p&gt;
+&lt;h2&gt;Conclusions&lt;/h2&gt;
+&lt;p&gt;Most people don't give much thought to computer operations such as addition or subtraction.
+But there are interesting algorithms and special cases behind the scenes, and
+these features are embodied in clever silicon circuits.
+The intricate rules to handle positive and negative zeros, positive and negative infinities,
+and Not-a-Number are part of modern computers, since the 8087 led to the IEEE-754 floating-point
+standard used today.
+The 8087 went a bit overboard with special cases, however.
+Some 8087 features, such as projective infinity, unnormals, and pseudo-zero
+were dropped from the standard becauses they weren't worth the effort.&lt;/p&gt;
+&lt;p&gt;I plan to continue reverse-engineering the 8087 microcode;
+for updates, follow me on
+ Bluesky (&lt;a href="https://bsky.app/profile/righto.com"&gt;@righto.com&lt;/a&gt;),
+Mastodon (&lt;a href="https://oldbytes.space/@kenshirriff"&gt;@kenshirriff@oldbytes.space&lt;/a&gt;),
+or &lt;a href="http://www.righto.com/feeds/posts/default"&gt;RSS&lt;/a&gt;.
+I've been working on this with the members of the "Opcode Collective", especially Smartest Blob and Gloriouscow, who converted the
+ROM images to microcode data and extensively analyzed the contents.
+See the &lt;a href="https://github.com/a-mcego/granite/tree/main/tools/8087mc"&gt;8087 repository&lt;/a&gt; on GitHub for more.
+AI statement: Despite the presence of the em dash, no AI was used in the writing of this article (&lt;a href="https://www.righto.com/p/index.html#ai"&gt;details&lt;/a&gt;). The Opcode Collective used an ML algorithm to classify each ROM cell to extract the microcode.&lt;/p&gt;
+&lt;h2&gt;Notes and references&lt;/h2&gt;
+&lt;div class="footnote"&gt;
+&lt;ol&gt;
+&lt;li id="fn:speedup"&gt;
+&lt;p&gt;Intel's &lt;a href="https://archive.org/details/8086familyusersm00inte/page/n16/mode/1up]"&gt;documentation&lt;/a&gt; provides a performance comparison of the 8087 versus floating-point operations emulated on the 8086.
+The speedup varies depending on the instruction, but is typically almost a factor of 100.
+This speedup made the 8087 chip highly desirable for numerical applications such as CAD and spreadsheets.&amp;#160;&lt;a class="footnote-backref" href="#fnref:speedup" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:bits"&gt;
+&lt;p&gt;Internally, the 8087 uses 80 bits to hold floating-point values: one bit for the sign,
+15 bits for the exponent, and 64 bits for the significand.
+However, the 8087 uses three extra low-order bits for rounding, called Guard, Round, and Sticky. These bits ensure that a value is always rounded in the right direction.
+Some parts of the datapath have additional bits for sign or overflow: the shifter is 68 bits wide, and the &lt;a href="https://www.righto.com/2026/06/intel-8087-adder-reverse-engineered.html"&gt;adder&lt;/a&gt; is 69 bits wide.
+For the most part, I'll ignore these extra bits and refer to the datapath as 64 bits wide.&amp;#160;&lt;a class="footnote-backref" href="#fnref:bits" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:problems"&gt;
+&lt;p&gt;While floating-point numbers solve some problems, they introduce problems of their own.
+For instance, 0.01 can't be expressed exactly in floating point (it has an infinite
+repeating fraction in binary, just like 1/3 can't
+be expressed exactly as a decimal number). This can cause havoc if you're using
+floating-point numbers to represent money and you're dealing with cents.
+For more on problems with floating-point, see &lt;a href="https://jvns.ca/blog/2023/01/13/examples-of-floating-point-problems/"&gt;this Julia Evans comic&lt;/a&gt; or &lt;a href="https://perso.ens-lyon.fr/jean-michel.muller/goldberg.pdf"&gt;What Every Computer Scientist Should Know About
+Floating-Point Arithmetic&lt;/a&gt;.&amp;#160;&lt;a class="footnote-backref" href="#fnref:problems" title="Jump back to footnote 3 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:leading-one"&gt;
+&lt;p&gt;One difference between the 8087's temporary real format and the external formats is that
+in the temporary real, the leading 1 digit is explicitly stored in the number.
+In the external formats, the leading 1 is implicit and not stored in the number,
+providing one additional bit of accuracy, but making arithmetic more complicated.&amp;#160;&lt;a class="footnote-backref" href="#fnref:leading-one" title="Jump back to footnote 4 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:flowchart"&gt;
+&lt;p&gt;The flowchart below shows the control flow for the addition/subtraction microcode.
+(Click it for a larger image.)&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/flowchart.jpg"&gt;&lt;img alt="Flowchart of the add/sub microcode." class="hilite" height="758" src="https://static.righto.com/images/8087-fadd/flowchart-w400.jpg" title="Flowchart of the add/sub microcode." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Flowchart of the add/sub microcode.&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:flowchart" title="Jump back to footnote 5 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:kahan"&gt;
+&lt;p&gt;William Kahan is the floating-point expert behind the 8087. He wrote about
+the motivations for various design decisions &lt;a href="https://web.archive.org/web/20260316121248/https://people.eecs.berkeley.edu/~wkahan/ieee754status/IEEE754.PDF"&gt;here&lt;/a&gt;, if you want the
+details of, for example, why NaN != NaN.
+(One interesting comment discusses the value of 0&lt;sup&gt;0&lt;/sup&gt;, commonly debated online.
+Kahan states, "A consensus is growing that x**0 = 1 for every x , including 0 , ∞ and NaN.")&amp;#160;&lt;a class="footnote-backref" href="#fnref:kahan" title="Jump back to footnote 6 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:flowchart2"&gt;
+&lt;p&gt;The flowchart below shows the microcode that is shared for basic arithmetic instructions.
+This flowchart calls the above flowchart as a subroutine.
+The numerous special case paths are numbered.&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://static.righto.com/images/8087-fadd/flowchart2.jpg"&gt;&lt;img alt="Flowchart of the common microcode for basic arithmetic operations. (Click for a larger image.)" class="hilite" height="766" src="https://static.righto.com/images/8087-fadd/flowchart2-w600.jpg" title="Flowchart of the common microcode for basic arithmetic operations. (Click for a larger image.)" width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Flowchart of the common microcode for basic arithmetic operations. (Click for a larger image.)&lt;/div&gt;&lt;/p&gt;
+&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:flowchart2" title="Jump back to footnote 7 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;li id="fn:special_tmps"&gt;
+&lt;p&gt;The actions of &lt;code&gt;SPECIAL_TMPS&lt;/code&gt; are summarized below. It returns status through the &lt;code&gt;flag&lt;/code&gt; flip-flop and the exponent converter register (&lt;code&gt;expConv&lt;/code&gt;). Its actions are:&lt;/p&gt;
+&lt;p&gt;&lt;style type="text/css"&gt;
+table.status {border-collapse: collapse;}
+table.status tr:first-child {border-bottom: 1px solid #ccc;}
+table.status th,td {padding: 0 10px; text-align: center;}
+table.status th:first-child,td:first-child {border-right: 1px solid #ccc;}
+&lt;/style&gt;
+&lt;table class="status"&gt;&lt;tr&gt;&lt;th&gt;Input&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;flag&lt;/th&gt;&lt;th&gt;expConv&lt;/th&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;empty&lt;/td&gt;&lt;td&gt;NaN, exception&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;NaN&lt;/td&gt;&lt;td&gt;(larger) NaN, exception&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;infinity&lt;/td&gt;&lt;td&gt;infinity&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;denorm&lt;/td&gt;&lt;td&gt;unnorm&lt;/td&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;divide-by-zero(ish)&lt;/td&gt;&lt;td&gt;no change&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;td&gt;0&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;&lt;/p&gt;
+&lt;p&gt;The line I call "divide-by-zero(ish)" indicates that a division
+instruction is attempting to divide by zero or an unnormal number (which is close to zero).
+I'll give a bit of background on how the 8087 represents 0 and values near 0.
+A normal floating-point value has a mantissa with the first bit set.
+Unfortunately, normal numbers have a large gap between the smallest normal number and zero.
+Denormals break this "rule", allowing the top bits to be zero, so there are many more
+numbers near 0.
+(For a base-10 analogy, suppose you count down 1.003, 1.002, 1.001, 1.000. If the top
+digit must remain set, the next possible number is 0, a huge jump from 1.000.
+Denormals let you keep going in small steps: 0.999, 0.998, ...., 0.001, 0.)&lt;/p&gt;
+&lt;p&gt;For a denormal, the exponent has the smallest possible value. Unnormals are similar to
+denormals, except the exponent has a larger value. The purpose of unnormals is that if
+a denormalized exception is masked, the denormal number is converted to an unnormal
+and execution continues.&lt;/p&gt;
+&lt;p&gt;For true zero values, the 8087 uses a signed zero, so you can have either +0 or -0.
+A true zero is stored with the smallest possible exponent.
+But the 8087 also supports a "pseudo-zero", a zero value that has a larger exponent.
+The pseudo-zero can arise from multiplying two very small unnormal values.
+(With the 80387 floating-point chip, Intel got rid of unnormals and pseudo-zeros.)&lt;/p&gt;
+&lt;p&gt;I discussed the microcode for the &lt;code&gt;SPECIAL_TMPS&lt;/code&gt; subroutine in detail &lt;a href="https://www.righto.com/2026/09/8087-microcode-reverse-engineering-fscale.html"&gt;earlier&lt;/a&gt;,
+so I won't discuss it more here.&amp;#160;&lt;a class="footnote-backref" href="#fnref:special_tmps" title="Jump back to footnote 8 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-4354998070789191613</guid>
+      <pubDate>Sun, 18 Oct 2026 09:14:00 -0700</pubDate>
+    </item>
     <item>
       <title>Inside a 1980s filter chip that uses switched capacitors</title>
       <link>http://www.righto.com/2026/10/ML10-switched-capacitor-filter.html</link>
@@ -86,7 +667,7 @@ I estimate that each capacitor square is 5 picofarads.&lt;/p&gt;
 acting as a resistor.
 In the switched-capacitor circuit below, there are four switches.
 The capacitor charges to the input voltage during phase 1, the same as before.
-But duing phase 2, note that the top plate of the capacitor is grounded, while the output
+But during phase 2, note that the top plate of the capacitor is grounded, while the output
 comes from the bottom plate.
 If the capacitor was charged to, say, 1 volt, the top plate is 1 volt above the bottom plate.
 So if the top plate is grounded, then the bottom plate must be at -1 V.
@@ -10001,510 +10582,6 @@ This diagram is from the &lt;a href="https://www.ibiblio.org/apollo/Documents/HS
 </description>
       <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-3876610068863399947</guid>
       <pubDate>Mon, 21 Jul 2025 09:10:00 -0700</pubDate>
-    </item>
-    <item>
-      <title>Inside the Apollo "8-Ball" FDAI (Flight Director / Attitude Indicator)</title>
-      <link>http://www.righto.com/2025/06/inside-apollo-fdai.html</link>
-      <description>&lt;p&gt;During the Apollo flights to the Moon, the astronauts observed the spacecraft's orientation on a special instrument
-called the FDAI (Flight Director / Attitude Indicator).
-This instrument showed the spacecraft's attitude&amp;mdash;its orientation&amp;mdash;by rotating a ball.
-This ball was nicknamed the "8-ball" because it was black (albeit only on one side).
-The instrument also acted as a flight director, using three yellow needles to indicate how the astronauts should maneuver
-the spacecraft. Three more pointers showed how fast the spacecraft was rotating.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/fdai-opened.jpg"&gt;&lt;img alt="An Apollo FDAI (Flight Director/Attitude Indicator) with the case removed. This FDAI is on its side to avoid crushing the needles." class="hilite" height="511" src="https://static.righto.com/images/fdai/fdai-opened-w500.jpg" title="An Apollo FDAI (Flight Director/Attitude Indicator) with the case removed. This FDAI is on its side to avoid crushing the needles." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;An Apollo FDAI (Flight Director/Attitude Indicator) with the case removed. This FDAI is on its side to avoid crushing the needles.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Since the spacecraft rotates along three axes (roll, pitch, and yaw), the ball also rotates along three axes.
-It's not obvious how the ball can rotate to an arbitrary orientation while remaining attached.
-In this article, I look inside an FDAI from Apollo that was repurposed for a Space Shuttle simulator&lt;span id="fnref:simulator"&gt;&lt;a class="ref" href="#fn:simulator"&gt;1&lt;/a&gt;&lt;/span&gt; and explain how it operates. (Spoiler: the ball mechanism is firmly attached
-at the "equator" and rotates in two axes. What you see is two hollow shells around the ball mechanism that spin around the third axis.)&lt;/p&gt;
-&lt;h2&gt;The FDAI in Apollo&lt;/h2&gt;
-&lt;p&gt;For the missions to the Moon, the Lunar Module had two FDAIs, as shown below: one on the left for the Commander (Neil Armstrong in Apollo 11) and
-one on the right for the Lunar Module Pilot (Buzz Aldrin in Apollo 11).
-With their size and central positions, the FDAIs dominate the instrument panel, a sign of their importance.
-(The Command Module for Apollo also had two FDAIs, but with a different design; I won't discuss them here.&lt;span id="fnref:honeywell"&gt;&lt;a class="ref" href="#fn:honeywell"&gt;2&lt;/a&gt;&lt;/span&gt;)&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/lm-panel.jpg"&gt;&lt;img alt="The instrument panel in the Lunar Module. From Apollo 15 Lunar Module, NASA, S71-40761. If you're looking for the DSKY, it is in the bottom center, just out of the picture." class="hilite" height="500" src="https://static.righto.com/images/fdai/lm-panel-w600.jpg" title="The instrument panel in the Lunar Module. From Apollo 15 Lunar Module, NASA, S71-40761. If you're looking for the DSKY, it is in the bottom center, just out of the picture." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The instrument panel in the Lunar Module. From &lt;a href="https://archive.org/details/S71-40761"&gt;Apollo 15 Lunar Module&lt;/a&gt;, NASA, S71-40761. If you're looking for the DSKY, it is in the bottom center, just out of the picture.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Each Lunar Module FDAI could display inputs from multiple sources, selected by switches on the panel.&lt;span id="fnref:lm-fdai"&gt;&lt;a class="ref" href="#fn:lm-fdai"&gt;3&lt;/a&gt;&lt;/span&gt; The ball could display attitude from either the
-Inertial Measurement Unit
-or from the backup Abort Guidance System, selected by the "ATTITUDE MON" toggle switch next to either FDAI.
-The pitch attitude could also be supplied by an electromechanical unit called ORDEAL (Orbital Rate Display Earth And Lunar)
-that simulates a circular orbit.
-The error indications came from the Apollo Guidance Computer, the Abort Guidance System, the landing radar,
-or the rendezvous radar (controlled by the "RATE/ERROR MON" switches).
-The pitch, roll, and yaw rate displays were driven by the Rate Gyro Assembly (RGA).
-The rate indications were scaled by a switch below the FDAI, selecting 25&amp;deg;/sec or 5&amp;deg;/sec.&lt;/p&gt;
-&lt;h2&gt;The FDAI mechanism&lt;/h2&gt;
-&lt;p&gt;The ball inside the indicator shows rotation around three axes.
-I'll first explain these axes in the context of an aircraft, since the axes of a spacecraft are more arbitrary.&lt;span id="fnref:axes"&gt;&lt;a class="ref" href="#fn:axes"&gt;4&lt;/a&gt;&lt;/span&gt;
-The roll axis indicates the aircraft's angle if it rolls side-to-side along its axis of flight, raising one wing
-and lowering the other.
-Thus, the indicator shows the tilt of the horizon as the aircraft rolls.
-The pitch axis indicates the aircraft's angle if it pitches up or down, with the indicator showing the horizon
-moving down or up in response.
-Finally, the yaw axis indicates the compass direction that the aircraft is heading,
-changing as the aircraft turns left or right.
-(A typical aircraft attitude indicator omits yaw.)&lt;/p&gt;
-&lt;p&gt;I'll illustrate how the FDAI rotates the ball in three axes, using an orange as an example.
-Imagine pinching the horizontal axis between two fingers with your arm extended.
-Rotating your arm will roll the ball counter-clockwise or clockwise (red arrow).
-In the FDAI, this rotation is accomplished by a motor turning the frame that holds the ball.
-For pitch, the ball rotates forward or backward around the horizontal axis (yellow arrow).
-The FDAI has a motor inside the ball to produce this rotation.
-Yaw is a bit more difficult to envision: imagine hemisphere-shaped shells attached to the top and bottom shafts.
-When a motor rotates these shells (green arrow), the hemispheres will rotate, even though
-the ball mechanism (the orange) remains stationary.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/orange.jpg"&gt;&lt;img alt="A sphere, showing the three axes." class="hilite" height="334" src="https://static.righto.com/images/fdai/orange-w400.jpg" title="A sphere, showing the three axes." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A sphere, showing the three axes.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The diagram below shows the mechanism inside the FDAI.
-The indicator uses three motors to move the ball.
-The roll motor is attached to the FDAI's frame, while the pitch and yaw motors are inside the ball.
-The roll motor rotates the roll gimbal through gears, causing the ball to rotate clockwise or counterclockwise.
-The roll gimbal is attached to the ball mechanism at two points along the "equator";
-these two points define the pitch axis.
-Numerous wires on the roll gimbal enter the ball along the pitch axis.
-The roll control transformer provides position feedback, as will be explained below.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/fdai-internals-labeled.jpg"&gt;&lt;img alt="The main components inside the FDAI." class="hilite" height="399" src="https://static.righto.com/images/fdai/fdai-internals-labeled-w700.jpg" title="The main components inside the FDAI." width="700" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The main components inside the FDAI.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Removing the hemispherical shells reveals the 
-mechanism inside the ball.
-When the roll gimbal is rotated, this mechanism rotates with it.
-The pitch motor causes the ball mechanism to rotate around the pitch axis.
-The yaw motor and control transformer are not visible in this photo; they are behind the pitch components, oriented
-perpendicularly.
-The yaw motor turns the vertical shaft, with
-the two hemisphere shells attached to the top and bottom of the shaft.
-Thus, the yaw motor rotates the ball shells around the yaw axis, while the mechanism itself
-remains stationary.
-The control transformers for pitch and yaw provide position feedback.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/ball-labeled.jpg"&gt;&lt;img alt="The components inside the ball of the FDAI." class="hilite" height="479" src="https://static.righto.com/images/fdai/ball-labeled-w550.jpg" title="The components inside the ball of the FDAI." width="550" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The components inside the ball of the FDAI.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Why doesn't the wiring get tangled up as the ball rotates?
-The solution is two sets of slip rings to implement the electrical connections.
-The photo below shows the first slip ring assembly, which handles rotation around the roll axis.
-These slip rings connect the stationary part of the FDAI to the
-rotating roll gimbal.
-The vertical metal brushes are stationary; there are 23 pairs of brushes, one for each connection to the ball mechanism.
-Each pair of brushes contacts one metal ring on the striped shaft, maintaining contact as the shaft rotates.
-Inside the shaft, 23 wires connect the circular metal contacts to the roll gimbal.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/sliprings.jpg"&gt;&lt;img alt="The slip ring assembly in the FDAI." class="hilite" height="447" src="https://static.righto.com/images/fdai/sliprings-w450.jpg" title="The slip ring assembly in the FDAI." width="450" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The slip ring assembly in the FDAI.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;A second set of slip rings inside the ball handles rotation around the pitch axis.
-These rings provide the electrical connection between the
-wiring on the roll gimbal and the ball mechanism.
-The yaw axis does not use slip rings since only the hemisphere shells rotate around the yaw axis;
-no wires are involved.&lt;/p&gt;
-&lt;h2&gt;Synchros and the servo loop&lt;/h2&gt;
-&lt;p&gt;In this section, I'll explain how the FDAI is controlled by synchros and servo loops.
-In the 1950s and 1960s, the standard technique for transmitting a rotational signal electrically was through a synchro.
-Synchros were used for everything from rotating an instrument indicator in avionics to rotating the gun on a navy battleship.
-A synchro produces an output that depends on the shaft's rotational position, and transmits this output signal
-on three wires.
-If you connect these wires to a second synchro, you can use the first synchro to control the second one:
-the shaft of the second synchro will rotate to the same angle as
-the first shaft.
-Thus, synchros are a convenient way to send a control signal electrically.&lt;/p&gt;
-&lt;p&gt;The photo below shows a typical synchro, with the input shaft on the top and five wires
-at the bottom: two for power and three for the output.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/synchro.jpg"&gt;&lt;img alt="A synchro transmitter." class="hilite" height="324" src="https://static.righto.com/images/fdai/synchro-w200.jpg" title="A synchro transmitter." width="200" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A synchro transmitter.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Internally, the synchro has a rotating winding called the rotor that is driven with 400 Hz AC.
-Three fixed stator windings provide the three AC output signals. As the shaft rotates, the voltages of the
-output signals change, indicating the angle.
-(A synchro resembles a transformer with three variable secondary windings.)
-If two connected synchros have different angles, the magnetic fields create a torque that rotates the shafts into alignment.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/synchro-schematic.png"&gt;&lt;img alt="The schematic symbol for a synchro transmitter or receiver." class="hilite" height="192" src="https://static.righto.com/images/fdai/synchro-schematic-w200.png" title="The schematic symbol for a synchro transmitter or receiver." width="200" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The schematic symbol for a synchro transmitter or receiver.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The downside of synchros is that they don't produce a lot of torque.
-The solution is to use a more powerful motor, controlled by the synchro and a feedback loop called a servo loop.
-The servo loop drives the motor in the appropriate direction to eliminate the error between the desired position and the
-current position.&lt;/p&gt;
-&lt;p&gt;The diagram below shows how the servo loop is constructed from a combination of electronics and mechanical components.
-The goal is to rotate the output shaft to an angle that exactly matches the input angle,
-specified by the three synchro wires.
-The control transformer compares the input angle and the output shaft position, producing an error signal.
-The amplifier uses this error signal to drive the motor in the appropriate direction until the error signal drops to zero.
-To improve the dynamic response of the servo loop, the tachometer signal is used as a negative feedback voltage.
-The feedback slows the motor as the system gets closer to the right position, so the motor doesn't overshoot the position and oscillate.
-(This is sort of like a PID controller.)&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/servo-diagram.jpg"&gt;&lt;img alt="This diagram shows the structure of the servo loop, with a feedback loop ensuring that the rotation angle of the output shaft matches the input angle." class="hilite" height="228" src="https://static.righto.com/images/fdai/servo-diagram-w600.jpg" title="This diagram shows the structure of the servo loop, with a feedback loop ensuring that the rotation angle of the output shaft matches the input angle." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;This diagram shows the structure of the servo loop, with a feedback loop ensuring that the rotation angle of the output shaft matches the input angle.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;A control transformer
-is similar to a synchro in appearance and construction, but the rotating shaft operates as an input, not the output.
-In a control transformer, the three stator windings receive the inputs and the rotor winding provides the error output.
-If the rotor angle of the synchro transmitter and control transformer are the same, the signals cancel out and there is
-no error voltage.
-But as the difference between the two shaft angles increases, the rotor winding produces an error signal. The phase of the
-error signal indicates the direction of the error.&lt;/p&gt;
-&lt;p&gt;In the FDAI, the motor is a special &lt;a href="https://www.righto.com/2024/02/bendix-cadc-servomotor-tachometer.html"&gt;motor/tachometer&lt;/a&gt;, a device that was often used in avionics servo loops.
-This motor is more complicated than a regular electric motor.
-The motor is powered by 115 volts AC at 400 hertz, but this won't spin the motor on its own.
-The motor also has two low-voltage control windings. Energizing the control windings with the proper phase causes the
-motor to spin in one direction or the other.
-The motor/tachometer unit also contains a tachometer to measure its speed for the feedback loop.
-The tachometer is driven by another 115-volt AC winding and generates a low-voltage AC signal that is proportional
-to the motor's rotational speed.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/motor-disassembled.jpg"&gt;&lt;img alt="A motor/tachometer similar (but not identical) to the one in the FDAI." class="hilite" height="262" src="https://static.righto.com/images/fdai/motor-disassembled-w500.jpg" title="A motor/tachometer similar (but not identical) to the one in the FDAI." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A motor/tachometer similar (but not identical) to the one in the FDAI.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The photo above shows a motor/tachometer with the rotor removed.
-The unit has many wires because of its multiple windings.
-The rotor has two drums. The drum on the left, with the spiral stripes, is for the motor. This drum is a "squirrel-cage rotor",
-which spins due to induced currents.
-(There are no electrical connections to the rotor; the drums interact with the windings through magnetic fields.)
-The drum on the right is the tachometer rotor; it induces a signal in the output winding proportional to the speed due to eddy currents.
-The tachometer signal is at 400 Hz like the driving signal, either in phase or 180º out of phase, depending on the direction
-of rotation.
-For more information on how a motor/tachometer works, see my &lt;a href="https://www.righto.com/2024/02/bendix-cadc-servomotor-tachometer.html"&gt;teardown&lt;/a&gt;.&lt;/p&gt;
-&lt;h2&gt;The amplifiers&lt;/h2&gt;
-&lt;p&gt;The FDAI has three servo loops&amp;mdash;one for each axis&amp;mdash;and each servo loop has a separate control transformer, motor, and amplifier.
-The photo below shows one of the three amplifier boards. The construction is unusual and somewhat chaotic,
-with some components stacked on top of others to save space.
-Some of the component leads are long and protected with clear plastic sleeves.&lt;span id="fnref:pcb"&gt;&lt;a class="ref" href="#fn:pcb"&gt;5&lt;/a&gt;&lt;/span&gt;
-The cylindrical pulse transformer in the middle has five colorful wires coming out of it.
-At the left are the two transistors that drive the motor's control windings, with two capacitors between them.
-The transistors are mounted on a heat sink that is screwed down to the case of the amplifier assembly for cooling.
-Each amplifier is connected to the FDAI through seven wires with pins that
-plug into the sockets on the right of the board.&lt;span id="fnref:jumpers"&gt;&lt;a class="ref" href="#fn:jumpers"&gt;6&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/amplifier-board.jpg"&gt;&lt;img alt="One of the three amplifier boards. At the right front of the board, you can see a capacitor stacked on top of a resistor. The board is shiny because it is covered with conformal coating." class="hilite" height="351" src="https://static.righto.com/images/fdai/amplifier-board-w600.jpg" title="One of the three amplifier boards. At the right front of the board, you can see a capacitor stacked on top of a resistor. The board is shiny because it is covered with conformal coating." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;One of the three amplifier boards. At the right front of the board, you can see a capacitor stacked on top of a resistor. The board is shiny because it is covered with conformal coating.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The function of the board is to amplify the error signal so the motor rotates in the appropriate direction.
-The amplifier also uses the tachometer output from the motor unit to slow the motor as the error signal decreases, preventing
-overshoot.
-The inputs to the amplifier are 400 hertz AC signals, with the magnitude indicating the amount of error or speed and the
-phase indicating the direction.
-The two outputs from the amplifier drive the two control windings of the motor, determining which direction the motor rotates.&lt;/p&gt;
-&lt;p&gt;The schematic for the amplifier board is below. &lt;span id="fnref:zener"&gt;&lt;a class="ref" href="#fn:zener"&gt;7&lt;/a&gt;&lt;/span&gt;
-The two transistors on the left amplify the error and tachometer signals, driving the pulse transformer.
-The outputs of the pulse transformer will have opposite phases, driving the output transistors for opposite halves of
-the 400 Hz cycle.
-This activates the motor control winding, causing the motor to spin in the desired direction.&lt;span id="fnref:control"&gt;&lt;a class="ref" href="#fn:control"&gt;8&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/amplifier-schematic.jpg"&gt;&lt;img alt="The schematic of an amplifier board." class="hilite" height="262" src="https://static.righto.com/images/fdai/amplifier-schematic-w500.jpg" title="The schematic of an amplifier board." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The schematic of an amplifier board.&lt;/div&gt;&lt;/p&gt;
-&lt;h2&gt;History of the FDAI&lt;/h2&gt;
-&lt;p&gt;Bill Lear, born in 1902, was a prolific inventor with over 150 patents,
-creating everything from the 8-track tape to the Learjet, the iconic
-private plane of the 1960s.
-He created multiple companies in the 1920s as well as inventing one of the first car radios for Motorola before starting Lear Avionics,
-a company that specialized in aerospace instruments.&lt;span id="fnref:lear"&gt;&lt;a class="ref" href="#fn:lear"&gt;9&lt;/a&gt;&lt;/span&gt;
-Lear produced innovative aircraft instruments and flight control systems such as
-the &lt;a href="https://archive.org/details/sim_flight-operations_1951-01_35_1/page/38/"&gt;F-5 automatic pilot&lt;/a&gt;, which received a trophy as the "greatest aviation achievement in America" for 1950.&lt;/p&gt;
-&lt;p&gt;Bill Lear went on to solve an indicator problem for the Air Force:
-the supersonic F-102 Delta Dagger interceptor (1953) could climb at steep angles, but existing
-attitude indicators could not handle nearly vertical flight. 
-Lear developed a remote two-gyro platform that drove the cockpit indicator while avoiding "gimbal lock" during vertical
-flight.
-For the experimental X-15 rocket-powered aircraft (1959), Lear improved this indicator to handle three axes:
-roll, pitch, and yaw.&lt;/p&gt;
-&lt;p&gt;Meanwhile, the Siegler Corporation started in 1950 to manufacture space heaters for homes. A few years later, Siegler was acquired
-by John Brooks, an entrepreneur who was enthusiastic about acquisitions. In 1961, Lear Avionics became his latest acquisition, and
-the merged company was called Lear Siegler Incorporated, often known as LSI.
-(Older programmers may know Lear Siegler through the &lt;a href="https://en.wikipedia.org/wiki/ADM-3A"&gt;ADM-3A&lt;/a&gt;, an inexpensive video display terminal from 1976 that 
-housed the display and keyboard in a stylish white case.)&lt;/p&gt;
-&lt;p&gt;The X-15's attitude indicator became the basis of the indicator for the F-4 fighter plane
-(the &lt;a href="https://www.righto.com/2024/09/f4-attitude-indicator.html"&gt;ARU/11-A&lt;/a&gt;).
-Then, after "&lt;a href="https://ntrs.nasa.gov/api/citations/19680016105/downloads/19680016105.pdf#page=120"&gt;a minimum of modification&lt;/a&gt;",
-the attitude-director indicator was used in the Gemini space program.
-In total, Lear Siegler provided 11 instruments in the Gemini instrument panel, with the attitude director the most important.
-Next, Gemini's indicator was modified to become the FDAI (flight director-attitude indicator) in the Lunar Module for Apollo.&lt;span id="fnref:parts"&gt;&lt;a class="ref" href="#fn:parts"&gt;10&lt;/a&gt;&lt;/span&gt;
-Lear Siegler provided numerous components for the Apollo program, from a directional gyro for the Lunar Rover
-to the electroluminescent display for the Apollo Guidance Computer's Display/Keyboard (DSKY).&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/lsi-instruments.jpg"&gt;&lt;img alt="An article titled &amp;quot;LSI Instruments Aid in Moon Landing&amp;quot; from LSI's internal LSI Log publication, July 1969. (Click for a larger version.)" class="hilite" height="385" src="https://static.righto.com/images/fdai/lsi-instruments-w600.jpg" title="An article titled &amp;quot;LSI Instruments Aid in Moon Landing&amp;quot; from LSI's internal LSI Log publication, July 1969. (Click for a larger version.)" width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;An article titled "LSI Instruments Aid in Moon Landing" from LSI's internal LSI Log publication, July 1969. (Click for a larger version.)&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;In 1974, Lear Siegler obtained a contract to develop the Attitude-Director Indicator (ADI) for the Space Shuttle, producing
-a dozen ADI units for the Space Shuttle.
-However, by this time, Lear Siegler was losing enthusiasm for low-volume space avionics.
-The Instrument Division president said that "the business that we were in was an engineering business and engineers
-love a challenge."
-However, manufacturing refused to deal with the special procedures required for space manufacturing,
-so the Shuttle units were built by the engineering department.
-Lear Siegler didn't bid on later Space Shuttle avionics and the Shuttle ADI became its last space product.
-In the early 2000s, the Space Shuttle's instruments were upgraded to a "glass cockpit" with 11 flat-panel displays known
-as the Multi-function Electronic Display System (MEDS).
-The MEDS was produced by Lear Siegler's long-term competitor, Honeywell.&lt;/p&gt;
-&lt;p&gt;Getting back to Bill Lear, he wanted to manufacture aircraft, not just aircraft instruments, so
-he created the Learjet, the first mass-produced business jet.
-The first Learjet flew in 1963, with over 3000 eventually delivered.
-In the early 1970s, Lear designed a steam turbine automobile engine. Rather than water, the turbine
-used a secret fluorinated hydrocarbon called "Learium". Lear had visions of thousands of low-pollution "&lt;a href="https://www.nytimes.com/1971/04/04/archives/bill-lear-thinks-hell-have-the-last-laugh.html"&gt;Learmobiles&lt;/a&gt;", but the engine failed
-to catch on. 
-Lear had been on the verge of bankruptcy in the 1960s; one of his VPs explained that
-"the great creative minds can't be bothered with withholding taxes and investment credits and all this crap".
-But by the time of his death in 1978, Lear had a fortune estimated at $75 million.&lt;/p&gt;
-&lt;h2&gt;Comparing the ARU/11-A and the FDAI&lt;/h2&gt;
-&lt;p&gt;Looking inside our FDAI sheds more details on the evolution of Lear Siegler's attitude directors.
-The photo below compares the Apollo FDAI (top) to the earlier ARU/11-A used in the F-4 aircraft (bottom).
-While the basic mechanism and the electronic amplifiers are the same between the two indicators, there are
-also substantial changes.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/aru-vs-fdai.jpg"&gt;&lt;img alt="Comparison of an FDAI (top) with an ARU-11/A (bottom). The amplifier boards and needles have been removed from the FDAI." class="hilite" height="482" src="https://static.righto.com/images/fdai/aru-vs-fdai-w600.jpg" title="Comparison of an FDAI (top) with an ARU-11/A (bottom). The amplifier boards and needles have been removed from the FDAI." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Comparison of an FDAI (top) with an ARU-11/A (bottom). The amplifier boards and needles have been removed from the FDAI.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The biggest difference between the ARU-11/A indicator and the FDAI is that the electronics for the ARU-11/A 
-are in a separate module that was plugged into the back of the indicator, while the FDAI includes the electronics
-internally, with boards mounted on the instrument frame.
-Specifically, the ARU-11/A has a separate unit containing a multi-winding transformer, a power supply board,
-and three amplifier boards (one for each axis), while the FDAI contains these components internally.
-The amplifier boards in the ARU-11/A and the FDAI are identical, constructed from germanium transistors rather than
-silicon.&lt;span id="fnref:amplifiers"&gt;&lt;a class="ref" href="#fn:amplifiers"&gt;11&lt;/a&gt;&lt;/span&gt;
-The unusual 11-pin transformers are also the same.
-However, the power supply boards are different, probably because the boards also contain scaling resistors
-that vary between the units.&lt;span id="fnref:resistors"&gt;&lt;a class="ref" href="#fn:resistors"&gt;12&lt;/a&gt;&lt;/span&gt;
-The power supply boards are also different shapes to fit the available space.&lt;/p&gt;
-&lt;p&gt;The ball assemblies of the ARU/11-A and the FDAI are almost the same, with the same motor assemblies and slip ring
-mechanism. 
-The gearing has minor changes. In particular, the FDAI has two plastic gears, while the ARU/11-A uses
-exclusively metal gears.&lt;/p&gt;
-&lt;p&gt;The ARU/11-A has a &lt;a href="https://patents.google.com/patent/US2941305A"&gt;patented&lt;/a&gt; pitch trim feature that was
-mostly&amp;mdash;but not entirely&amp;mdash;removed from the Apollo FDAI.
-The motivation for this feature is that an aircraft in level flight will be pitched up a few degrees, the "angle of attack".
-It is desirable for the attitude indicator to show the aircraft as horizontal, so a pitch trim knob allows the
-angle of attack to be canceled out on the display.
-The problem is that if you fly your fighter plane vertically, you want the indicator to show precisely
-vertical flight, rather than applying the pitch trim adjustment.
-The solution in the ARU-11/A is a special 8-zone potentiometer on the pitch axis that will apply the pitch trim
-adjustment in level flight but not in vertical flight, while providing a smooth transition between the regions.
-This special potentiometer is mounted inside the ball of the ARU-11/A.
-However, this pitch trim adjustment is meaningless for a spacecraft, so it is not implemented in the Apollo
-or Space Shuttle instruments.
-Surprisingly, the shell of the potentiometer still exists in our FDAI, but without the potentiometer itself or the
-wiring.
-Perhaps it remained to preserve the balance of the ball.
-In the photo below, the cylindrical potentiometer shell is indicated by an arrow. Note the holes in the front
-of the shell; in the ARU-11/A, the potentiometer's wiring terminals protrude through these holes, but in the 
-FDAI, the holes are covered with tape.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/potentiometer.jpg"&gt;&lt;img alt="Inside the ball of the FDAI. The potentiometer shell is indicated with an arrow." class="hilite" height="354" src="https://static.righto.com/images/fdai/potentiometer-w400.jpg" title="Inside the ball of the FDAI. The potentiometer shell is indicated with an arrow." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Inside the ball of the FDAI. The potentiometer shell is indicated with an arrow.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Finally, the mounting of the ball hemispheres is slightly different.
-The ARU/11-A uses four screws at the pole of each hemisphere.
-Our FDAI, however, uses a single screw at each pole; the screw is tightened with a Bristol Key, causing the
-shaft to expand and hold the hemisphere in place.&lt;/p&gt;
-&lt;p&gt;To summarize, the Apollo FDAI occupies a middle ground: while it isn't simply a repurposed ARU-11/A, neither is
-it a complete redesign.
-Instead, it preserves the old design where possible, while stripping out undesired features such as pitch trim.
-The separate amplifier and mechanical units of the ARU/11-A were combined to form the larger FDAI.&lt;/p&gt;
-&lt;h2&gt;Differences from Apollo&lt;/h2&gt;
-&lt;p&gt;The FDAI that we examined is a special unit:
-it was originally built for Apollo but was repurposed for a Space Shuttle simulator.
-Our FDAI is labeled Model 4068F, which is a Lunar Module part number.
-Moreover, the FDAI is internally stamped with the date "Apr. 22 1968", over a year before the first Moon landing.&lt;/p&gt;
-&lt;p&gt;However, a closer look shows that several key components were modified to make the Apollo FDAI work in the Shuttle Simulator.&lt;span id="fnref:systems-handbook"&gt;&lt;a class="ref" href="#fn:systems-handbook"&gt;14&lt;/a&gt;&lt;/span&gt;
-The Apollo FDAI (and the Shuttle ADI) used resolvers as inputs to control the ball, while our FDAI uses synchros.
-(Resolvers and synchros are similar, except resolvers use sine and cosine inputs, 90&amp;deg; apart, on two wire pairs, while
-synchros use three inputs, 120&amp;deg; apart, on three wires.)
-NASA must have replaced the three resolver control transformers in the FDAI with synchro control transformers for use
-in the simulator.&lt;/p&gt;
-&lt;p&gt;The Apollo FDAI used electroluminescent lighting for the display, while ours uses eight small incandescent bulbs.
-The metal case of our FDAI has a Dymo &lt;a href="https://en.wikipedia.org/wiki/Embossing_tape"&gt;embossed tape&lt;/a&gt; label "INCANDESCENT
-LIGHTING", alerting users to the change from Apollo's illumination.
-Our FDAI also contains a step-down transformer to convert the 115 VAC input into 5 VAC to power the bulbs,
-while the Shuttle powered its ADI illumination directly from &lt;a href="https://airandspace.si.edu/collection-media/NASM-49BE0A798E632_006"&gt;5 volts&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;The dial of our FDAI was repainted to match the dial of the Shuttle FDAI.
-The Apollo FDAI had red bands on the left and right of the dial.
-A close examination of our dial shows that black paint was carefully applied over the red paint, but a few specks of
-red paint are still visible (below).
-Moreover, the edges of the lines and the lozenge show slight unevenness from the repainting.
-Second, the Apollo FDAI had the text "ROLL RATE", "PITCH RATE", and "YAW RATE" in white next to the needle scales.
-In our FDAI, this text has been hidden by black paint to match the Shuttle display.&lt;span id="fnref:panel"&gt;&lt;a class="ref" href="#fn:panel"&gt;13&lt;/a&gt;&lt;/span&gt;
-Third, the Apollo LM FDAI had a crosshair in the center of the instrument, while our FDAI has a white U-shaped 
-indicator, the same as the Shuttle (and the Command Module's FDAI).
-Finally, the ball of the Apollo FDAI has red circular regions at the poles to warn of orientations that can cause
-gimbal lock. Our FDAI (like the Shuttle) does not have these circles. We couldn't see any evidence that these
-regions were repainted, so we suspect that our FDAI has Shuttle hemispheres on the ball.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/repaint.jpg"&gt;&lt;img alt="A closeup of the dial on our FDAI shows specks of red paint around the dial markings. The color is probably Switzer DayGlo Rocket Red." class="hilite" height="279" src="https://static.righto.com/images/fdai/repaint-w400.jpg" title="A closeup of the dial on our FDAI shows specks of red paint around the dial markings. The color is probably Switzer DayGlo Rocket Red." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A closeup of the dial on our FDAI shows specks of red paint around the dial markings. The color is probably Switzer DayGlo Rocket Red.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Our FDAI has also been modified electrically. 
-Small green connectors (Micro-D MDB1) have been added between the slip rings and the motors, as well as on the gimbal arm.
-We think these connectors were added post-Apollo, since they are attached somewhat sloppily with glue and don't
-look flight-worthy.
-Perhaps these connectors were added to make disassembly and modification easier.
-Moreover, our FDAI has an elapsed time indicator, also mounted with glue.&lt;/p&gt;
-&lt;p&gt;The back of our FDAI is completely different from Apollo.
-First, the connector's pinout is completely different.
-Second, each of the six indicator needles has a mechanical adjustment as well as a trimpot (&lt;a href="https://space1.com/Artifacts/Artifacts_FOR_SALE/FS__Shuttle_Sim_Avionics/FS__Shuttle_Sim_ADI/fs__shuttle_sim_adi.html"&gt;details&lt;/a&gt;).
-Finally, each of the three axes has an adjustment potentiometer.&lt;/p&gt;
-&lt;h2&gt;The Shuttle's ADI (Attitude Director Indicator)&lt;/h2&gt;
-&lt;p&gt;Each Space Shuttle had three ADIs (Attitude Director Indicators), which were very similar to the Apollo FDAI, despite
-the name change.
-The photo below shows the two octagonal ADIs in the forward flight deck, one on the left in front of the Commander,
-and one on the right in front of the Pilot.
-The &lt;a href="https://catalog.archives.gov/id/22919771"&gt;aft flight deck station&lt;/a&gt; had a third ADI.&lt;span id="fnref:MEDS"&gt;&lt;a class="ref" href="#fn:MEDS"&gt;15&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/shuttle-flight-deck.jpg"&gt;&lt;img alt="This photo shows Discovery's forward flight deck on STS-063 (1999). The ADIs are indicated with arrows. The photo is from the National Archives." class="hilite" height="385" src="https://static.righto.com/images/fdai/shuttle-flight-deck-w600.jpg" title="This photo shows Discovery's forward flight deck on STS-063 (1999). The ADIs are indicated with arrows. The photo is from the National Archives." width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;This photo shows Discovery's forward flight deck on STS-063 (1999). The ADIs are indicated with arrows. The photo is from the &lt;a href="https://catalog.archives.gov/id/23894173"&gt;National Archives&lt;/a&gt;.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;Our FDAI appears to have been significantly modified for use in the Shuttle simulator, as described above.
-However, it is much closer to the Apollo FDAI than the ADI used in the Shuttle, as I'll show in this section.
-My hypothesis is that the simulator was built before the Shuttle's ADI was created, so the Apollo FDAI was pressed
-into service.&lt;/p&gt;
-&lt;p&gt;The Shuttle's ADI was much more complicated electrically than the Apollo FDAI and our FDAI, providing improved
-functionality.&lt;span id="fnref:shuttle-adi"&gt;&lt;a class="ref" href="#fn:shuttle-adi"&gt;16&lt;/a&gt;&lt;/span&gt;
-For instance, while the Apollo FDAI had a simple "OFF" indicator flag to show that the indicator had lost power,
-the Shuttle's ADI had extensive error detection. 
-It contained voltage level monitors to check its five power supplies. (The Shuttle ADI used three DC power sources
-and two AC power sources, compared to the single AC supply for Apollo.)
-The Shuttle's ADI also monitored the ball servos to detect position errors. Finally, it received an external "Data OK" signal.
-If a fault was detected by any of these monitors, the "OFF" flag was deployed to indicate that the ADI could not
-be trusted.&lt;/p&gt;
-&lt;p&gt;The Shuttle's ADI had six needles, the same as Apollo, but the Shuttle used feedback to make the positions more accurate.
-Specifically, each Shuttle needle had a feedback sensor, a Linear Variable Differential Transformer (LVDT) that generates
-a voltage based on the needle position.
-The LVDT output drove a servo feedback loop to ensure that the needle was in the exact desired position.
-In the Apollo FDAI, on the other hand, the needle input voltage drove a galvanometer, swinging the needle proportionally,
-but there was no closed loop to ensure accuracy.&lt;/p&gt;
-&lt;p&gt;I assume that the Shuttle's ADI had integrated circuit electronics to implement this new functionality, considerably
-more modern than the germanium transistors in the Apollo FDAI.
-The Shuttle probably used the same mechanical structures to rotate the ball, but I can't confirm that.&lt;/p&gt;
-&lt;h2&gt;Conclusions&lt;/h2&gt;
-&lt;p&gt;The FDAI was a critical instrument in Apollo, indicating the orientation of the spacecraft in three axes.
-It wasn't obvious to me how the "8-ball" can rotate in three axes while still being securely connected to the
-instrument.
-The trick is that most of the mechanism rotates in two axes, while hollow hemispherical shells provide the
-third rotational axis.&lt;/p&gt;
-&lt;p&gt;The FDAI has an interesting evolutionary history, from the experimental X-15 rocket plane and the F-4 fighter to
-the Gemini, Apollo, and Space Shuttle flights.
-Our FDAI has an unusual position in this history: since it was modified from Apollo to function in a Space Shuttle
-simulator, it shows aspects of both Apollo and the Space Shuttle indicators.
-It would be interesting to compare the design of a Shuttle ADI to the Apollo FDAI, but I haven't been able to find
-interior photos of a Shuttle ADI (or of an unmodified Apollo FDAI).&lt;span id="fnref:photos"&gt;&lt;a class="ref" href="#fn:photos"&gt;17&lt;/a&gt;&lt;/span&gt;&lt;/p&gt;
-&lt;p&gt;You can see a brief video of the FDAI in motion &lt;a href="https://bsky.app/profile/did:plc:svh6dgjnpkdl4dhxahj4xvkv/post/3lrlbsnh5z22j"&gt;here&lt;/a&gt;. For more, follow me on
- Bluesky (&lt;a href="https://bsky.app/profile/righto.com"&gt;@righto.com&lt;/a&gt;),
-Mastodon (&lt;a href="https://oldbytes.space/@kenshirriff"&gt;@kenshirriff@oldbytes.space&lt;/a&gt;),
-or &lt;a href="http://www.righto.com/feeds/posts/default"&gt;RSS&lt;/a&gt;. (I've given up on Twitter.)
-I worked on this project with CuriousMarc, Mike Stewart, and Eric Schlapfer, so expect a
-video at some point. Thanks to Richard for providing the FDAI.
-I wrote about the F-4 fighter plane's attitude indicator &lt;a href="https://www.righto.com/2024/09/f4-attitude-indicator.html"&gt;here&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/fdai-opened2.jpg"&gt;&lt;img alt="Inside the FDAI. The amplifier boards have been removed for this photo." class="hilite" height="505" src="https://static.righto.com/images/fdai/fdai-opened2-w700.jpg" title="Inside the FDAI. The amplifier boards have been removed for this photo." width="700" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;Inside the FDAI. The amplifier boards have been removed for this photo.&lt;/div&gt;&lt;/p&gt;
-&lt;h2&gt;Notes and references&lt;/h2&gt;
-&lt;div class="footnote"&gt;
-&lt;ol&gt;
-&lt;li id="fn:simulator"&gt;
-&lt;p&gt;There were many Space Shuttle simulators, so it is unclear which simulator was the source of our FDAI.
-The photo below shows a simulator, with one of the ADIs indicated with an arrow.
-Presumably, our FDAI became available when a simulator was upgraded
-from physical instruments to the screens of the Multi-function Electronic Display System (MEDS).&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/simulator.jpg"&gt;&lt;img alt="&amp;quot;Forward flight deck of the fixed-base simulator.&amp;quot; From Introduction to Shuttle Mission Simulation" class="hilite" height="425" src="https://static.righto.com/images/fdai/simulator-w600.jpg" title="&amp;quot;Forward flight deck of the fixed-base simulator.&amp;quot; From Introduction to Shuttle Mission Simulation" width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;"Forward flight deck of the fixed-base simulator." From &lt;a href="https://ia804505.us.archive.org/8/items/intro-to-sms/intro%20to%20sms.pdf#page=22"&gt;Introduction to Shuttle Mission Simulation&lt;/a&gt;&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;The most complex simulators were the three &lt;a href="https://ntrs.nasa.gov/citations/19810005636"&gt;Shuttle Mission Simulators&lt;/a&gt;,
-one of which could dynamically move to provide motion cues.
-These simulators were at
-the simulation facility in Houston&amp;mdash;officially the Jake Garn Mission Simulator and Training Facility&amp;mdash;which also had
-a guidance and navigation simulator, a
-Spacelab simulator, and integration with the WETF (Weightless Environment Training Facility, an underground pool to simulate weightlessness).
-The simulators were controlled by a computer complex containing dozens of networked computers.
-The host computers were three UNIVAC 1100/92 mainframes, 36-bit computers that ran the simulation models.
-These were supported by seventeen Concurrent Computer Corporation 3260 and 3280 &lt;a href="https://ftpmirror.your.org/pub/misc/bitsavers/pdf/datapro/datapro_reports_70s-90s/Concurrent/M11-230-10_8909_Concurrent.pdf"&gt;super-minicomputers&lt;/a&gt; that simulated tracking, telemetry, and communication.
-The simulators also used real Shuttle computers running the actual flight software; these were IBM AP101S
-General-Purpose Computers (GPC).
-For more information, see &lt;a href="https://ia804505.us.archive.org/8/items/intro-to-sms/intro%20to%20sms.pdf"&gt;Introduction to Shuttle Mission Simulation&lt;/a&gt;.&lt;/p&gt;
-&lt;!-- --&gt;
-&lt;p&gt;NASA had additional Shuttle training facilities beyond the Shuttle Mission Simulator.
-The &lt;a href="https://www.museumofflight.org/exhibits-and-events/spacecraft/nasa-full-fuselage-trainer"&gt;Full Fuselage Trainer&lt;/a&gt;
-was a mockup of the complete Shuttle orbiter (minus the wings). It included full instrument panels (including
-the ADIs), but did not perform simulations.
-The &lt;a href="https://www.nationalmuseum.af.mil/Visit/Museum-Exhibits/Fact-Sheets/Display/Article/195845/space-shuttle-crew-compartment-trainer/"&gt;Crew Compartment Trainers&lt;/a&gt; could be positioned horizontally or vertically (to simulate pre-launch
-operations). They contained accurate flight decks with non-functional instruments.
-Three &lt;a href="https://www.nasa.gov/wp-content/uploads/2025/02/hughesfe-10-29-13.pdf#page=8"&gt;Single System Trainers&lt;/a&gt; provided simpler mockups for astronauts to learn each system, both during normal operation and during malfunctions, before using the
-more complex Shuttle Mission Simulator.
-A list of Shuttle training facilities is in Table 3.1 of &lt;a href="https://nap.nationalacademies.org/download/13227"&gt;Preparing for the High Frontier&lt;/a&gt;. Following the end of the Shuttle program, the trainers were distributed to various museums
-(&lt;a href="https://space.stackexchange.com/questions/52325/is-space-shuttle-simulator-in-a-museum-somewhere"&gt;details&lt;/a&gt;).&amp;#160;&lt;a class="footnote-backref" href="#fnref:simulator" title="Jump back to footnote 1 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:honeywell"&gt;
-&lt;p&gt;The Command Module for Apollo used a completely different FDAI (flight director-attitude indicator) that was
-built by Honeywell.
-The two designs can be easily distinguished: the Honeywell FDAI is round, while the Lear Siegler FDAI is octagonal.&amp;#160;&lt;a class="footnote-backref" href="#fnref:honeywell" title="Jump back to footnote 2 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:lm-fdai"&gt;
-&lt;p&gt;The FDAI's signals are more complicated than I described above.
-Among other things, the IMU's gimbal angles use a different coordinate system from the FDAI, so an
-electromechanical unit called GASTA (Gimbal Angle Sequence Transformation Assembly) used resolvers and motors
-to convert the coordinates.
-The digital attitude error signals from the computer are converted to analog by
-the Inertial Measurement Unit's Coupling Data Unit (IMU CDU).
-For attitude, the IMU is selected with the PGNS (Primary Guidance and Navigation System) switch setting.
-See the &lt;a href="https://www.nasa.gov/wp-content/uploads/static/history/alsj/LMSysHandbk.pdf"&gt;Lunar Module Systems Handbook&lt;/a&gt;,
-&lt;a href="https://www.ibiblio.org/apollo/Documents/LM-1_Systems_Handbook_RevA.pdf#page=157"&gt;Lunar Module System Handbook Rev A&lt;/a&gt;,
-and the &lt;a href="https://archive.org/details/apollo-operations-handbook-lunar-module-vol-1-sep-69/page/n53/mode/1up"&gt;Apollo Operations Handbook&lt;/a&gt;
-for more.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/wiring.jpg"&gt;&lt;img alt="The connections to the Apollo FDAIs. Adapted from LM-1 Systems Handbook. I think this diagram predates the ORDEAL system. (Click for a larger version.)" class="hilite" height="253" src="https://static.righto.com/images/fdai/wiring-w600.jpg" title="The connections to the Apollo FDAIs. Adapted from LM-1 Systems Handbook. I think this diagram predates the ORDEAL system. (Click for a larger version.)" width="600" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The connections to the Apollo FDAIs. Adapted from &lt;a href="https://www.ibiblio.org/apollo/Documents/LM-1_Systems_Handbook_RevA.pdf#page=157"&gt;LM-1 Systems Handbook. I think this diagram predates the ORDEAL system. (Click for a larger version.)&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:lm-fdai" title="Jump back to footnote 3 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:axes"&gt;
-&lt;p&gt;The roll, pitch, and yaw axes of the Lunar Module are not as obvious as the axes of an airplane. The diagram
-below defines these axes.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/axes.jpg"&gt;&lt;img alt="The roll, pitch, and yaw axes of the Lunar Module. Adapted from LM Systems Handbook." class="hilite" height="316" src="https://static.righto.com/images/fdai/axes-w500.jpg" title="The roll, pitch, and yaw axes of the Lunar Module. Adapted from LM Systems Handbook." width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The roll, pitch, and yaw axes of the Lunar Module. Adapted from &lt;a href="https://www.ibiblio.org/apollo/Documents/LM_Systems_Handbook_060269.pdf#page=5"&gt;LM Systems Handbook&lt;/a&gt;.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:axes" title="Jump back to footnote 4 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:pcb"&gt;
-&lt;p&gt;The amplifier is constructed on a single-sided printed circuit board. 
-Since the components are packed tightly on the board, routing of the board was difficult.
-However, some of the components have long leads, protected by plastic sleeves.
-This provides additional flexibility
-for the board routing since the leads could be positioned as desired, regardless of the geometry of the component.
-As a result, the style of this board is very different from modern circuit boards, where components are
-usually arranged in an orderly pattern.&amp;#160;&lt;a class="footnote-backref" href="#fnref:pcb" title="Jump back to footnote 5 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:jumpers"&gt;
-&lt;p&gt;In our FDAI, the amplifier boards as well as the needle actuators are connected by pins that plug into sockets.
-These connections don't seem suitable for flight since they could easily vibrate loose.
-We suspect that the pin-and-socket connections made the module easier to reconfigure in the simulator, but were
-not used in flyable units.
-In particular, in the similar aircraft instruments (ARU/11-A) that we examined, the wires to the amplifier boards
-were soldered.&amp;#160;&lt;a class="footnote-backref" href="#fnref:jumpers" title="Jump back to footnote 6 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:zener"&gt;
-&lt;p&gt;The board has a 56-volt Zener diode, but the function of the diode is unclear.
-The board is powered by 28 volts, not enough voltage to activate the Zener.
-Perhaps the diode filters high-voltage transients, but I don't see how transients could arise in that
-part of the circuit. (I can imagine transients when the pulse transformer switches, but the Zener isn't
-connected to the transformer.)&amp;#160;&lt;a class="footnote-backref" href="#fnref:zener" title="Jump back to footnote 7 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:control"&gt;
-&lt;p&gt;In more detail, each motor's control winding is a center-tapped winding, with the center connected to 28 volts DC.
-The amplifier board's output transistors will ground either side of the winding during alternate half-cycles of
-the 400 Hz cycle.
-This causes the motor to spin in one direction or the other.
-(Usually, control winding are driven 90&amp;deg; out of phase with the motor power, but I'm not sure how this phase shift
-is applied in the FDAI.)&amp;#160;&lt;a class="footnote-backref" href="#fnref:control" title="Jump back to footnote 8 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:lear"&gt;
-&lt;p&gt;The history of Bill Lear and Lear Siegler is based on &lt;a href="https://web.archive.org/web/20060530094020/http://www.wingsoverkansas.com/history/article.asp?id=103"&gt;Love him or hate him, Bill Lear was a creator&lt;/a&gt; and
-&lt;a href="https://www.glenswanson.space/uploads/1/2/5/7/125738648/on_course_to_tomorrow.pdf#page=3"&gt;On Course to Tomorrow: A History of Lear Siegler Instrument Division’s Manned Spaceflight Systems 1958-1981&lt;/a&gt;.&amp;#160;&lt;a class="footnote-backref" href="#fnref:lear" title="Jump back to footnote 9 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:parts"&gt;
-&lt;p&gt;Numerous variants of the Lear Siegler FDAI were built for Apollo, as shown before. 
-Among other things, the length of the unit ("L MAX") varied from 8 inches to 11 inches.
-(Our FDAI is approximately 8 inches long.)&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/part-number-chart.jpg"&gt;&lt;img alt="The Apollo FDAI part number chart from Grumman Specification Control Drawing LSC350-301. (Click for a larger view.)" class="hilite" height="215" src="https://static.righto.com/images/fdai/part-number-chart-w500.jpg" title="The Apollo FDAI part number chart from Grumman Specification Control Drawing LSC350-301. (Click for a larger view.)" width="500" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The Apollo FDAI part number chart from Grumman Specification Control Drawing LSC350-301. (Click for a larger view.)&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:parts" title="Jump back to footnote 10 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:amplifiers"&gt;
-&lt;p&gt;We examined a different ARU-11/A where the amplifier boards were not quite identical: the boards had
-one additional capacitor and some of
-the PCB traces were routed slightly differently.
-These boards were labeled "REV C" in the PCB copper, so they may have been later boards with a slight
-modification.&amp;#160;&lt;a class="footnote-backref" href="#fnref:amplifiers" title="Jump back to footnote 11 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:resistors"&gt;
-&lt;p&gt;The amplifier scaling resistors were placed on the power supply board rather than the amplifier boards,
-which may seem strange. The advantage of this approach is that it permitted the three amplifier boards to be identical,
-since the components that differ between the axes were not part of the amplifier boards.
-This simplified the manufacture and repair of the amplifier boards.&amp;#160;&lt;a class="footnote-backref" href="#fnref:resistors" title="Jump back to footnote 12 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:panel"&gt;
-&lt;p&gt;On the front panel of our FDAI, the text "ROLL RATE", "PITCH RATE", and "YAW RATE" has been painted over.
-However, the text is still faintly visible (reversed) on the inside of the panel, as shown below.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/panel-labeled.jpg"&gt;&lt;img alt="The inside of the FDAI's front cover." class="hilite" height="415" src="https://static.righto.com/images/fdai/panel-labeled-w400.jpg" title="The inside of the FDAI's front cover." width="400" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The inside of the FDAI's front cover.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:panel" title="Jump back to footnote 13 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:systems-handbook"&gt;
-&lt;p&gt;The diagram below shows the internals of the Apollo LM FDAI at a high level.
-This diagram shows several differences between the LM FDAI and the FDAI that we examined.
-First, the roll, pitch, and yaw inputs to the LM FDAI are resolver inputs (i.e. sin and cos), rather than the synchro inputs to our FDAI.
-Second, the needle signals below are modulated on an 800 Hz carrier and are demodulated inside the FDAI.
-Our FDAI, however, uses positive or negative voltages to drive the needle galvanometers directly.
-A minor difference is that the diagram below shows the Power Off Flag wired to +28V internally, while our FDAI has
-the flag wired to connector pins, probably so the flag could be controlled by the simulator.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/fdai-page.jpg"&gt;&lt;img alt="The diagram of the FDAI in the LM Systems Handbook. Click for a larger image." class="hilite" height="467" src="https://static.righto.com/images/fdai/fdai-page-w350.jpg" title="The diagram of the FDAI in the LM Systems Handbook. Click for a larger image." width="350" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;The diagram of the FDAI in the &lt;a href="https://www.ibiblio.org/apollo/Documents/LM_Systems_Handbook_060269.pdf#page=5"&gt;LM Systems Handbook&lt;/a&gt;. Click for a larger image.&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:systems-handbook" title="Jump back to footnote 14 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:MEDS"&gt;
-&lt;p&gt;The Space Shuttle instruments were replaced with color LCD screens in the MEDS (Multifunction Electronic Display System) upgrade.
-This upgrade is discussed in &lt;a href="https://journals.sagepub.com/doi/10.1177/106480460501300405"&gt;New Displays for the Space Shuttle Cockpit&lt;/a&gt;.
-The &lt;a href="https://gandalfddi.z19.web.core.windows.net/Shuttle/JSC-11174%20-%20Space_Shuttle_Systems_Handbook_Vol3.pdf"&gt;Space Shuttle Systems Handbook&lt;/a&gt; shows the ADIs on the forward console (pages 263-264) and the aft console (page 275).
-The physical ADI is compared to the MEDS ADI display in &lt;a href="https://www.ibiblio.org/apollo/Shuttle/sts83-0020v1-34%20-%20Displays%20and%20Controls%20-%20GNC.pdf"&gt;Displays and Controls, Vol. 1&lt;/a&gt; page 119.&amp;#160;&lt;a class="footnote-backref" href="#fnref:MEDS" title="Jump back to footnote 15 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:shuttle-adi"&gt;
-&lt;p&gt;The diagram below shows the internals of the Shuttle's ADI at a high level.
-The Shuttle's ADI is more complicated than the Apollo FDAI, even though they have the same indicator ball and needles.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://static.righto.com/images/fdai/shuttle-fdai.jpg"&gt;&lt;img alt="A diagram of the Space Shuttle's ADI. From Space Shuttle Systems Handbook Vol. 1, 1 G&amp;amp;C DISP 1. (Click for a larger image.)" class="hilite" height="129" src="https://static.righto.com/images/fdai/shuttle-fdai-w700.jpg" title="A diagram of the Space Shuttle's ADI. From Space Shuttle Systems Handbook Vol. 1, 1 G&amp;amp;C DISP 1. (Click for a larger image.)" width="700" /&gt;&lt;/a&gt;&lt;div class="cite"&gt;A diagram of the Space Shuttle's ADI. From Space Shuttle Systems Handbook Vol. 1, 1 G&amp;C DISP 1. (Click for a larger image.)&lt;/div&gt;&lt;/p&gt;
-&lt;p&gt;&lt;!-- --&gt;&amp;#160;&lt;a class="footnote-backref" href="#fnref:shuttle-adi" title="Jump back to footnote 16 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;li id="fn:photos"&gt;
-&lt;p&gt;Multiple photos of the exterior of the Shuttle ADI are available &lt;a href="https://airandspace.si.edu/collection-objects/indicator-attitude-director-adi-shuttle-columbia/nasm_A20050413000"&gt;here&lt;/a&gt;, from the National Air and Space Museum.
-There are interior photos of Apollo FDAIs online, but they all appear to be modified for Shuttle simulators.&amp;#160;&lt;a class="footnote-backref" href="#fnref:photos" title="Jump back to footnote 17 in the text"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">tag:blogger.com,1999:blog-6264947694886887540.post-2250215887377196568</guid>
-      <pubDate>Fri, 13 Jun 2025 20:12:00 -0700</pubDate>
     </item>
   </channel>
 </rss>
