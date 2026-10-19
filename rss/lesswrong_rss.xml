@@ -5,7 +5,1167 @@
     <link>https://www.lesswrong.com</link>
     <description>A community blog devoted to refining the art of rationality</description>
     <language>en</language>
-    <lastBuildDate>Sun, 18 Oct 2026 22:54:23 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 19 Oct 2026 00:58:24 +0000</lastBuildDate>
+    <item>
+      <title>LLMs Learn to Evade Latent Monitors from Prior Feedback Alone</title>
+      <link>https://www.lesswrong.com/posts/adZq8a5s5K3FomyHC/llms-learn-to-evade-latent-monitors-from-prior-feedback</link>
+      <description>&lt;p&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;TL;DR: We show that off-the-shelf LLMs can edit their activations to reduce latent monitor scores, in context, given only the monitor's verdicts on their earlier responses. The activation edits they enact are too small to evade the monitor on their own, but linearly scaling them up induces evasion, and a rank-1 LoRA can be trained to produce this larger activation edit within the forward pass, evading monitors for concepts it never saw during training.&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;a href="https://arxiv.org/abs/2609.36490" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;Paper&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; | &lt;/span&gt;&lt;a href="https://hugo0076.github.io/latent-monitor-evasion/" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;Project Page&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; | &lt;/span&gt;&lt;a href="https://x.com/Hugo007600/status/2111056935101620301" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;Tweet Thread&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; | &lt;/span&gt;&lt;a href="https://github.com/hugo0076/latent-monitor-evasion" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;Code&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; | &lt;/span&gt;&lt;a href="https://huggingface.co/hugo0076/latent-monitor-evasion" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;Trained Models&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;div class="iframe-widget" data-iframe-widget-id="3irpJ4wPZTjeCDbjQ"&gt;&lt;/div&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;There has been &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/PLisnSFir8y5AHkmP/how-concerned-should-we-be-about-astra-s-recurrent" target="_blank" rel="noopener nofollow"&gt;&lt;span style="white-space:pre-wrap"&gt;much&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/K8FxfK9GmJfiAhgcT/anthropic-repeatedly-accidentally-trained-against-the-cot" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;discussion&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; &lt;/span&gt;&lt;a href="https://www.lesswrong.com/posts/6m29SfjbittooYojj/latent-reasoning-architectures-would-undermine-cot-our" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;recently&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; of falling chain-of-thought (CoT) monitorability, and &lt;/span&gt;&lt;a href="https://www.redwoodresearch.org/blog/proposal-for-tracking-architecture-on-monitorability" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;what to do about it&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt;. Directly monitoring the internal states of the model is an alternative idea, that might allow oversight of models even if they have garbled CoTs. The argument goes: "Sure, CoTs will become less legible, but thoughts must still be &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;represented somehow&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt; by the model, and we'll be able to use white-box monitoring to flag the bad ones."&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;However, this approach seems risky for at least two reasons. Firstly, relying on a single class of method is an inherently precarious position to be in, and we should diversify if we can. Secondly, latent space monitors have weaknesses of their own: they are susceptible to evasion by models that can &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;control their own activations&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;. Various recent works have studied this activation control ability from different angles:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;a href="https://arxiv.org/abs/2412.09565" target="_blank" rel="noopener nofollow"&gt;&lt;span style="white-space:pre-wrap"&gt;Bailey et al.&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; showed that optimized inputs (and, in some experiments, training) can produce 'obfuscated activations' that evade probes, SAEs and OOD detectors, while the model still executes harmful behavior.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;a href="https://arxiv.org/abs/2512.11949" target="_blank" rel="noopener nofollow"&gt;&lt;span style="white-space:pre-wrap"&gt;McGuinness et al.&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; showed that 'Neural Chameleons' could be created via finetuning, and that they evade even held-out monitors when given a description of what the monitors look for (via a trigger like 'You are being probed for {concept}').&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;a href="https://arxiv.org/abs/2506.14261" target="_blank" rel="noopener nofollow"&gt;&lt;span style="white-space:pre-wrap"&gt;Gupta and Jenner&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; trained models with RL directly against monitor scores, showing that they can learn to evade the monitor in question through a mix of policy and activation changes.&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;a href="https://proceedings.neurips.cc/paper_files/paper/2025/hash/56a225639da77e8f7c0409f6d5ba996b-Abstract-Conference.html" target="_blank" rel="noopener nofollow"&gt;&lt;span style="white-space:pre-wrap"&gt;Li et al.&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; showed that models have some level of 'metacognitive' access to, and control over, their activations.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="o05i0tn0s67" data-footnote-index="1" role="doc-noteref" id="fnrefo05i0tn0s67"&gt;&lt;sup&gt;&lt;a href="#fno05i0tn0s67"&gt;[1]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/li&gt;&lt;li value="5"&gt;&lt;a href="https://www.lesswrong.com/posts/HgvwxjzgwvsEvAiBH/measuring-activation-control-in-llms" target="_blank" rel="noopener nofollow"&gt;&lt;span style="white-space:pre-wrap"&gt;Kowalski et al.&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; measured the degree of activation control possessed by different models on a number of toy/synthetic tasks, finding that it does not cleanly scale with parameters/release date.&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;In contrast to these prior works which either give the model a description of the monitored concept at test time (McGuinness et al.), or directly optimize against the monitor being evaluated (Bailey et al., Gupta and Jenner), our setting leaks information about the monitor only through its verdicts paired with the model's earlier responses in context.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Concretely, our threat model is: the model/agent observes a monitor's verdicts on its outputs in a multi-turn setting, and then must evade the monitor on a later, critical turn. This mimics the way information about a monitor may leak to LLM agents over the course of a typical agentic session.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="dyc1w6j0j6k" data-footnote-index="2" role="doc-noteref" id="fnrefdyc1w6j0j6k"&gt;&lt;sup&gt;&lt;a href="#fndyc1w6j0j6k"&gt;[2]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Our primary finding is that current off-the-shelf models do not evade monitors under this threat model, but they do weakly edit their activations in a way that is aligned with the monitor’s direction. If we simply scale the activation edit up 8x and inject it back into the residual stream, the monitor is evaded, with the detection rate falling to 27%. We also train a model organism to evade monitors unaided, showing that it learns a general skill which transfers to held-out monitors it was never trained against. &lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Our Setup&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;We design a simple setting to test for this ability. For 60 different concepts such as 'physics', 'spanish' and 'sarcastic', we generate synthetic datasets of 500 short passages that embody the concept using Claude Opus 4.7, split into 3 pools: monitor-fitting, demonstrations and test. Latent space monitors for each concept are fit on passage tokens in single turn setting, using residual stream activations extracted at a layer around three quarters of the network depth.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="lxmt2q2yd9e" data-footnote-index="3" role="doc-noteref" id="fnreflxmt2q2yd9e"&gt;&lt;sup&gt;&lt;a href="#fnlxmt2q2yd9e"&gt;[3]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; We primarily use logistic regression probes, but also experiment with MLP and attention probes across 4 open-weights models, finding largely similar results. All probe architectures reach a high accuracy (AUROC of ~0.99) on held-out passages.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;We then construct 'episodes': multi-turn contexts (typically 32 user and assistant turns) where half of the assistant's responses are from a particular 'active' concept's demonstration dataset (e.g. 'physics'), and half are drawn at random from other concepts. Each response is followed by a label, 1 or 0, indicating whether it was flagged by the active concept's monitor.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="r7wsvua3z8h" data-footnote-index="4" role="doc-noteref" id="fnrefr7wsvua3z8h"&gt;&lt;sup&gt;&lt;a href="#fnr7wsvua3z8h"&gt;[4]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; On the final turn, the model is asked to imitate one of the labels, corresponding to either elevating or suppressing the monitor score. Importantly, we prefill the model's final response to be a passage that the monitor &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;should&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt; flag (e.g. a physics passage), so that any observed evasion must be the result of changes in activations rather than output tokens. Though the prefilled tokens are fixed, their activations still depend on the earlier context including the 'imitate {label}' instruction, so this setup isolates how well the model can modulate its activations based only on that instruction. See below for a (truncated) example episode, with 'physics' as the active (monitored) concept:&lt;/span&gt;&lt;/p&gt;&lt;details class="detailsBlock"&gt;&lt;summary class="detailsBlockTitle"&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Example episode&lt;/span&gt;&lt;/p&gt;&lt;/summary&gt;&lt;div class="detailsBlockContent"&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;The remediation timeline is properly a matter for management to determine. […] [Label: 0]&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;The ampere is now defined by fixing the elementary charge e, so that one ampere corresponds to a flow of one over e elementary charges per second. […] [Label: 1]&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Second harmonic generation in a nonlinear crystal converts two photons of frequency omega into one photon of frequency 2 omega through the second-order susceptibility chi^(2). […] [Label: 1]&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;The Bullet Cluster represents the cleanest empirical evidence for collisionless dark matter. […] [Label: 0]&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;A Hohmann transfer moves a spacecraft between two circular orbits using an elliptical arc tangent to both, requiring two engine burns. […] [Label: 1]&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;My friend wants the whole group to sign up for a charity run, and she's already messaged the chat with the link. […] [Label: 0]&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Quantum teleportation transfers an unknown qubit state from Alice to Bob via a shared Bell pair and two classical bits of information. […] [Label: 1]&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Say something.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Naturally, the new initiative is called Project Aurora, because everything must have an inspirational code name. […] [Label: 0]&lt;/span&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;[... 24 more pairs of user-assistant turns ...]&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[user]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;Now you are performing the imitation task, please imitate label 0.&lt;/span&gt;&lt;br&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;[assistant, forced prefill]&lt;/span&gt;&lt;br&gt;&lt;span style="white-space:pre-wrap"&gt;A series RLC circuit driven at frequency omega has impedance Z = R + i(omega L - 1 over omega C), and the magnitude of the current peaks at the resonant frequency where the inductive and capacitive reactances cancel. […]&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Evaluation Methodology&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;We aim to understand both a) the degree to which current models &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;already&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt; display signs of this in-context evasion ability, and b) how well they can be taught to use it via finetuning, and how far this training generalizes. Every experiment uses the same episode structure, we only change the model in question, and whether we intervene on its activations.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Off-the-shelf models&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;For off-the-shelf models, we feed the model an episode context and simply read its activations on the final turn's (prefilled) tokens. For each episode we run two variants: one where the model is instructed to imitate the unflagged label (suppress monitor score) and one where it imitates the flagged label (elevate score). We calculate the difference in activations between these conditions: &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
+
+
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row &gt; * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h &gt; * &gt; mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h &gt; mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h &gt; mjx-ext &gt; mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h &gt; mjx-beg &gt; mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h &gt; mjx-end &gt; mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v &gt; * {
+  display: block;
+}
+
+mjx-stretchy-v &gt; mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v &gt; mjx-end &gt; mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v &gt; * &gt; mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v &gt; mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-munder {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-over {
+  text-align: left;
+}
+
+mjx-munder:not([limits="false"]) {
+  display: inline-table;
+}
+
+mjx-munder &gt; mjx-row {
+  text-align: left;
+}
+
+mjx-under {
+  padding-bottom: .1em;
+}
+
+mjx-mrow {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msup {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mpadded {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-rbox {
+  display: inline-block;
+  position: relative;
+}
+
+mjx-mtable {
+  display: inline-block;
+  text-align: center;
+  vertical-align: .25em;
+  position: relative;
+  box-sizing: border-box;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+
+mjx-mstyle[size="s"] mjx-mtable {
+  vertical-align: .354em;
+}
+
+mjx-labels {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+mjx-table {
+  display: inline-block;
+  vertical-align: -.5ex;
+  box-sizing: border-box;
+}
+
+mjx-table &gt; mjx-itable {
+  vertical-align: middle;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+mjx-labels &gt; mjx-itable {
+  position: absolute;
+  top: 0;
+}
+
+mjx-mtable[justify="left"] {
+  text-align: left;
+}
+
+mjx-mtable[justify="right"] {
+  text-align: right;
+}
+
+mjx-mtable[justify="left"][side="left"] {
+  padding-right: 0 ! important;
+}
+
+mjx-mtable[justify="left"][side="right"] {
+  padding-left: 0 ! important;
+}
+
+mjx-mtable[justify="right"][side="left"] {
+  padding-right: 0 ! important;
+}
+
+mjx-mtable[justify="right"][side="right"] {
+  padding-left: 0 ! important;
+}
+
+mjx-mtable[align] {
+  vertical-align: baseline;
+}
+
+mjx-mtable[align="top"] &gt; mjx-table {
+  vertical-align: top;
+}
+
+mjx-mtable[align="bottom"] &gt; mjx-table {
+  vertical-align: bottom;
+}
+
+mjx-mtable[side="right"] mjx-labels {
+  min-width: 100%;
+}
+
+mjx-mtr {
+  display: table-row;
+  text-align: left;
+}
+
+mjx-mtr[rowalign="top"] &gt; mjx-mtd {
+  vertical-align: top;
+}
+
+mjx-mtr[rowalign="center"] &gt; mjx-mtd {
+  vertical-align: middle;
+}
+
+mjx-mtr[rowalign="bottom"] &gt; mjx-mtd {
+  vertical-align: bottom;
+}
+
+mjx-mtr[rowalign="baseline"] &gt; mjx-mtd {
+  vertical-align: baseline;
+}
+
+mjx-mtr[rowalign="axis"] &gt; mjx-mtd {
+  vertical-align: .25em;
+}
+
+mjx-mtd {
+  display: table-cell;
+  text-align: center;
+  padding: .215em .4em;
+}
+
+mjx-mtd:first-child {
+  padding-left: 0;
+}
+
+mjx-mtd:last-child {
+  padding-right: 0;
+}
+
+mjx-mtable &gt; * &gt; mjx-itable &gt; *:first-child &gt; mjx-mtd {
+  padding-top: 0;
+}
+
+mjx-mtable &gt; * &gt; mjx-itable &gt; *:last-child &gt; mjx-mtd {
+  padding-bottom: 0;
+}
+
+mjx-tstrut {
+  display: inline-block;
+  height: 1em;
+  vertical-align: -.25em;
+}
+
+mjx-labels[align="left"] &gt; mjx-mtr &gt; mjx-mtd {
+  text-align: left;
+}
+
+mjx-labels[align="right"] &gt; mjx-mtr &gt; mjx-mtd {
+  text-align: right;
+}
+
+mjx-mtd[extra] {
+  padding: 0;
+}
+
+mjx-mtd[rowalign="top"] {
+  vertical-align: top;
+}
+
+mjx-mtd[rowalign="center"] {
+  vertical-align: middle;
+}
+
+mjx-mtd[rowalign="bottom"] {
+  vertical-align: bottom;
+}
+
+mjx-mtd[rowalign="baseline"] {
+  vertical-align: baseline;
+}
+
+mjx-mtd[rowalign="axis"] {
+  vertical-align: .25em;
+}
+
+mjx-mspace {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mfrac {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-frac {
+  display: inline-block;
+  vertical-align: 0.17em;
+  padding: 0 .22em;
+}
+
+mjx-frac[type="d"] {
+  vertical-align: .04em;
+}
+
+mjx-frac[delims] {
+  padding: 0 .1em;
+}
+
+mjx-frac[atop] {
+  padding: 0 .12em;
+}
+
+mjx-frac[atop][delims] {
+  padding: 0;
+}
+
+mjx-dtable {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-dtable &gt; * {
+  font-size: 2000%;
+}
+
+mjx-dbox {
+  display: block;
+  font-size: 5%;
+}
+
+mjx-num {
+  display: block;
+  text-align: center;
+}
+
+mjx-den {
+  display: block;
+  text-align: center;
+}
+
+mjx-mfrac[bevelled] &gt; mjx-num {
+  display: inline-block;
+}
+
+mjx-mfrac[bevelled] &gt; mjx-den {
+  display: inline-block;
+}
+
+mjx-den[align="right"], mjx-num[align="right"] {
+  text-align: right;
+}
+
+mjx-den[align="left"], mjx-num[align="left"] {
+  text-align: left;
+}
+
+mjx-nstrut {
+  display: inline-block;
+  height: .054em;
+  width: 0;
+  vertical-align: -.054em;
+}
+
+mjx-nstrut[type="d"] {
+  height: .217em;
+  vertical-align: -.217em;
+}
+
+mjx-dstrut {
+  display: inline-block;
+  height: .505em;
+  width: 0;
+}
+
+mjx-dstrut[type="d"] {
+  height: .726em;
+}
+
+mjx-line {
+  display: block;
+  box-sizing: border-box;
+  min-height: 1px;
+  height: .06em;
+  border-top: .06em solid;
+  margin: .06em -.1em;
+  overflow: hidden;
+}
+
+mjx-line[type="d"] {
+  margin: .18em -.1em;
+}
+
+mjx-msqrt {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-root {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+mjx-surd {
+  display: inline-block;
+  vertical-align: top;
+}
+
+mjx-sqrt {
+  display: inline-block;
+  padding-top: .07em;
+}
+
+mjx-sqrt &gt; mjx-box {
+  border-top: .07em solid;
+}
+
+mjx-sqrt.mjx-tall &gt; mjx-box {
+  padding-left: .3em;
+  margin-left: -.3em;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-stretchy-h.mjx-c23DF mjx-beg mjx-c::before {
+  content: "\E152";
+  padding: 0.32em 0 0.2em 0;
+}
+
+mjx-stretchy-h.mjx-c23DF mjx-ext mjx-c::before {
+  content: "\E154";
+  padding: 0.32em 0 0.2em 0;
+}
+
+mjx-stretchy-h.mjx-c23DF mjx-end mjx-c::before {
+  content: "\E153";
+  padding: 0.32em 0 0.2em 0;
+}
+
+mjx-stretchy-h.mjx-c23DF mjx-mid mjx-c::before {
+  content: "\E151\E150";
+  padding: 0.32em 0 0.2em 0;
+}
+
+mjx-stretchy-h.mjx-c23DF &gt; mjx-ext {
+  width: 50%;
+}
+
+mjx-c.mjx-c394::before {
+  padding: 0.716em 0.833em 0 0;
+  content: "\394";
+}
+
+mjx-c.mjx-c210E.TEX-I::before {
+  padding: 0.694em 0.576em 0.011em 0;
+  content: "h";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c65::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "e";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c76::before {
+  padding: 0.431em 0.528em 0.011em 0;
+  content: "v";
+}
+
+mjx-c.mjx-c61::before {
+  padding: 0.448em 0.5em 0.011em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c74::before {
+  padding: 0.615em 0.389em 0.01em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c73::before {
+  padding: 0.448em 0.394em 0.011em 0;
+  content: "s";
+}
+
+mjx-c.mjx-c75::before {
+  padding: 0.442em 0.556em 0.011em 0;
+  content: "u";
+}
+
+mjx-c.mjx-c70::before {
+  padding: 0.442em 0.556em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c72::before {
+  padding: 0.442em 0.392em 0 0;
+  content: "r";
+}
+
+mjx-c.mjx-c1D464.TEX-I::before {
+  padding: 0.443em 0.716em 0.011em 0;
+  content: "w";
+}
+
+mjx-c.mjx-c1D460.TEX-I::before {
+  padding: 0.442em 0.469em 0.01em 0;
+  content: "s";
+}
+
+mjx-c.mjx-c63::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "c";
+}
+
+mjx-c.mjx-c6F::before {
+  padding: 0.448em 0.5em 0.01em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c2061::before {
+  padding: 0 0 0 0;
+  content: "";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c2C::before {
+  padding: 0.121em 0.278em 0.194em 0;
+  content: ",";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c22C5::before {
+  padding: 0.31em 0.278em 0 0;
+  content: "\22C5";
+}
+
+mjx-c.mjx-c2016::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "\2225";
+}
+
+mjx-c.mjx-c1D6FC.TEX-I::before {
+  padding: 0.442em 0.64em 0.011em 0;
+  content: "\3B1";
+}
+
+mjx-c.mjx-c4C.TEX-C::before {
+  padding: 0.705em 0.69em 0.022em 0;
+  content: "L";
+}
+
+mjx-c.mjx-c1D45D.TEX-I::before {
+  padding: 0.442em 0.503em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c1D461.TEX-I::before {
+  padding: 0.626em 0.361em 0.011em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c1D466.TEX-I::before {
+  padding: 0.442em 0.49em 0.205em 0;
+  content: "y";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c1D53C.TEX-A::before {
+  padding: 0.683em 0.667em 0 0;
+  content: "E";
+}
+
+mjx-c.mjx-c1D450.TEX-I::before {
+  padding: 0.442em 0.433em 0.011em 0;
+  content: "c";
+}
+
+mjx-c.mjx-c2260::before {
+  padding: 0.716em 0.778em 0.215em 0;
+  content: "\2260";
+}
+
+mjx-c.mjx-c5B.TEX-S1::before {
+  padding: 0.85em 0.417em 0.349em 0;
+  content: "[";
+}
+
+mjx-c.mjx-c5D.TEX-S1::before {
+  padding: 0.85em 0.417em 0.349em 0;
+  content: "]";
+}
+
+mjx-c.mjx-c69::before {
+  padding: 0.669em 0.278em 0 0;
+  content: "i";
+}
+
+mjx-c.mjx-c6D::before {
+  padding: 0.442em 0.833em 0 0;
+  content: "m";
+}
+
+mjx-c.mjx-c20::before {
+  padding: 0 0.25em 0 0;
+  content: " ";
+}
+
+mjx-c.mjx-c64::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c62::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "b";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c1D706.TEX-I::before {
+  padding: 0.694em 0.583em 0.012em 0;
+  content: "\3BB";
+}
+
+mjx-c.mjx-c4B::before {
+  padding: 0.683em 0.778em 0 0;
+  content: "K";
+}
+
+mjx-c.mjx-c4C::before {
+  padding: 0.683em 0.625em 0 0;
+  content: "L";
+}
+
+mjx-c.mjx-c1D70B.TEX-I::before {
+  padding: 0.431em 0.57em 0.011em 0;
+  content: "\3C0";
+}
+
+mjx-c.mjx-c1D703.TEX-I::before {
+  padding: 0.705em 0.469em 0.01em 0;
+  content: "\3B8";
+}
+
+mjx-c.mjx-c79::before {
+  padding: 0.431em 0.528em 0.204em 0;
+  content: "y";
+}
+
+mjx-c.mjx-c68::before {
+  padding: 0.694em 0.556em 0 0;
+  content: "h";
+}
+
+mjx-c.mjx-c6B::before {
+  padding: 0.694em 0.528em 0 0;
+  content: "k";
+}
+
+mjx-c.mjx-c6E::before {
+  padding: 0.442em 0.556em 0 0;
+  content: "n";
+}
+
+mjx-c.mjx-c67::before {
+  padding: 0.453em 0.5em 0.206em 0;
+  content: "g";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c31::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "1";
+}
+
+mjx-c.mjx-c38::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "8";
+}
+
+mjx-c.mjx-cB1::before {
+  padding: 0.666em 0.778em 0 0;
+  content: "\B1";
+}
+
+mjx-c.mjx-c33::before {
+  padding: 0.665em 0.5em 0.022em 0;
+  content: "3";
+}
+
+mjx-c.mjx-c221A::before {
+  padding: 0.8em 0.853em 0.2em 0;
+  content: "\221A";
+}
+
+mjx-c.mjx-c1D451.TEX-I::before {
+  padding: 0.694em 0.52em 0.01em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c36::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "6";
+}
+&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\Delta h = h_{\text{elevate}}-h_{\text{suppress}}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="4"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c76"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c75"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;. In the case of logistic regression (linear) probes, the raw monitor score can be thought of as a projection of the activation&amp;nbsp;&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="h" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; onto the monitored direction &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="w" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D464 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;. This means that the change in (pre-sigmoid) monitor score &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\Delta s" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; can be seen as a product of 'aim' and 'magnitude' (for unit-norm &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="w" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D464 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;):&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\Delta s = \cos(\Delta h, w) \cdot \lVert \Delta h \rVert" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D460 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c63"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2061"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D464 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c22C5"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2016"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2016"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;If the model fails to evade the monitor, this decomposition lets us determine whether the failure is due to aiming poorly, or simply not pushing hard enough. We can also manually scale up the edit by a factor &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\alpha" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D6FC TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; and add &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="-\alpha\Delta h" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D6FC TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; back onto the response's activations, to see how 'close' the model is to evading.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Model organism&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;In order to stress test this ability and see what is possible without intervention on the forward pass, we train a &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;model organism&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt; of this behavior using a rank-1 LoRA. We designate 50 of the 60 total concepts as training concepts, and build episodes with them as the active concept. The remaining 10 concepts, including those such as 'deception' and 'sycophancy', are held out and used to evaluate generalization. We train using the following loss:&lt;/span&gt;&lt;/p&gt;&lt;div&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" display="true" aria-label="\mathcal{L} = \underbrace{(p_t - y)^2\vphantom{\mathbb{E}_{c \neq t}\big[\big]}}_{\substack{\text{imitate desired}\\ \text{label}}} + \lambda\,\underbrace{\mathrm{KL}(\pi_\theta \,\Vert\, \pi_{\text{base}})\vphantom{\mathbb{E}_{c \neq t}\big[\big]}}_{\substack{\text{stay close to}\\ \text{the base policy}}} + \underbrace{\mathbb{E}_{c \neq t}\big[(p_c(\pi_\theta) - p_c(\pi_{\text{base}}))^2\big]}_{\substack{\text{keep other monitor}\\ \text{probabilities unchanged}}}" role="math"&gt;&lt;mjx-math display="true" style="margin-left: 0; margin-right: 0;" class=" MJX-TEX"&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-cal mjx-i"&gt;&lt;mjx-c class="mjx-c4C TEX-C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-munder space="4"&gt;&lt;mjx-row&gt;&lt;mjx-base style="padding-left: 0.387em;"&gt;&lt;mjx-texatom texclass="OP"&gt;&lt;mjx-munder&gt;&lt;mjx-row&gt;&lt;mjx-base&gt;&lt;mjx-mrow&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="3"&gt;&lt;mjx-c class="mjx-c1D466 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: 0.413em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mpadded&gt;&lt;mjx-block style="width: 0;"&gt;&lt;mjx-mphantom&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-ds mjx-b"&gt;&lt;mjx-c class="mjx-c1D53C TEX-A"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.153em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D450 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2260"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c5B TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c5D TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;/mjx-mphantom&gt;&lt;/mjx-block&gt;&lt;/mjx-mpadded&gt;&lt;/mjx-texatom&gt;&lt;/mjx-mrow&gt;&lt;/mjx-base&gt;&lt;/mjx-row&gt;&lt;mjx-row&gt;&lt;mjx-under style="padding-top: 0.105em;"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-stretchy-h style="width: 3.768em;" class="mjx-c23DF"&gt;&lt;mjx-beg&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-beg&gt;&lt;mjx-ext&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-ext&gt;&lt;mjx-mid&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-mid&gt;&lt;mjx-ext&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-ext&gt;&lt;mjx-end&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-end&gt;&lt;/mjx-stretchy-h&gt;&lt;/mjx-mo&gt;&lt;/mjx-under&gt;&lt;/mjx-row&gt;&lt;/mjx-munder&gt;&lt;/mjx-texatom&gt;&lt;/mjx-base&gt;&lt;/mjx-row&gt;&lt;mjx-row&gt;&lt;mjx-under style="padding-top: 0.062em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtable style="min-width: 6.425em;" justify="left"&gt;&lt;mjx-table&gt;&lt;mjx-itable&gt;&lt;mjx-mtr&gt;&lt;mjx-mtd style="padding-bottom: 0.05em;"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-mtd&gt;&lt;/mjx-mtr&gt;&lt;mjx-mtr&gt;&lt;mjx-mtd style="padding-top: 0.05em;"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-mtd&gt;&lt;/mjx-mtr&gt;&lt;/mjx-itable&gt;&lt;/mjx-table&gt;&lt;/mjx-mtable&gt;&lt;/mjx-texatom&gt;&lt;/mjx-under&gt;&lt;/mjx-row&gt;&lt;/mjx-munder&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="3"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-munder&gt;&lt;mjx-row&gt;&lt;mjx-base&gt;&lt;mjx-texatom texclass="OP"&gt;&lt;mjx-munder&gt;&lt;mjx-row&gt;&lt;mjx-base&gt;&lt;mjx-mrow&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c4B"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c4C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D703 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2016"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mstyle&gt;&lt;mjx-mspace style="width: 0.167em;"&gt;&lt;/mjx-mspace&gt;&lt;/mjx-mstyle&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mpadded&gt;&lt;mjx-block style="width: 0;"&gt;&lt;mjx-mphantom&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-ds mjx-b"&gt;&lt;mjx-c class="mjx-c1D53C TEX-A"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.153em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D450 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2260"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c5B TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c5D TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;/mjx-mphantom&gt;&lt;/mjx-block&gt;&lt;/mjx-mpadded&gt;&lt;/mjx-texatom&gt;&lt;/mjx-mrow&gt;&lt;/mjx-base&gt;&lt;/mjx-row&gt;&lt;mjx-row&gt;&lt;mjx-under style="padding-top: 0.105em;"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-stretchy-h style="width: 5.992em;" class="mjx-c23DF"&gt;&lt;mjx-beg&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-beg&gt;&lt;mjx-ext&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-ext&gt;&lt;mjx-mid&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-mid&gt;&lt;mjx-ext&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-ext&gt;&lt;mjx-end&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-end&gt;&lt;/mjx-stretchy-h&gt;&lt;/mjx-mo&gt;&lt;/mjx-under&gt;&lt;/mjx-row&gt;&lt;/mjx-munder&gt;&lt;/mjx-texatom&gt;&lt;/mjx-base&gt;&lt;/mjx-row&gt;&lt;mjx-row&gt;&lt;mjx-under style="padding-top: 0.062em; padding-left: 0.745em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtable style="min-width: 6.367em;" justify="left"&gt;&lt;mjx-table&gt;&lt;mjx-itable&gt;&lt;mjx-mtr&gt;&lt;mjx-mtd style="padding-bottom: 0.05em;"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c79"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c63"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-mtd&gt;&lt;/mjx-mtr&gt;&lt;mjx-mtr&gt;&lt;mjx-mtd style="padding-top: 0.05em;"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c68"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c63"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c79"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-mtd&gt;&lt;/mjx-mtr&gt;&lt;/mjx-itable&gt;&lt;/mjx-table&gt;&lt;/mjx-mtable&gt;&lt;/mjx-texatom&gt;&lt;/mjx-under&gt;&lt;/mjx-row&gt;&lt;/mjx-munder&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-munder space="3"&gt;&lt;mjx-row&gt;&lt;mjx-base&gt;&lt;mjx-texatom texclass="OP"&gt;&lt;mjx-munder&gt;&lt;mjx-row&gt;&lt;mjx-base&gt;&lt;mjx-mrow&gt;&lt;mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mi class="mjx-ds mjx-b"&gt;&lt;mjx-c class="mjx-c1D53C TEX-A"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;mjx-script style="vertical-align: -0.153em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D450 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2260"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c5B TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D450 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D703 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub space="3"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D450 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D70B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-msup&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-script style="vertical-align: 0.413em;"&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-script&gt;&lt;/mjx-msup&gt;&lt;mjx-texatom texclass="ORD"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c5D TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-texatom&gt;&lt;/mjx-mrow&gt;&lt;/mjx-base&gt;&lt;/mjx-row&gt;&lt;mjx-row&gt;&lt;mjx-under style="padding-top: 0.105em;"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-stretchy-h style="width: 11.45em;" class="mjx-c23DF"&gt;&lt;mjx-beg&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-beg&gt;&lt;mjx-ext&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-ext&gt;&lt;mjx-mid&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-mid&gt;&lt;mjx-ext&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-ext&gt;&lt;mjx-end&gt;&lt;mjx-c&gt;&lt;/mjx-c&gt;&lt;/mjx-end&gt;&lt;/mjx-stretchy-h&gt;&lt;/mjx-mo&gt;&lt;/mjx-under&gt;&lt;/mjx-row&gt;&lt;/mjx-munder&gt;&lt;/mjx-texatom&gt;&lt;/mjx-base&gt;&lt;/mjx-row&gt;&lt;mjx-row&gt;&lt;mjx-under style="padding-top: 0.062em; padding-left: 2.077em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtable style="min-width: 10.317em;" justify="left"&gt;&lt;mjx-table&gt;&lt;mjx-itable&gt;&lt;mjx-mtr&gt;&lt;mjx-mtd style="padding-bottom: 0.05em;"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c6B"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c68"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-mtd&gt;&lt;/mjx-mtr&gt;&lt;mjx-mtr&gt;&lt;mjx-mtd style="padding-top: 0.05em;"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c70"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c72"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c62"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c74"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c20"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c75"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c63"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c68"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-mtd&gt;&lt;/mjx-mtr&gt;&lt;/mjx-itable&gt;&lt;/mjx-table&gt;&lt;/mjx-mtable&gt;&lt;/mjx-texatom&gt;&lt;/mjx-under&gt;&lt;/mjx-row&gt;&lt;/mjx-munder&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/div&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Here &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="p_t" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; denotes monitor &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="t" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D461 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;'s probability on the final turn, and &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="y" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D466 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; is the target (0 or 1 based on which label the model was asked to imitate in the episode). The first term pushes the active monitor toward the target, the second (weighted by &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\lambda =0.1" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;) keeps the model's output policy close to the original model's, and the third discourages changes to the other monitors' scores. This is a simplified form, the exact loss is in Section 3 of the full paper.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Metrics&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;We primarily measure monitors' true positive rate at a 1% false positive rate (TPR@1%FPR), calibrated over normal, unattacked responses. Evasion shows up in this metric as a reduction from its normal, high level to a lower level. We also report results in AUROC in the paper. Unless stated otherwise, numbers are for Llama-3.1-8B-Instruct on the 10 held-out concepts. We replicate the main results on Gemma-3-27B, Qwen3-14B and Llama-3.3-70B.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Findings&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Off-the-shelf models' activation edits do not evade, but they do align with the monitor's direction:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; We find that while simply putting the models in the episode context does not cause them to evade (TPR and AUROC are essentially unchanged), they do produce activation edits that are consistently &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;pointed in the right direction&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;. For Llama-3.1-8B, the cosine similarity between the edit &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\Delta h" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c394"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c210E TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; and the monitored direction &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="w" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D464 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; is &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="0.18 \pm 0.03" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c38"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-cB1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c33"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;, about 11 times the implied chance level of &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\frac{1}{\sqrt{d_{\text{model}}}} = 0.016" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-msqrt size="s"&gt;&lt;mjx-sqrt&gt;&lt;mjx-surd&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c221A"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-surd&gt;&lt;mjx-box style="padding-top: 0.082em;"&gt;&lt;mjx-msub&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D451 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-script style="vertical-align: -0.15em;"&gt;&lt;mjx-texatom size="s" texclass="ORD"&gt;&lt;mjx-mtext class="mjx-n"&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6F"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c64"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c65"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6C"&gt;&lt;/mjx-c&gt;&lt;/mjx-mtext&gt;&lt;/mjx-texatom&gt;&lt;/mjx-script&gt;&lt;/mjx-msub&gt;&lt;/mjx-box&gt;&lt;/mjx-sqrt&gt;&lt;/mjx-msqrt&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Amplifying these edits induces evasion:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; If we take the activation edit produced by an off-the-shelf model, amplify it, and inject it back into the residual stream, we find that the model &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;does&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt; evade monitors, and further that the evasion is &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;specific&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt; to the active monitor (i.e., we are not just messing with the activations until they mean nothing):&lt;/span&gt;&lt;/p&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1791437154/lexical_client_uploads/ea35erjcpaoalnoklsg3.png" alt="image.png"&gt;&lt;figcaption&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Amplifying the off-the-shelf model's edit by a factor α causes it to evade the monitor, in all four models. (a) TPR@1%FPR, (b) AUROC. Solid: the active monitor. Dashed: the same edit applied to other concepts' responses, read by their monitors. Gray band: 5th–95th percentile over 50 random directions. Diamonds: each model's rank-1 organism, placed by its edit's norm relative to the off-the-shelf edit.&lt;/span&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Lightweight finetuning elicits a general evasion skill:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; Our model organism, trained via a rank-1 LoRA on 50 training concepts, learns a general monitor evasion skill. Evaluated on the 10 held-out concepts, it reduces TPR@1%FPR from 100% to 4%. We also find that the organism's edit points in roughly the same direction as the off-the-shelf edit (cosine similarity 0.56), which suggests that finetuning amplifies an existing ability rather than installing a qualitatively new one.&lt;/span&gt;&lt;/p&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1791436989/lexical_client_uploads/barbohy87lruad268bgd.png" alt="image.png"&gt;&lt;figcaption&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Detection rate (TPR@1%FPR) on the 10 held-out concepts. The off-the-shelf model is always caught. Scaling its edit ×8 cuts detection to 27%, and the model organism cuts it to 4%. &lt;/span&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Evasion is specific to the active monitor:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; In both the model organism and the amplified off-the-shelf model, we find that the applied activation edit mainly targets the active monitor. In the model organism, off-target monitors keep a detection rate of 91%, against 2% for the targeted monitor (averaged over all 20 concepts in the figure). The amplified off-the-shelf edit is less specific, with off-target monitors at 78%, primarily spilling over to semantically related concepts:&lt;/span&gt;&lt;/p&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1791437210/lexical_client_uploads/jhq6gvt87p2yogjiyr9s.png" alt="image.png"&gt;&lt;figcaption&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Each cell is the TPR@1%FPR when the episode instructs the model to suppress the row concept, while the monitored content and the monitor that reads it are both the column concept. Reading along a row: cells are the response of each monitor to the activation edit, the diagonal is the targeted monitor (the attack succeeding), and off-diagonal cells are collateral impact on monitors the model was not instructed to evade. White lines separate 10 representative training concepts from the 10 held-out concepts. Left: model organism. Right: off-the-shelf edit, amplified ×32.&lt;/span&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Hallmarks of in-context computation, rather than memorization:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; The model organism could in principle evade by memorizing an edit for each concept and recalling it.&amp;nbsp;Instead, we find that the edit is computed in context from the verdicts themselves.&amp;nbsp;The clearest evidence is the model organism's success in evading held-out concept monitors, for which no edit could have been memorized. Additionally, if the model is actually using the in-context verdicts to form its edit rather than memorizing, then corrupting them should weaken the edit in a predictable way. We test this by flipping each prior verdict with probability&amp;nbsp;&lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;p&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;, observing that the Cohen's d between the elevate and suppress monitor scores (a measure of how many standard deviations apart the two means are) falls smoothly from 11.7 at &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;p&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt; = 0 to zero at&amp;nbsp;&lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;p&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;&amp;nbsp;= 0.5, and reverses to −11.8 at &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;p&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;&amp;nbsp;= 1, indicating that the verdicts are causally important to the formation of the activation edit. We also find that with more demonstrations, the edit becomes better aligned: cosine with the monitored direction rises from&amp;nbsp;0.19&amp;nbsp;to&amp;nbsp;0.30&amp;nbsp;in the model organism (and from 0.08 to 0.19 in the off-the-shelf model) as we increase the number of demonstrations from 2 to 64.&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fqdw5jwdsj" data-footnote-index="5" role="doc-noteref" id="fnreffqdw5jwdsj"&gt;&lt;sup&gt;&lt;a href="#fnfqdw5jwdsj"&gt;[5]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/p&gt;&lt;figure class="image"&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1791437237/lexical_client_uploads/hijbzool3ncajsldzajk.png" alt="image.png"&gt;&lt;figcaption&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Left: flipping a fraction of the in-context verdicts shrinks the effect of the instruction (Cohen's d between the elevate and suppress monitor scores) to zero at 50%, where the verdicts carry no information, and reverses it at 100%. Right: the edit's alignment with the monitor direction grows with the number of examples in context.&lt;/span&gt;&lt;/p&gt;&lt;/figcaption&gt;&lt;/figure&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;In the &lt;/span&gt;&lt;/b&gt;&lt;a href="https://arxiv.org/pdf/2609.36490" rel="noreferrer"&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;full paper&lt;/span&gt;&lt;/b&gt;&lt;/a&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; we test two defenses against this evasion skill, show that the model organism incurs little capability cost on standard benchmarks, test against retrained monitors, and check robustness to instruction wording. We also discuss limitations of this work: explicit monitor verdicts, forced output, and synthetic data.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Conclusion&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;In this work we have shown that LLMs have a nascent ability to edit their own activations to evade latent space monitors, given only the monitor's verdicts on earlier responses. Though we don't observe current open-weights models carrying out successful evasion unaided, our amplification and model organism results show that this is possible in principle, and cheap to elicit via finetuning. Several important questions remain open:&lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;What causes it: &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;It is important to understand what gives rise to this capability. Model scale, training environments or training methods are all plausible factors. We test scales between 8B and 70B, finding no clear trend, but future work could investigate this and other factors more thoroughly.&lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Do recurrent architectures matter: &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;Can recurrent models (such as GPT 6 Astra) control their activations more easily?&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Propensity: &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;How readily and under what conditions do models engage in this behavior in the wild? Can we make an evaluation that effectively tests for this propensity?&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Can it be trained out: &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;Is it possible to develop training methods that remove or weaken activation control abilities? What effect would this have on capabilities?  &lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Overall, activation control in LLMs poses a significant risk to the integrity of latent space monitoring, and frontier models should be explicitly evaluated for this ability before we put stock in latent monitor scores.&lt;/span&gt;&lt;/p&gt;&lt;ol class="footnote-section footnotes" data-footnote-section="" role="doc-endnotes"&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="o05i0tn0s67" data-footnote-index="1" role="doc-endnote" id="fno05i0tn0s67"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="o05i0tn0s67"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefo05i0tn0s67"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Our episode design follows their 'implicit control' setup.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="dyc1w6j0j6k" data-footnote-index="2" role="doc-endnote" id="fndyc1w6j0j6k"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="dyc1w6j0j6k"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefdyc1w6j0j6k"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;In deployment the monitor's verdict may reach the agent implicitly, e.g. as a blocked tool call or a rejected output. We render it explicitly as a label in this work, but we believe noticing blocked actions would not be a large barrier for a competent agent.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="lxmt2q2yd9e" data-footnote-index="3" role="doc-endnote" id="fnlxmt2q2yd9e"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="lxmt2q2yd9e"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreflxmt2q2yd9e"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Following &lt;/span&gt;&lt;a href="https://arxiv.org/abs/2504.20271" target="_blank" rel="noreferrer"&gt;&lt;span style="white-space:pre-wrap"&gt;Tillman &amp;amp; Mossing&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt;, who find a layer at 75% depth roughly optimal for probing.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="r7wsvua3z8h" data-footnote-index="4" role="doc-endnote" id="fnr7wsvua3z8h"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="r7wsvua3z8h"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefr7wsvua3z8h"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Which label (1 or 0) means 'flagged' is swapped in half of the episodes, so the model can't just learn that 0 is the 'good' label.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fqdw5jwdsj" data-footnote-index="5" role="doc-endnote" id="fnfqdw5jwdsj"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fqdw5jwdsj"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffqdw5jwdsj"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;One hypothesis for what the model is doing is a kind of in-context regression or difference of means over its own activations. The prior demonstrations form a dataset of (activation, monitor label) pairs, and the model behaves as if it fits a direction to this data and then writes along it on the final turn.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;/ol&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/adZq8a5s5K3FomyHC/llms-learn-to-evade-latent-monitors-from-prior-feedback#comments"&gt;Discuss&lt;/a&gt;</description>
+      <guid isPermaLink="true">adZq8a5s5K3FomyHC</guid>
+      <pubDate>Mon, 19 Oct 2026 00:17:43 +0000</pubDate>
+    </item>
     <item>
       <title>Quick Thoughts on Overhang Arguments</title>
       <link>https://www.lesswrong.com/posts/aJSdGMzgFRFBcBhGp/quick-thoughts-on-overhang-arguments</link>
@@ -965,749 +2125,6 @@ mjx-c.mjx-c4E::before {
       <description>&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;People love to create political compasses. The most famous one has left vs right on one dimension, and authoritarian vs libertarian on the other. Another popular one has political vs social liberal/conservative. Broadly speaking, the goal seems to be to come up with a set of dimensions that puts your beliefs next to the people everyone is supposed to like, and your rivals close to taboo figures like Hitler. There is a whole &lt;/span&gt;&lt;a href="https://www.reddit.com/r/PoliticalCompass/"&gt;&lt;span style="white-space:pre-wrap"&gt;subreddit&lt;/span&gt;&lt;/a&gt;&lt;span style="white-space:pre-wrap"&gt; for this.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;I don’t think left vs right is a particularly useful political dimension. Exactly what ideas fall into which group changes over time, and can be different in different countries. It’s more useful to see left and right as evolving political coalitions than stable coherent theories. Similarly, I don’t think libertarian vs authoritarian is as clear cut as it seems, since in practice giving less power to governments often gives more power to corporations, or whoever else might be waiting in the wings.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;I think by far the most important political dimension is &lt;/span&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;certainty&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;. How certain are you that your own theories about how to run the country will have good results? How willing are you to accept that the other side might be right and you might be wrong? How willing are you to defer to (and maintain) neutral democratic institutions like elections and courts that won’t always take your side?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Your degree of certainty in your beliefs is totally separate from what those beliefs are. I used to run a political debate club in San Francisco. We had people from the left and right, and by and large they got on great, because the club cultivated a spirit of humility. When there was disagreement, the solution wasn’t to shout the other person down, but to ask for data, to suggest experiments, to explore nuance. Two people with very different beliefs will get on great if they have low certainty, but two people with near-identical beliefs can be utterly vicious to each other if they are certain they are right.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Both liberalism and conservatism are rooted in uncertainty. Liberalism tells us that we don’t know the best way to run a society, so we should try things out and see what works. Conservatism tells us we don’t know the best way to run a society, so we should try new things out carefully before making sweeping changes. Liberalism and Conservatism are very much compatible with each other.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;I hate terms like Moderate and Centrist and think they are ultimately harmful to the discourse. I’m not a “moderate” or “centrist” in the sense that I think the truth is somewhere in the middle between the political extremes. Some of my beliefs about how we should run the world are things that some people might consider fairly radical. However I believe strongly that reason is a terrible source of truth, that many of the ideas I’m most attached to will turn out to be wrong, and progress comes from trying stuff out.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;I think it’s unfortunate that we don’t currently have a well-recognized label for someone who believes in being uncertain about their beliefs. Labels are important, and it’s hard to form a coalition without a banner to rally behind.&lt;/span&gt;&lt;/p&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/egp2cSXbQH4qc5rgR/the-most-important-political-dimension-is-certainty#comments"&gt;Discuss&lt;/a&gt;</description>
       <guid isPermaLink="true">egp2cSXbQH4qc5rgR</guid>
       <pubDate>Sun, 18 Oct 2026 05:59:32 +0000</pubDate>
-    </item>
-    <item>
-      <title>Spontaneous verbal evidence synthesis in LLMs</title>
-      <link>https://www.lesswrong.com/posts/ZWNruQZnrH4Yeusj5/spontaneous-verbal-evidence-synthesis-in-llms</link>
-      <description>&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;TL;DR. I characterize evidence aggregation in LLMs, partly define and identify the mathematical rule(s) used by them and then behaviorally make models follow those rules more closely.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1792110705/lexical_client_uploads/ebicxdubeycdezgspxjc.jpg" alt="lidl.jpg"&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;You are at Lidl, grocery shopping with a bunch of your friends and friend A says "Strawberries are definitely great here", friend B adds on "Strawberries are likely terrible at Lidl." and friend C says "Apples are probably good." What item would you buy?&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Hint&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;: There is no objectively correct answer to this question.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Motivation &lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;According to Information Integration Theory&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="-wK2edhaMrutcdr3kj-1" data-footnote-index="1" role="doc-noteref" id="fnref-wK2edhaMrutcdr3kj-1"&gt;&lt;sup&gt;&lt;a href="#fn-wK2edhaMrutcdr3kj-1"&gt;[1]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;humans seem to answer such questions based on the subjective value assigned to available information (e.g. 'great', 'good', 'terrible') weighted by the perceived importance of each statement&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="fgxqk42dd9" data-footnote-index="2" role="doc-noteref" id="fnreffgxqk42dd9"&gt;&lt;sup&gt;&lt;a href="#fnfgxqk42dd9"&gt;[2]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;. This weight parameter may depend on the existing relationship the listener has with the speakers, the overall confidence with which the statement is made, perceived credibility, etc. However, LLMs presented with only the statements containing these certainty markers (e.g. 'definitely', 'likely', 'probably') may derive confidence from the cues presented in the language only. Previously it has been shown that the judgment of LLMs does depend on the certainty marker. However, if they are used by models as a weight parameter remains unanswered. &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;I hypothesize that models could be combining adjective evaluations weighted by certainty scores to make judgments in situations such as these.&lt;/span&gt;&lt;/i&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="-wK2edhaMrutcdr3kj-2" data-footnote-index="3" role="doc-noteref" id="fnref-wK2edhaMrutcdr3kj-2"&gt;&lt;sup&gt;&lt;a href="#fn-wK2edhaMrutcdr3kj-2"&gt;[3]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Experimental setup &lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To investigate this, I designed a dataset (~1400 items) consisting of ~30 topics on subjects such as music, sports, cities, etc. Each topic had 5 items. And each item was randomly matched with one of the certainty markers and wrapped with a text. Example- "London is likely to be fantastic." 3 conditions were constructed from the collection of these statements. In each condition, the model has to choose the best item.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1792101670/lexical_client_uploads/mdaumnkvmkor2esolcza.png" alt="ma.png"&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;(A) Targeted contrast &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;tests a pre-defined contrast. Example- milk receives “definitely great” and “likely to be terrible,” while yogurt receives “likely to be great” and “definitely terrible.” Both items have the same evaluative adjectives, but certainty is attached differently. There are 3 such contrasts. &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;How do certainty, repetition, and the strength of adjective evaluations affect the model’s choice?&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;(B) Random pile &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;is a randomly assembled collection of statements about several items for each topic. &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;Which aggregation rules best predict choices across ordinary mixtures of positive, negative, and uncertain evidence?&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;(C) Diagnostic pile&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; contained selected statements of competing aggregation rules. Example-milk receives four “definitely decent” statements while yogurt receives one “definitely fantastic” statement. Simple averaging would expect the model to favor yogurt, whereas summing would expect milk as more favorable. &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;When aggregation rules predict different winners, which rule’s prediction does the model follow?&lt;/span&gt;&lt;/i&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Possible (classical) aggregation rules. &lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;I identified 7 possible aggregation rules. Let &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;style&gt;
-
-
-mjx-container[jax="CHTML"] {
-  line-height: 0;
-}
-
-mjx-container [space="1"] {
-  margin-left: .111em;
-}
-
-mjx-container [space="2"] {
-  margin-left: .167em;
-}
-
-mjx-container [space="3"] {
-  margin-left: .222em;
-}
-
-mjx-container [space="4"] {
-  margin-left: .278em;
-}
-
-mjx-container [space="5"] {
-  margin-left: .333em;
-}
-
-mjx-container [rspace="1"] {
-  margin-right: .111em;
-}
-
-mjx-container [rspace="2"] {
-  margin-right: .167em;
-}
-
-mjx-container [rspace="3"] {
-  margin-right: .222em;
-}
-
-mjx-container [rspace="4"] {
-  margin-right: .278em;
-}
-
-mjx-container [rspace="5"] {
-  margin-right: .333em;
-}
-
-mjx-container [size="s"] {
-  font-size: 70.7%;
-}
-
-mjx-container [size="ss"] {
-  font-size: 50%;
-}
-
-mjx-container [size="Tn"] {
-  font-size: 60%;
-}
-
-mjx-container [size="sm"] {
-  font-size: 85%;
-}
-
-mjx-container [size="lg"] {
-  font-size: 120%;
-}
-
-mjx-container [size="Lg"] {
-  font-size: 144%;
-}
-
-mjx-container [size="LG"] {
-  font-size: 173%;
-}
-
-mjx-container [size="hg"] {
-  font-size: 207%;
-}
-
-mjx-container [size="HG"] {
-  font-size: 249%;
-}
-
-mjx-container [width="full"] {
-  width: 100%;
-}
-
-mjx-box {
-  display: inline-block;
-}
-
-mjx-block {
-  display: block;
-}
-
-mjx-itable {
-  display: inline-table;
-}
-
-mjx-row {
-  display: table-row;
-}
-
-mjx-row &gt; * {
-  display: table-cell;
-}
-
-mjx-mtext {
-  display: inline-block;
-}
-
-mjx-mstyle {
-  display: inline-block;
-}
-
-mjx-merror {
-  display: inline-block;
-  color: red;
-  background-color: yellow;
-}
-
-mjx-mphantom {
-  visibility: hidden;
-}
-
-_::-webkit-full-page-media, _:future, :root mjx-container {
-  will-change: opacity;
-}
-
-mjx-math {
-  display: inline-block;
-  text-align: left;
-  line-height: 0;
-  text-indent: 0;
-  font-style: normal;
-  font-weight: normal;
-  font-size: 100%;
-  font-size-adjust: none;
-  letter-spacing: normal;
-  border-collapse: collapse;
-  word-wrap: normal;
-  word-spacing: normal;
-  white-space: nowrap;
-  direction: ltr;
-  padding: 1px 0;
-}
-
-mjx-container[jax="CHTML"][display="true"] {
-  display: block;
-  text-align: center;
-  margin: 1em 0;
-}
-
-mjx-container[jax="CHTML"][display="true"][width="full"] {
-  display: flex;
-}
-
-mjx-container[jax="CHTML"][display="true"] mjx-math {
-  padding: 0;
-}
-
-mjx-container[jax="CHTML"][justify="left"] {
-  text-align: left;
-}
-
-mjx-container[jax="CHTML"][justify="right"] {
-  text-align: right;
-}
-
-mjx-mi {
-  display: inline-block;
-  text-align: left;
-}
-
-mjx-c {
-  display: inline-block;
-}
-
-mjx-utext {
-  display: inline-block;
-  padding: .75em 0 .2em 0;
-}
-
-mjx-mfrac {
-  display: inline-block;
-  text-align: left;
-}
-
-mjx-frac {
-  display: inline-block;
-  vertical-align: 0.17em;
-  padding: 0 .22em;
-}
-
-mjx-frac[type="d"] {
-  vertical-align: .04em;
-}
-
-mjx-frac[delims] {
-  padding: 0 .1em;
-}
-
-mjx-frac[atop] {
-  padding: 0 .12em;
-}
-
-mjx-frac[atop][delims] {
-  padding: 0;
-}
-
-mjx-dtable {
-  display: inline-table;
-  width: 100%;
-}
-
-mjx-dtable &gt; * {
-  font-size: 2000%;
-}
-
-mjx-dbox {
-  display: block;
-  font-size: 5%;
-}
-
-mjx-num {
-  display: block;
-  text-align: center;
-}
-
-mjx-den {
-  display: block;
-  text-align: center;
-}
-
-mjx-mfrac[bevelled] &gt; mjx-num {
-  display: inline-block;
-}
-
-mjx-mfrac[bevelled] &gt; mjx-den {
-  display: inline-block;
-}
-
-mjx-den[align="right"], mjx-num[align="right"] {
-  text-align: right;
-}
-
-mjx-den[align="left"], mjx-num[align="left"] {
-  text-align: left;
-}
-
-mjx-nstrut {
-  display: inline-block;
-  height: .054em;
-  width: 0;
-  vertical-align: -.054em;
-}
-
-mjx-nstrut[type="d"] {
-  height: .217em;
-  vertical-align: -.217em;
-}
-
-mjx-dstrut {
-  display: inline-block;
-  height: .505em;
-  width: 0;
-}
-
-mjx-dstrut[type="d"] {
-  height: .726em;
-}
-
-mjx-line {
-  display: block;
-  box-sizing: border-box;
-  min-height: 1px;
-  height: .06em;
-  border-top: .06em solid;
-  margin: .06em -.1em;
-  overflow: hidden;
-}
-
-mjx-line[type="d"] {
-  margin: .18em -.1em;
-}
-
-mjx-mn {
-  display: inline-block;
-  text-align: left;
-}
-
-mjx-mo {
-  display: inline-block;
-  text-align: left;
-}
-
-mjx-stretchy-h {
-  display: inline-table;
-  width: 100%;
-}
-
-mjx-stretchy-h &gt; * {
-  display: table-cell;
-  width: 0;
-}
-
-mjx-stretchy-h &gt; * &gt; mjx-c {
-  display: inline-block;
-  transform: scalex(1.0000001);
-}
-
-mjx-stretchy-h &gt; * &gt; mjx-c::before {
-  display: inline-block;
-  width: initial;
-}
-
-mjx-stretchy-h &gt; mjx-ext {
-  /* IE */ overflow: hidden;
-  /* others */ overflow: clip visible;
-  width: 100%;
-}
-
-mjx-stretchy-h &gt; mjx-ext &gt; mjx-c::before {
-  transform: scalex(500);
-}
-
-mjx-stretchy-h &gt; mjx-ext &gt; mjx-c {
-  width: 0;
-}
-
-mjx-stretchy-h &gt; mjx-beg &gt; mjx-c {
-  margin-right: -.1em;
-}
-
-mjx-stretchy-h &gt; mjx-end &gt; mjx-c {
-  margin-left: -.1em;
-}
-
-mjx-stretchy-v {
-  display: inline-block;
-}
-
-mjx-stretchy-v &gt; * {
-  display: block;
-}
-
-mjx-stretchy-v &gt; mjx-beg {
-  height: 0;
-}
-
-mjx-stretchy-v &gt; mjx-end &gt; mjx-c {
-  display: block;
-}
-
-mjx-stretchy-v &gt; * &gt; mjx-c {
-  transform: scaley(1.0000001);
-  transform-origin: left center;
-  overflow: hidden;
-}
-
-mjx-stretchy-v &gt; mjx-ext {
-  display: block;
-  height: 100%;
-  box-sizing: border-box;
-  border: 0px solid transparent;
-  /* IE */ overflow: hidden;
-  /* others */ overflow: visible clip;
-}
-
-mjx-stretchy-v &gt; mjx-ext &gt; mjx-c::before {
-  width: initial;
-  box-sizing: border-box;
-}
-
-mjx-stretchy-v &gt; mjx-ext &gt; mjx-c {
-  transform: scaleY(500) translateY(.075em);
-  overflow: visible;
-}
-
-mjx-mark {
-  display: inline-block;
-  height: 0px;
-}
-
-mjx-mrow {
-  display: inline-block;
-  text-align: left;
-}
-
-mjx-c::before {
-  display: block;
-  width: 0;
-}
-
-.MJX-TEX {
-  font-family: MJXZERO, MJXTEX;
-}
-
-.TEX-B {
-  font-family: MJXZERO, MJXTEX-B;
-}
-
-.TEX-I {
-  font-family: MJXZERO, MJXTEX-I;
-}
-
-.TEX-MI {
-  font-family: MJXZERO, MJXTEX-MI;
-}
-
-.TEX-BI {
-  font-family: MJXZERO, MJXTEX-BI;
-}
-
-.TEX-S1 {
-  font-family: MJXZERO, MJXTEX-S1;
-}
-
-.TEX-S2 {
-  font-family: MJXZERO, MJXTEX-S2;
-}
-
-.TEX-S3 {
-  font-family: MJXZERO, MJXTEX-S3;
-}
-
-.TEX-S4 {
-  font-family: MJXZERO, MJXTEX-S4;
-}
-
-.TEX-A {
-  font-family: MJXZERO, MJXTEX-A;
-}
-
-.TEX-C {
-  font-family: MJXZERO, MJXTEX-C;
-}
-
-.TEX-CB {
-  font-family: MJXZERO, MJXTEX-CB;
-}
-
-.TEX-FR {
-  font-family: MJXZERO, MJXTEX-FR;
-}
-
-.TEX-FRB {
-  font-family: MJXZERO, MJXTEX-FRB;
-}
-
-.TEX-SS {
-  font-family: MJXZERO, MJXTEX-SS;
-}
-
-.TEX-SSB {
-  font-family: MJXZERO, MJXTEX-SSB;
-}
-
-.TEX-SSI {
-  font-family: MJXZERO, MJXTEX-SSI;
-}
-
-.TEX-SC {
-  font-family: MJXZERO, MJXTEX-SC;
-}
-
-.TEX-T {
-  font-family: MJXZERO, MJXTEX-T;
-}
-
-.TEX-V {
-  font-family: MJXZERO, MJXTEX-V;
-}
-
-.TEX-VB {
-  font-family: MJXZERO, MJXTEX-VB;
-}
-
-mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
-  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
-}
-
-@font-face /* 0 */ {
-  font-family: MJXZERO;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
-}
-
-@font-face /* 1 */ {
-  font-family: MJXTEX;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
-}
-
-@font-face /* 2 */ {
-  font-family: MJXTEX-B;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
-}
-
-@font-face /* 3 */ {
-  font-family: MJXTEX-I;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
-}
-
-@font-face /* 4 */ {
-  font-family: MJXTEX-MI;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
-}
-
-@font-face /* 5 */ {
-  font-family: MJXTEX-BI;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
-}
-
-@font-face /* 6 */ {
-  font-family: MJXTEX-S1;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
-}
-
-@font-face /* 7 */ {
-  font-family: MJXTEX-S2;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
-}
-
-@font-face /* 8 */ {
-  font-family: MJXTEX-S3;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
-}
-
-@font-face /* 9 */ {
-  font-family: MJXTEX-S4;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
-}
-
-@font-face /* 10 */ {
-  font-family: MJXTEX-A;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
-}
-
-@font-face /* 11 */ {
-  font-family: MJXTEX-C;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
-}
-
-@font-face /* 12 */ {
-  font-family: MJXTEX-CB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
-}
-
-@font-face /* 13 */ {
-  font-family: MJXTEX-FR;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
-}
-
-@font-face /* 14 */ {
-  font-family: MJXTEX-FRB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
-}
-
-@font-face /* 15 */ {
-  font-family: MJXTEX-SS;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
-}
-
-@font-face /* 16 */ {
-  font-family: MJXTEX-SSB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
-}
-
-@font-face /* 17 */ {
-  font-family: MJXTEX-SSI;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
-}
-
-@font-face /* 18 */ {
-  font-family: MJXTEX-SC;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
-}
-
-@font-face /* 19 */ {
-  font-family: MJXTEX-T;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
-}
-
-@font-face /* 20 */ {
-  font-family: MJXTEX-V;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
-}
-
-@font-face /* 21 */ {
-  font-family: MJXTEX-VB;
-  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
-}
-
-mjx-c.mjx-c1D45D.TEX-I::before {
-  padding: 0.442em 0.503em 0.194em 0;
-  content: "p";
-}
-
-mjx-c.mjx-c1D463.TEX-I::before {
-  padding: 0.443em 0.485em 0.011em 0;
-  content: "v";
-}
-
-mjx-c.mjx-c31::before {
-  padding: 0.666em 0.5em 0 0;
-  content: "1";
-}
-
-mjx-c.mjx-c1D45B.TEX-I::before {
-  padding: 0.442em 0.6em 0.011em 0;
-  content: "n";
-}
-
-mjx-c.mjx-c2211.TEX-S1::before {
-  padding: 0.75em 1.056em 0.25em 0;
-  content: "\2211";
-}
-
-mjx-c.mjx-c6D::before {
-  padding: 0.442em 0.833em 0 0;
-  content: "m";
-}
-
-mjx-c.mjx-c61::before {
-  padding: 0.448em 0.5em 0.011em 0;
-  content: "a";
-}
-
-mjx-c.mjx-c78::before {
-  padding: 0.431em 0.528em 0 0;
-  content: "x";
-}
-
-mjx-c.mjx-c28::before {
-  padding: 0.75em 0.389em 0.25em 0;
-  content: "(";
-}
-
-mjx-c.mjx-c29::before {
-  padding: 0.75em 0.389em 0.25em 0;
-  content: ")";
-}
-
-mjx-c.mjx-c73::before {
-  padding: 0.448em 0.394em 0.011em 0;
-  content: "s";
-}
-
-mjx-c.mjx-c69::before {
-  padding: 0.669em 0.278em 0 0;
-  content: "i";
-}
-
-mjx-c.mjx-c67::before {
-  padding: 0.453em 0.5em 0.206em 0;
-  content: "g";
-}
-
-mjx-c.mjx-c6E::before {
-  padding: 0.442em 0.556em 0 0;
-  content: "n";
-}
-
-mjx-c.mjx-c2B::before {
-  padding: 0.583em 0.778em 0.082em 0;
-  content: "+";
-}
-
-mjx-c.mjx-c1D706.TEX-I::before {
-  padding: 0.694em 0.583em 0.012em 0;
-  content: "\3BB";
-}
-
-mjx-c.mjx-c3D::before {
-  padding: 0.583em 0.778em 0.082em 0;
-  content: "=";
-}
-
-mjx-c.mjx-c30::before {
-  padding: 0.666em 0.5em 0.022em 0;
-  content: "0";
-}
-
-mjx-c.mjx-c2E::before {
-  padding: 0.12em 0.278em 0 0;
-  content: ".";
-}
-
-mjx-c.mjx-c36::before {
-  padding: 0.666em 0.5em 0.022em 0;
-  content: "6";
-}
-
-mjx-c.mjx-c35::before {
-  padding: 0.666em 0.5em 0.022em 0;
-  content: "5";
-}
-
-mjx-c.mjx-c34::before {
-  padding: 0.677em 0.5em 0 0;
-  content: "4";
-}
-
-mjx-c.mjx-cD7::before {
-  padding: 0.491em 0.778em 0 0;
-  content: "\D7";
-}
-
-mjx-c.mjx-c37::before {
-  padding: 0.676em 0.5em 0.022em 0;
-  content: "7";
-}
-
-mjx-c.mjx-c32::before {
-  padding: 0.666em 0.5em 0 0;
-  content: "2";
-}
-
-mjx-c.mjx-c5B::before {
-  padding: 0.75em 0.278em 0.25em 0;
-  content: "[";
-}
-
-mjx-c.mjx-c39::before {
-  padding: 0.666em 0.5em 0.022em 0;
-  content: "9";
-}
-
-mjx-c.mjx-c2212::before {
-  padding: 0.583em 0.778em 0.082em 0;
-  content: "\2212";
-}
-
-mjx-c.mjx-c5D::before {
-  padding: 0.75em 0.278em 0.25em 0;
-  content: "]";
-}
-&lt;/style&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="p" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;(certainty score) be the certainty expressed and &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="v" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;(adjective evaluation) indicate how positive or negative the evaluative adjective is. The aggregation rules are- mean of certainty-weighted evaluations &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\frac{1}{n}\sum pv" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D45B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-mo class="mjx-sop" space="2"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;, maximum of certainty weighted evaluations &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\operatorname{max}(pv)" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-n"&gt;&lt;mjx-c class="mjx-c6D"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c61"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c78"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;, sum of certainty-weighted evaluations &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\sum pv" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;, mean of adjective evaluations &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\frac{1}{n}\sum v" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D45B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-mo class="mjx-sop" space="2"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;, certainty weighted mean&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\frac{\sum pv}{\sum p}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-mrow&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-mrow&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;, signed vote&lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\frac{1}{n}\sum \operatorname{sign}(pv)" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mi class="mjx-i" size="s"&gt;&lt;mjx-c class="mjx-c1D45B TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-mo class="mjx-sop" space="2"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-n" space="2"&gt;&lt;mjx-c class="mjx-c73"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c69"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c67"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c6E"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;and statement count n. These values are computed for each option the model has to choose.&lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Scoring &lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To identify a &lt;/span&gt;&lt;s&gt;&lt;span style="white-space:pre-wrap"&gt;human &lt;/span&gt;&lt;/s&gt;&lt;span style="white-space:pre-wrap"&gt;baseline (albeit imperfect) for evaluative adjectives and certainty markers, I used previously published scores from psychology surveys&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="b1kzljjy8xt" data-footnote-index="4" role="doc-noteref" id="fnrefb1kzljjy8xt"&gt;&lt;sup&gt;&lt;a href="#fnb1kzljjy8xt"&gt;[4]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="gwhvln8jenn" data-footnote-index="5" role="doc-noteref" id="fnrefgwhvln8jenn"&gt;&lt;sup&gt;&lt;a href="#fngwhvln8jenn"&gt;[5]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;. For models, I elicited scores of adjective valence (positive or negative) and likelihood conveyed by each adjective (certainty) by directly verbalizing on a distinct scoring dataset. The scores were averaged and normalized.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Across all the models tested both certainty scores and adjective evaluations were highly correlated&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="qb3pe7fjtzs" data-footnote-index="6" role="doc-noteref" id="fnrefqb3pe7fjtzs"&gt;&lt;sup&gt;&lt;a href="#fnqb3pe7fjtzs"&gt;[6]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; with the baseline rubric for generally more capable models (GPT5.2, Gemini 4 Argon, Claude Haiku 5.5) with Pearson correlation coefficient r= 0.99-1 and somewhat less correlated with less capable models (Mistral Large 4, QWEN3 235B) with Pearson correlation coefficient r= 0.93-0.96.&lt;/span&gt;&lt;/p&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Results &lt;/span&gt;&lt;/h1&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Do certainty markers shape choices between conflicting evaluations? &lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To understand at a baseline level whether certainty markers are evaluated at all by language models, I tested model answers in the certainty-swap contrast condition as described above. A received “definitely great” and “likely terrible,” while B received “likely great” and “definitely terrible.”&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;GPT-5.2, Gemini 4 Argon, and Claude Haiku 5.5 chose A in all questions each. Mistral Large 4 chose A in majority questions (86.7%; 95% binomial CI: 69.3–96.2%). Qwen3 235B chose A majority of times, B once, and gave replies such as “Neither” or “Uncertain.” Among its option choices, majority favored A (95.7%; 95% binomial CI: 78.1–99.9%). Each model’s preference among option choices differs from 50% (chance level) significantly (adjusted).&lt;/span&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt; Anything that is definitely great and likely terrible is intuitively a better choice than something that is definitely terrible and likely great. Models most of the time made that choice.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Answer: Yes!&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Can simple aggregation rules explain how LLMs balance repetition against the strength of evaluations?&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;All five models chose four “likely great” statements over one identical statement in 30/30 questions. On the other hand, all five chose one “likely fantastic” statement over four “likely decent” statements in 30/30 questions. These patterns challenge both simple rules: a plain mean scores the first contrast as a tie, while a plain sum of the study’s certainty-weighted adjective scores favors the four “decent” statements in the second.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To understand this better, I took inspiration from Anderson's 'neutral-initial-impression model', hereafter referred to as neutral start model. According to this model, humans start with a neutral impression, and as more evidence arrives, they update their evaluations and hence their choices accordingly.  I modified this model under the assumption that each statement counts toward the overall impression in proportion to how certain it is, so a hedged statement carries less weight in the average instead of counting fully with a weaker value, while how positive or negative it is sets which way it pulls.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1792209808/lexical_client_uploads/f3q4sht1gkcnvlzblgso.png" alt="aggregation_validation_repetition.png"&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Figure 1: &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;Accuracy of predicting model answers based neutral start (blue bar) and best of seven classical aggregation rules (orange bar). Bars indicate the prediction made using own verbalized scores and overlay lines indicate predictions made using human score for the same aggregation rule. (A) Validating the modified neutral start rule on random pile. (B) Testing the rule on repetition cases.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;The modified rule is then defined: &lt;/span&gt;&lt;/b&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\frac{\sum pv}{\sum p+\lambda}" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mfrac&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D463 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-mrow&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-mo class="mjx-sop"&gt;&lt;mjx-c class="mjx-c2211 TEX-S1"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i" space="2"&gt;&lt;mjx-c class="mjx-c1D45D TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-mrow&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;. &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;Here, as before, p is the certainty score and v is the adjective evaluation. I define a new parameter &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\lambda" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;. It is the fitted weight of a neutral starting impression. Intuitively,  &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\lambda" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;is the strength of initial neutral opinion. The larger &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\lambda" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;is, the more evidence is needed to move the score away from neutrality. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To validate the model, I converted the aggregation scores into choice probabilities using a &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;softmax &lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;function. Using each model’s verbalized scores&lt;/span&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="vem2njyseyn" data-footnote-index="7" role="doc-noteref" id="fnrefvem2njyseyn"&gt;&lt;sup&gt;&lt;a href="#fnvem2njyseyn"&gt;[7]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;, I jointly fit &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\lambda" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;and the &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;softmax &lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;scaling parameter by minimizing negative log-likelihood on random-pile questions from 29 topics. I then predicted the model’s choices on the held-out topic by selecting the option with the highest predicted probability. I repeated this procedure for all 30 topics. Results appear in Figure 1A. The modified neutral start model here performs at most 1-5% more than the best of the aggregation rules defined in previous section.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To check if this modified rule can explain the differences in model predictions to different kinds of repetition, I fit &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="\lambda" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mi class="mjx-i"&gt;&lt;mjx-c class="mjx-c1D706 TEX-I"&gt;&lt;/mjx-c&gt;&lt;/mjx-mi&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;on all random piles and tested on repetition cases of targeted contrast (models are provided with two options, one with repetition of same statement and one with a single other statement) to predict model choices. Results appear in Figure 1B. The modified rule seemed to outperform other aggregation rules in every model except Claude Haiku 5.5.&lt;/span&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt; Aggregation rules predict model choices well above chance but far from fully&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;. So, models seem to be performing an evidence aggregation although this is not exact.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To diagnose the evidence aggregation more robustly I used diagnostic pile (questions deliberately constructed to distinguish between competing aggregation rules). Results appear in Figure 2. Although all top three aggregation rules (computed from own verbalized scores) perform better than chance (0.2), none of them clearly identifies the aggregation rule models use. There is a mixed case of modified neutral start rule and finding the sum of adjective evaluation weighted by certainty score.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1792209828/lexical_client_uploads/b672twplerncpdholj8h.png" alt="diagnostic_top_three.png"&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Figure 2: &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;Accuracy of predicting model answers based on top 3 aggregation rules on cases that are deliberately designed to provide different answers based on the aggregation rule. Bars indicate the prediction made using own verbalized rule and overlay lines indicate predictions made using human score for the same aggregation rule. *Indicates significant difference.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;br&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Answer: Partially yes.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Can we make models follow evidence aggregation rules more closely? &lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;To steer models behaviorally I annotated each statement with models' own verbalized and human baseline scores. Example of an annotated statement-&lt;/span&gt;&lt;code&gt;&lt;span style="white-space:pre-wrap"&gt; yogurt is likely (0.75) to be decent (+0.25).&lt;/span&gt;&lt;/code&gt;&lt;span style="white-space:pre-wrap"&gt;  Results appear in Figure 3. Due to this intervention, the prediction of mathematical model (evaluated with verbalized score or human baseline score respectively) increased significantly in majority of cases. &lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1792209848/lexical_client_uploads/abfaic7zratggm7vmepw.png" alt="intervention_best_before_after.png"&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Figure 3:  &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;Accuracy of predicting model answers based on the top aggregation rule (identified after intervention) before intervention (line overlays) and after intervention (bars). The blue color indicates the prediction made using own scores and green using human baseline scores.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Figure 3 also suggests that model might be using the annotated scores to make predictions and likely bypassing the actual text. To test this, I shuffled the annotated scores such that the predictions based on words and numbers conflict.  Results appear in Figure 4.&lt;/span&gt;&lt;/p&gt;&lt;img src="https://res.cloudinary.com/lesswrong-2-0/image/upload/v1792209883/lexical_client_uploads/cwqvaeeu7odylpqstpiz.png" alt="shuffled_score_pilot.png"&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Figure 4: &lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt;Accuracy of predicting model answers after shuffled annotations based on original score (blue bar) and shuffled scores (orange bars). &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;In all cases except one (Gemini 4 Argon), predictions using aggregation rules based on shuffled score were below chance. Predictions using original scoring decreased from unshuffled annotation case indicating a possibility that models are 'using' or getting confused by annotated scores. Gemini 4 Argon was an exception where the models started aggregating evidence based on shuffled scores ignoring the meaning of words, at least partially. &lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Answer: Yes.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;h1&gt;&lt;span style="white-space:pre-wrap"&gt;Conclusion&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;So, whether you are an LLM or a human, you are more likely to buy apples than strawberries&lt;/span&gt;&lt;/b&gt;&lt;span class="footnote-reference" data-footnote-reference="" data-footnote-id="a7unegqovq5" data-footnote-index="8" role="doc-noteref" id="fnrefa7unegqovq5"&gt;&lt;sup&gt;&lt;a href="#fna7unegqovq5"&gt;[8]&lt;/a&gt;&lt;/sup&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt; &lt;/span&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;at Lidl.&lt;/span&gt;&lt;/b&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Overall the results show models use some sort of aggregation but not a single rule to navigate uncertainty. Adding either model's own verbalized score or the human baseline score increased the accuracy of predicting model answers based on aggregation rules. So they might know the scores assigned to adjectives or certainty markers but aren't using them unless explicitly shown. Showing them a shuffled score made them change their answers. The prediction of tested aggregation rule decreased for all models when evaluated with actual/original scores and were not above chance when evaluated on shuffled scores. Except in Gemini 4 Argon, where model started using shuffled scores more than that the words semantically indicate. &lt;/span&gt;&lt;/p&gt;&lt;h3&gt;&lt;span style="white-space:pre-wrap"&gt;Possible implications&lt;/span&gt;&lt;/h3&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;In real use, models often read retrieved text that mixes words with numbers. For example, product reviews come with star ratings, scientific papers come with effect sizes and p-values, and forecasts come with stated probabilities. Sometimes the words and numbers agree and sometimes they don’t, because of an error, a different scale, or deliberate manipulation.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;I evaluated this in a toy version of that mismatch. Most models handled it by becoming inconsistent. Gemini handled it by following the numbers and partly ignoring the words. In a real setting, that means a review saying “the battery died in a week” but tagged with 5 stars could be summarized as positive. Or a paper that says the effect was not significant but reports a large-looking number could be summarized as showing an effect.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;There is a possibility of manipulation. Someone who wants to change a model’s summary may not need to change the text at all. Inserting favorable numbers next to unfavorable words could be enough, at least for models that weigh numbers the way Gemini did.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;These results raise several questions all of which require more rigorous analysis:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; &lt;/span&gt;&lt;/p&gt;&lt;ul&gt;&lt;li value="1"&gt;&lt;span style="white-space:pre-wrap"&gt;Are models performing a different statistical analysis to make predictions that have not been discussed here? &lt;/span&gt;&lt;/li&gt;&lt;li value="2"&gt;&lt;span style="white-space:pre-wrap"&gt;Do models rely more on numbers than words? And how can this be (mis)used to discover safety related vulnerabilities?&lt;/span&gt;&lt;/li&gt;&lt;li value="3"&gt;&lt;span style="white-space:pre-wrap"&gt;Currently use is defined loosely and actual use would need causal experiments. Do models 'actually' use the numbers to find the best possible option out of mixed uncertain options?&lt;/span&gt;&lt;/li&gt;&lt;li value="4"&gt;&lt;span style="white-space:pre-wrap"&gt;Why does Gemini follow the numbers over the words while the other models don’t?&lt;/span&gt;&lt;/li&gt;&lt;/ul&gt;&lt;ol class="footnote-section footnotes" data-footnote-section="" role="doc-endnotes"&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="-wK2edhaMrutcdr3kj-1" data-footnote-index="1" role="doc-endnote" id="fn-wK2edhaMrutcdr3kj-1"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="-wK2edhaMrutcdr3kj-1"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnref-wK2edhaMrutcdr3kj-1"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Not to confuse with Integrated Information Theory of consciousness&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="fgxqk42dd9" data-footnote-index="2" role="doc-endnote" id="fnfgxqk42dd9"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="fgxqk42dd9"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnreffgxqk42dd9"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Anderson, N. H. (1965). Averaging versus adding as a stimulus-combination rule in impression formation. &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;Journal of experimental psychology&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;, &lt;/span&gt;&lt;i&gt;&lt;span style="white-space:pre-wrap"&gt;70&lt;/span&gt;&lt;/i&gt;&lt;span style="white-space:pre-wrap"&gt;(4), 394. &lt;/span&gt;&lt;a href="https://psycnet.apa.org/record/1965-14039-001"&gt;&lt;span style="white-space:pre-wrap"&gt;https://psycnet.apa.org/record/1965-14039-001&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="-wK2edhaMrutcdr3kj-2" data-footnote-index="3" role="doc-endnote" id="fn-wK2edhaMrutcdr3kj-2"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="-wK2edhaMrutcdr3kj-2"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnref-wK2edhaMrutcdr3kj-2"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Adjective evaluation and certainty score is the score assigned to each of the evaluative adjectives and certainty markers respectively.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="b1kzljjy8xt" data-footnote-index="4" role="doc-endnote" id="fnb1kzljjy8xt"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="b1kzljjy8xt"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefb1kzljjy8xt"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Human adjective scores:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; Warriner, A. B., Kuperman, V., &amp;amp; Brysbaert, M. (2013).&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="gwhvln8jenn" data-footnote-index="5" role="doc-endnote" id="fngwhvln8jenn"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="gwhvln8jenn"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefgwhvln8jenn"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;b&gt;&lt;span style="white-space:pre-wrap"&gt;Human certainty scores:&lt;/span&gt;&lt;/b&gt;&lt;span style="white-space:pre-wrap"&gt; Shou, Y., Lee, L. H., Yeo, J. E., &amp;amp; Smithson, M. (2025).&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="qb3pe7fjtzs" data-footnote-index="6" role="doc-endnote" id="fnqb3pe7fjtzs"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="qb3pe7fjtzs"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefqb3pe7fjtzs"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Models tested have likely seen published scores and therefore, the verbalized score might not indicate the true beliefs of the model.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="vem2njyseyn" data-footnote-index="7" role="doc-endnote" id="fnvem2njyseyn"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="vem2njyseyn"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefvem2njyseyn"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;I built mathematical models to predict the model responses. I used both model verbalized scores (certainty and adjective) and human baseline scores to make these predictions.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;li class="footnote-item" data-footnote-item="" data-footnote-id="a7unegqovq5" data-footnote-index="8" role="doc-endnote" id="fna7unegqovq5"&gt;&lt;span class="footnote-back-link" data-footnote-back-link="" data-footnote-id="a7unegqovq5"&gt;&lt;sup&gt;&lt;strong&gt;&lt;a href="#fnrefa7unegqovq5"&gt;^&lt;/a&gt;&lt;/strong&gt;&lt;/sup&gt;&lt;/span&gt;&lt;div class="footnote-content" data-footnote-content=""&gt;&lt;p&gt;&lt;span style="white-space:pre-wrap"&gt;Using mean certainty-weighted evaluations: apples &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="=0.6514\times0.7225=0.4706" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="3"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;; strawberries &lt;/span&gt;&lt;span class="math-tex"&gt;&lt;mjx-container class="MathJax" jax="CHTML" style="font-size: 104.1%;" aria-label="= \frac{[0.9214\times0.625+0.6700\times(-0.725)]}{2}=0.0451" role="math"&gt;&lt;mjx-math class=" MJX-TEX"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mfrac space="4"&gt;&lt;mjx-frac&gt;&lt;mjx-num&gt;&lt;mjx-nstrut&gt;&lt;/mjx-nstrut&gt;&lt;mjx-mrow size="s"&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c5B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c39"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2B"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c36"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-cD7"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c28"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c2212"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c37"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c29"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mo class="mjx-n"&gt;&lt;mjx-c class="mjx-c5D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;/mjx-mrow&gt;&lt;/mjx-num&gt;&lt;mjx-dbox&gt;&lt;mjx-dtable&gt;&lt;mjx-line&gt;&lt;/mjx-line&gt;&lt;mjx-row&gt;&lt;mjx-den&gt;&lt;mjx-dstrut&gt;&lt;/mjx-dstrut&gt;&lt;mjx-mn class="mjx-n" size="s"&gt;&lt;mjx-c class="mjx-c32"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-den&gt;&lt;/mjx-row&gt;&lt;/mjx-dtable&gt;&lt;/mjx-dbox&gt;&lt;/mjx-frac&gt;&lt;/mjx-mfrac&gt;&lt;mjx-mo class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c3D"&gt;&lt;/mjx-c&gt;&lt;/mjx-mo&gt;&lt;mjx-mn class="mjx-n" space="4"&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c2E"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c30"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c34"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c35"&gt;&lt;/mjx-c&gt;&lt;mjx-c class="mjx-c31"&gt;&lt;/mjx-c&gt;&lt;/mjx-mn&gt;&lt;/mjx-math&gt;&lt;/mjx-container&gt;&lt;/span&gt;&lt;span style="white-space:pre-wrap"&gt;.&lt;/span&gt;&lt;/p&gt;&lt;/div&gt;&lt;/li&gt;&lt;/ol&gt;&lt;br/&gt;&lt;br/&gt;&lt;a href="https://www.lesswrong.com/posts/ZWNruQZnrH4Yeusj5/spontaneous-verbal-evidence-synthesis-in-llms#comments"&gt;Discuss&lt;/a&gt;</description>
-      <guid isPermaLink="true">ZWNruQZnrH4Yeusj5</guid>
-      <pubDate>Sun, 18 Oct 2026 04:00:37 +0000</pubDate>
     </item>
   </channel>
 </rss>
