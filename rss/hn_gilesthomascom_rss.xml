@@ -5,7 +5,941 @@
     <link>https://www.gilesthomas.com/</link>
     <description>Giles' blog</description>
     <language>en</language>
-    <lastBuildDate>Fri, 23 Oct 2026 14:47:42 +0000</lastBuildDate>
+    <lastBuildDate>Fri, 23 Oct 2026 18:58:04 +0000</lastBuildDate>
+    <item>
+      <title>RMSNorm</title>
+      <link>https://www.gilesthomas.com/2026/10/rmsnorm</link>
+      <description>&lt;p&gt;Normalisation is an essential part of LLMs.  In the GPT-2 code, we use
+&lt;a href="/2025/07/llm-from-scratch-16-layer-normalisation"&gt;LayerNorm&lt;/a&gt; in a bunch of different
+places -- in each Transformer block, we do it just before we feed our incoming
+context vectors into the multi-head attention module, and then again before we
+feed the result through the FFN:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/diagrams/gpt-2-to-moe/transformers-block.svg" alt="A GPT-2-style Transformers block" title="A GPT-2-style Transformers block" style="width: 33%"&gt;&lt;/p&gt;
+
+&lt;p&gt;...and we also do one more round just before we project our context vectors into
+vocab space via the output head.&lt;/p&gt;
+
+&lt;p&gt;We do that to make the model more trainable; it helps to prevent vanishing or exploding
+gradients, by constraining the vectors going into our attention, feed-forward and output head
+modules so that they have a reasonably stable set of statistical properties.&lt;/p&gt;
+
+&lt;p&gt;And when (&lt;a href="/2026/07/llm-from-scratch-34b-building-and-training-gpt-2-small-in-jax#multiple-layers"&gt;as part of my black-box reimplementation of GPT-2 in JAX&lt;/a&gt;)
+I tried training an almost-complete model without LayerNorm, training completely failed
+after about 100 steps -- the loss went up to the kind of level that I'd expect from
+an uninitialised model, and stayed there despite another 700 or so training steps.
+(Later on in this post I'll show results from a similar run.)&lt;/p&gt;
+
+&lt;p&gt;So, normalisation is important.  But it doesn't have to be LayerNorm specifically --
+if you look at the currently-popular open models, a lot of them use something
+called RMSNorm instead, and I wanted to look into why that might be.&lt;/p&gt;
+
+&lt;p&gt;In this post I'll go through the differences between LayerNorm and RMSNorm, and show
+the results of training a few GPT-2 small style models using each.&lt;/p&gt;
+&lt;h3 id="the-principle"&gt;The principle&lt;/h3&gt;
+
+&lt;p&gt;RMSNorm was introduced in &lt;a href="https://arxiv.org/abs/1910.07467"&gt;a 2019 paper by Biao Zhang and Rico Sennrich&lt;/a&gt; &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;,
+which is a surprisingly easy read.  They note that
+most people at the time felt that a critical part of LayerNorm -- which they are
+explicitly comparing their new system to -- is that it does mean normalisation.  But
+they were less sure that it was the important bit, and felt that scale normalisation was
+its real benefit.&lt;/p&gt;
+
+&lt;p&gt;Let's dig into what that means.  Firstly, a refresher on LayerNorm.&lt;/p&gt;
+
+&lt;h4 id="layernorm"&gt;LayerNorm&lt;/h4&gt;
+
+&lt;p&gt;Our normalisation layer in the diagram above is being fed with a bunch of context
+vectors -- one for each token in each sequence in our batch.  LayerNorm deals with each
+of them separately &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;.  For each one, it performs two steps:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Normalises the context vector so that its mean is zero, and its variance is one.&lt;/li&gt;
+&lt;li&gt;Scales and shifts (aka biases) the resulting normalised vector by trainable amounts.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Let's work through that.  We'll go through the normalisation first; say you start with a context vector of&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;Its mean is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.  If you subtract that from each element, you get&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...which has a mean of &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.  So that sorts out the mean part of it.
+I'll call this "re-centring" below -- hopefully it's obvious why!&lt;/p&gt;
+
+&lt;p&gt;To make the variance one, we need to divide each element by the standard deviation (SD)
+of the whole vector (see &lt;a href="/2025/07/llm-from-scratch-16-layer-normalisation#the-variance"&gt;my previous LayerNorm post&lt;/a&gt; for details as to why).&lt;/p&gt;
+
+&lt;p&gt;The SD is the square root of the variance, and the variance is
+calculated by squaring each item's difference from the mean,
+adding them all together, and then dividing it by the number of elements &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
+
+&lt;p&gt;Now, there's a neat trick that you can do here.  As we have already set our mean to zero
+in the previous step, each number in our vector is already exactly equal to its difference
+from the mean.  So we can just square them element-wise, and take the average of that,
+which will give us our variance:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msup&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msup&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;8&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mstyle displaystyle="false" scriptlevel="0"&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mstyle&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;Again, SD is the square root of the variance, so here it's &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mstyle displaystyle="false" scriptlevel="0"&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mstyle&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;mo&gt;&amp;#x02248;&lt;/mo&gt;&lt;mn&gt;1.63&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.
+Dividing our already-recentred numbers by that gives us a normalised context
+vector of&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;1.63&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;1.63&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;1.63&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;We can sanity-check that the result has a variance of 1 -- remember it's just the
+average of the elements squared:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msup&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;msup&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;So, that's the normalisation part of LayerNorm.  We've recentred our context vector on its mean, and made
+it have a variance of one.&lt;/p&gt;
+
+&lt;p&gt;Now that we've normalised our context vector, we need to scale and shift it.  Intuitively
+that feels a bit like undoing the careful work we've done to fix the mean to zero and
+the variance to one.  But it's worth remembering that what we're trying to do with our
+normalisation is make the results have stable statistical properties; what the ideal specific
+properties might be is something that the network should be learning.  So the first phase
+gets everything into a well-known state, then the shift/scale goes from there to the
+shape that the network learns that it actually needs.&lt;/p&gt;
+
+&lt;p&gt;Both of these operations are done with trainable vectors of the same size as the
+context vectors -- that is, the scale vector is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; long, and so is the
+shift vector.  They're applied element-wise.  So let's say our scale vector was&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;After normalisation, our original context vector was&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;So we multiply that element-wise by the scale vector, and we get:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3.66&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...and that's the scaling done.  Similarly, if our shift vector was&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;11&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;12&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...then applying it to the scaled vector would be:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3.66&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;10&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;11&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;1.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;12&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;6.34&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;11&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;13.22&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...and with that, we've completed our LayerNorm.&lt;/p&gt;
+
+&lt;p&gt;But it took quite a lot of calculations; let's list them out:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Working out the mean: for a context vector of length &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;, we have &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; additions,
+then one division.&lt;/li&gt;
+&lt;li&gt;Recentring on the mean: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; subtractions.&lt;/li&gt;
+&lt;li&gt;Working out the variance: we can use our recentred vector for the differences, so
+that's done, but we need to get the squares of all of the numbers, which is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; multiplications,
+add them together using &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; additions, and then do one division.&lt;/li&gt;
+&lt;li&gt;Variance to standard deviation: one square root.&lt;/li&gt;
+&lt;li&gt;Dividing it all by the SD: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; divisions.&lt;/li&gt;
+&lt;li&gt;Scaling by the scale vector: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; multiplications&lt;/li&gt;
+&lt;li&gt;Shifting by the shift vector: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; additions&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;So in total we have, per context vector in our batch:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Additions/subtractions: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;li&gt;Divisions: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;li&gt;Multiplications: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;li&gt;Square roots: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Let's look at RMSNorm next to see how it compares.&lt;/p&gt;
+
+&lt;h4 id="rmsnorm"&gt;RMSNorm&lt;/h4&gt;
+
+&lt;p&gt;The idea behind RMSNorm is to try to get away with doing fewer calculations.  In particular,
+we skip working out the mean -- we don't even try to re-centre our context vectors.
+Instead, we just scale them down to the same length.  To do that, we work out
+an average length for each vector -- specifically, the Root Mean Square (RMS, of course) -- and then divide each number
+in it by that.  That done, we do the same scale trick that we did with LayerNorm, but
+not the shift -- more about that later.&lt;/p&gt;
+
+&lt;p&gt;Let's work through that in numbers again; we can start with the same context vector:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;The mean square of that is, as you might expect, the mean of the squares of all of the
+numbers in it:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mtext&gt;MS&lt;/mtext&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;msup&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msup&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msup&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;16&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;36&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;56&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;18&lt;/mn&gt;&lt;mstyle displaystyle="false" scriptlevel="0"&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;/mstyle&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;The &lt;em&gt;root&lt;/em&gt; mean square is the square root of that, which is about 4.32, so we divide
+through by that:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;4.32&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;4.32&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;6&lt;/mn&gt;&lt;mo&gt;&amp;#x0002F;&lt;/mo&gt;&lt;mn&gt;4.32&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mo&gt;&amp;#x00028;&lt;/mo&gt;&lt;mtable&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0.46&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;0.92&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;mtr&gt;&lt;mtd&gt;&lt;mn&gt;1.38&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;/mtd&gt;&lt;/mtr&gt;&lt;/mtable&gt;&lt;mo&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;You might intuitively expect the RMS of that resulting vector to be one, and
+of course it is; the mean square is:&lt;/p&gt;
+
+&lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="block"&gt;&lt;mrow&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;0.46&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;msup&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;0.92&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;msup&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;mn&gt;1.38&lt;/mn&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;msup&gt;&lt;mo&gt;&amp;#x0002E;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mfrac&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;/mrow&gt;&lt;/mfrac&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;
+
+&lt;p&gt;...and again, we square root that to get RMS which is again 1.&lt;/p&gt;
+
+&lt;p&gt;So you can see that by dividing by the RMS, we're going to re-scale all of our context
+vectors so that they have a new RMS of one.  But their means can be all over the place
+-- we've not tried to do anything to fix them.&lt;/p&gt;
+
+&lt;p&gt;That's our abbreviated normalisation; once that's done, just like with LayerNorm,
+we apply an elementwise scaling operation by a trainable
+scale vector -- but we don't shift it.  Interestingly,
+in the original paper, they give equations both with and without the shift -- equation (4),
+in which they first present it, doesn't have a shift, but equation (5), which they call a general form, does.  It's not clear to me which one they actually used
+in their tests, but it's worth noting (and thanks to GPT-6 Astra for digging this up for me)
+that the &lt;a href="https://github.com/bzhangGo/rmsnorm/blob/master/rmsnorm_torch.py"&gt;code on GitHub&lt;/a&gt; posted
+by one of the authors has an optional &lt;code&gt;bias&lt;/code&gt; that is switched off by default.&lt;/p&gt;
+
+&lt;p&gt;Anyway, the fashion these days appears to be to use RMSNorm without a shift, and to me that makes
+intuitive sense; we've normalised the scale of the values in our context vector via the
+division by the RMS, so "fixing" that to get desirable statistical properties makes sense.
+But we didn't normalise the means, so the numbers coming out do not have a stable baseline
+for us to adjust with a shift.  We could add one anyway of course, but there's no intuitive
+need to add a "new mean" back in to replace an old one that was never removed in the first place.  It's a bit fuzzy, perhaps,
+but it makes some kind of sense.&lt;/p&gt;
+
+&lt;p&gt;So let's stick with the popular version without shift: how many calculations do we save by doing RMSNorm?&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Working out the squares of all of the numbers: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; multiplications.&lt;/li&gt;
+&lt;li&gt;Averaging them to get the mean square: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; additions, then one division.&lt;/li&gt;
+&lt;li&gt;Getting the RMS from that: one square root&lt;/li&gt;
+&lt;li&gt;Dividing all of the numbers by the RMS: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; divisions&lt;/li&gt;
+&lt;li&gt;Scaling by the scale vector: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; multiplications&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;So that gives us a total of:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Additions/subtractions: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;li&gt;Divisions: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;li&gt;Multiplications: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;li&gt;Square roots: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;In terms of differences with LayerNorm we have:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Additions/subtractions: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; fewer&lt;/li&gt;
+&lt;li&gt;Divisions: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0002B;&lt;/mo&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; fewer.&lt;/li&gt;
+&lt;li&gt;Multiplications: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; difference&lt;/li&gt;
+&lt;li&gt;Square roots: &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; difference.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;So, it's certainly cheaper -- significantly fewer addition/subtraction operations.
+The question is, is that saving in training time worth it?&lt;/p&gt;
+
+&lt;p&gt;In the paper, they train various models of various sorts (including an early Transformer model)
+and come to the conclusion that it is; they got similar, or in some cases better, loss with
+RMSNorm than with their LayerNorm training runs.  And, of course, the fact that it's widely
+used in current open LLMs suggests the same.&lt;/p&gt;
+
+&lt;p&gt;Would it work well for my own models?  And what kind of performance improvement
+would I get, if any?&lt;/p&gt;
+
+&lt;p&gt;It was time to write some code and train some models.&lt;/p&gt;
+
+&lt;h3 id="the-code"&gt;The code&lt;/h3&gt;
+
+&lt;p&gt;The PyTorch code for RMSNorm was pretty trivial:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;RMSNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Module&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;emb_dim&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="nb"&gt;super&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;emb_dim&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;emb_dim&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Parameter&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ones&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;emb_dim&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eps&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;RMSNORM_EPS&lt;/span&gt;
+
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;forward&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;xs&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;squares&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;xs&lt;/span&gt; &lt;span class="o"&gt;**&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
+        &lt;span class="n"&gt;mean_squares&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;squares&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;rms&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eps&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;mean_squares&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;xs&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;rms&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Our incoming batch of context vectors is shaped &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt;,
+where &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is the batch size and &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; is the sequence length.  In the &lt;code&gt;forward&lt;/code&gt; method, just as in the worked example
+above, we get the square of everything, then work out the mean across that
+last &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; dimension so that we have per-context-vector means, keeping the dimensions
+stable with that &lt;code&gt;keepdim=True&lt;/code&gt; so that we wind up with a &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mn&gt;1&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; result
+rather than a &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;b&lt;/mi&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; one.&lt;/p&gt;
+
+&lt;p&gt;We then take the square root to work out the RMS, but we add on a tiny &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003F5;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; first so that it will
+never be zero (which would cause a divide-by-zero in the next step).  And finally
+we divide the incoming numbers by that adjusted RMS, multiply by our trainable scaling
+vector, and we're done.&lt;/p&gt;
+
+&lt;p&gt;One thing that is worth noting; to me it would be a bit more natural to add on
+the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003F5;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; in the division, like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;rms&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;mean_squares&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;xs&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;rms&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eps&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;However, I had the LayerNorm code from the book in front of me as I wrote it, and noticed
+that it adds on its own &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x003F5;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; before the square root, like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;forward&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;mean&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;var&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;unbiased&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;norm_x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;norm_x&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...so I decided to keep it consistent.  When I later looked at the docs for PyTorch's
+built-in RMSNorm class, I saw that it did the same thing as mine, so it seemed to be the
+"right" way to do it.  The two alternatives have very different behaviour when
+numbers get close to zero, so it was important to be consistent.&lt;/p&gt;
+
+&lt;p&gt;And having mentioned PyTorch's built-in RMSNorm, let's dig into that a bit.&lt;/p&gt;
+
+&lt;h3 id="the-built-in-pytorch-classes"&gt;The built-in PyTorch classes&lt;/h3&gt;
+
+&lt;p&gt;A little while ago, I noticed that by
+&lt;a href="/2026/08/built-in-gelu"&gt;using PyTorch's built-in GELU module&lt;/a&gt; rather than the hand-rolled one
+from the code in &lt;a href="https://sebastianraschka.com/"&gt;Sebastian Raschka&lt;/a&gt;'s book
+"&lt;a href="https://www.manning.com/books/build-a-large-language-model-from-scratch"&gt;Build a Large Language Model (from Scratch)&lt;/a&gt;",
+I got a significant speedup when training on my local machine -- from 21,000 tokens/second
+to 25,000.&lt;/p&gt;
+
+&lt;p&gt;PyTorch also has its own built-in &lt;a href="https://docs.pytorch.org/docs/2.14/generated/torch.nn.LayerNorm.html"&gt;&lt;code&gt;LayerNorm&lt;/code&gt;&lt;/a&gt; and
+&lt;a href="https://docs.pytorch.org/docs/2.14/generated/torch.nn.RMSNorm.html"&gt;&lt;code&gt;RMSNorm&lt;/code&gt;&lt;/a&gt; modules.&lt;/p&gt;
+
+&lt;p&gt;Now, while I felt that the book could actually have used the PyTorch GELU, it 100%
+made sense that it showed you the code for LayerNorm -- after all, "Build a Large
+Language Model (by Bolting Together Random Bits of PyTorch)" doesn't have the same
+ring to it.  And likewise in this set of experiments I wanted to try running my own
+RMSNorm.&lt;/p&gt;
+
+&lt;p&gt;But given that the point of RMSNorm is meant to be speeding up training, it felt
+like it would be worth seeing how that speedup might compare to using built-in modules
+rather than hand-rolling our own.  After all, the built-in modules can use fused
+kernels, and that can be a huge advantage.  Rather than doing each of the separate steps in the Python code above
+by dropping down into CUDA, doing the calculations, and then returning to Python
+to find out what the next step is, the whole thing can be coded in a single CUDA routine
+that can be run in one go.  Even better, that routine can be optimised as a whole --
+stuff that's used frequently can be kept in registers,
+things can be laid out so that the cache is used efficiently, and so on -- whereas with
+the Python implementation, everything would need to be in the main VRAM at the end of each step.
+Definitely a win.  My guess is that this is a large part of why the built-in
+GELU is faster, so I expected serious speedups from using PyTorch's normalisation classes.&lt;/p&gt;
+
+&lt;p&gt;That meant that I wanted my code to be able to switch easily between different kinds
+of normalisation.&lt;/p&gt;
+
+&lt;h3 id="normalisation-switching-code"&gt;Normalisation-switching code&lt;/h3&gt;
+
+&lt;p&gt;As I mentioned at the start of this post, the original GPT-2 code used LayerNorm
+in three places:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Twice in each Transformers block:
+&lt;ul&gt;
+&lt;li&gt;before the MHA and&lt;/li&gt;
+&lt;li&gt;before the FFN.&lt;/li&gt;
+&lt;/ul&gt;&lt;/li&gt;
+&lt;li&gt;At the end, just before the output head.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;The code for the Transformers bit looked like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;TransformersBlock&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Module&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="nb"&gt;super&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;norm1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LayerNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;norm2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LayerNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;forward&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;inputs&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="n"&gt;shortcut&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;
+        &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;norm1&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;att&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+        &lt;span class="o"&gt;...&lt;/span&gt;
+
+        &lt;span class="n"&gt;shortcut&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;
+        &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;norm2&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;this_block_moe_routing_info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ff&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and the output head bit like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;class&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nc"&gt;GPTModel&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Module&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="nb"&gt;super&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="fm"&gt;__init__&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;final_norm&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LayerNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+
+    &lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;forward&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;in_idx&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;moe_routing_info&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;trf_blocks&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="kc"&gt;None&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+        &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;final_norm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+        &lt;span class="n"&gt;logits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;out_head&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That code is essentially the same as Raschka's from the book, with a couple of
+(inactive in this post's experiments) &lt;a href="/2026/09/gpt-2-to-moe"&gt;tweaks to support mixture-of-experts models&lt;/a&gt;.&lt;/p&gt;
+
+&lt;p&gt;I wanted a config flag -- in that &lt;code&gt;cfg&lt;/code&gt; dictionary -- to control the kind of normalisation
+we used.  It seemed pretty clear that so long as the various classes we wanted to use in place
+of the existing &lt;code&gt;LayerNorm&lt;/code&gt; implementation were compatible with it, we could just swap
+them in.  So I replaced the existing lines that created &lt;code&gt;LayerNorms&lt;/code&gt; with:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;norm1&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;make_norm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;norm2&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;make_norm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="o"&gt;...&lt;/span&gt;
+        &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;final_norm&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;make_norm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...and defined &lt;code&gt;make_norm&lt;/code&gt; like this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;make_norm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;norm_type&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;norm_type&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;handrolled_layernorm&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;norm_type&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;handrolled_layernorm&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;LayerNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+    &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;norm_type&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;pytorch_layernorm&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;LayerNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;normalized_shape&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;eps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;LAYERNORM_EPS&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;norm_type&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;handrolled_rmsnorm&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;RMSNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;])&lt;/span&gt;
+    &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;norm_type&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;pytorch_rmsnorm&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;RMSNorm&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;
+            &lt;span class="n"&gt;normalized_shape&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;cfg&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;emb_dim&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;eps&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;RMSNORM_EPS&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="n"&gt;elementwise_affine&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;
+        &lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;elif&lt;/span&gt; &lt;span class="n"&gt;norm_type&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;no_norm&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;nn&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Identity&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="ne"&gt;Exception&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="sa"&gt;f&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;Unknown &amp;lt;!--CODE_BLOCK_15744--&amp;gt; of &lt;/span&gt;&lt;span class="si"&gt;{&lt;/span&gt;&lt;span class="n"&gt;norm_type&lt;/span&gt;&lt;span class="si"&gt;!r}&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That gave us the option for the original "hand-rolled" LayerNorm from Raschka, my own RMSNorm
+implementation, their respective PyTorch implementations, and a no-normalisation
+option that I felt would be worth running a test against.  The explicit setting of
+&lt;code&gt;eps&lt;/code&gt; for the PyTorch implementations made sure that they would be as similar as possible &lt;sup class="footnote-ref" id="fnref-4"&gt;&lt;a href="#fn-4"&gt;4&lt;/a&gt;&lt;/sup&gt;.
+I set &lt;code&gt;elementwise_affine=True&lt;/code&gt; for the PyTorch &lt;code&gt;RMSNorm&lt;/code&gt; out of an abundance of caution --
+it's the default value anyway.&lt;/p&gt;
+
+&lt;p&gt;One thing I was initially concerned with, but which turned out to be a non-issue, was
+weight initialisation.  In many of my tests I've found that the models I've been training
+can perform significantly better or worse just based on the random weights they get prior
+to training.  If you change which modules make up your model -- say by swapping out a
+LayerNorm for an RMSNorm -- then if those modules consume different amounts of randomness when they're being
+created, all subsequently-created modules will get different random number results when
+their weights are initialised and the results of your tests will be polluted by that.&lt;/p&gt;
+
+&lt;p&gt;However, on looking at the code again, I realised that there was nothing to worry about here.
+Raschka's LayerNorm and my own RMSNorm do not use any randomness, because their trainable
+parameters are set to ones and zeros -- and the PyTorch implementations do the same.
+I was actually a little sad about that because it meant that I couldn't use a bit of code
+I was rather proud of, but it did simplify things. &lt;sup class="footnote-ref" id="fnref-5"&gt;&lt;a href="#fn-5"&gt;5&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;That all seemed to work -- I did short test training runs with each of the settings
+locally to confirm that loss dropped.  It was time to test things out.&lt;/p&gt;
+
+&lt;h3 id="the-training-runs"&gt;The training runs&lt;/h3&gt;
+
+&lt;p&gt;I was, as usual, going to train models from scratch that were based on GPT-2 small, with two
+differences:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;No weight tying.&lt;/li&gt;
+&lt;li&gt;No bias on the QKV matrices.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;These models come out at roughly 163M parameters, which is very small, but was hopefully
+large enough to show interesting results.&lt;/p&gt;
+
+&lt;p&gt;For the training runs, I would:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;Use no dropout.&lt;/li&gt;
+&lt;li&gt;Schedule the learning rate: a warmup over the first 5% from zero to 0.0014, then
+a cosine decay down to 0.00014.&lt;/li&gt;
+&lt;li&gt;Train for the &lt;a href="/2026/08/chinchilla-check"&gt;Chinchilla-optimal&lt;/a&gt; ~20 tokens per parameter.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Training models is expensive -- for others I've been doing with models of this scale,
+it takes about 2 days to train them locally on my RTX 3090, or costs about US$40 if
+I use DDP to train them on an 8x A100 machine with 40 GiB/GPU (which takes about 2h30m).&lt;/p&gt;
+
+&lt;p&gt;So I didn't want to train tons of them, and decided that a sensible minimum set would be:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;One with the old LayerNorm.&lt;/li&gt;
+&lt;li&gt;One with the PyTorch LayerNorm.&lt;/li&gt;
+&lt;li&gt;One with my hand-rolled RMSNorm.&lt;/li&gt;
+&lt;li&gt;One with PyTorch's RMSNorm.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;I also wanted to do a quick test with no normalisation just to confirm that training
+failed.&lt;/p&gt;
+
+&lt;p&gt;I did these all on &lt;a href="https://lambda.ai/"&gt;Lambda&lt;/a&gt; -- there were some issues with instance availability,
+but &lt;a href="https://github.com/gpjt/lambda-manager"&gt;&lt;code&gt;lambda-manager&lt;/code&gt;&lt;/a&gt; once again proved its
+usefulness.  I was able to start three instances and spread the training runs across them.&lt;/p&gt;
+
+&lt;p&gt;All tests were run with the usual set of commands to make sure that the library
+versions and so on were the same:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;git clone https://github.com/gpjt/ddp-base-model-from-scratch.git&lt;/span&gt;
+&lt;span class="go"&gt;cd ddp-base-model-from-scratch/&lt;/span&gt;
+&lt;span class="go"&gt;./setup_lambda.sh&lt;/span&gt;
+&lt;span class="go"&gt;uv sync&lt;/span&gt;
+&lt;span class="go"&gt;uv run torchrun --nproc_per_node=8 ddp_train.py CONFIG datasets&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;...with &lt;code&gt;CONFIG&lt;/code&gt; set to each of the training run configurations I'd created:&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/bbc13c63c05672b54200a5e9a760c43ba2334579/runs/8xa100m40-rmsnorm-1-hand-layernorm"&gt;&lt;code&gt;8xa100m40-rmsnorm-1-hand-layernorm&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/bbc13c63c05672b54200a5e9a760c43ba2334579/runs/8xa100m40-rmsnorm-2-pytorch-layernorm"&gt;&lt;code&gt;8xa100m40-rmsnorm-2-pytorch-layernorm&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/bbc13c63c05672b54200a5e9a760c43ba2334579/runs/8xa100m40-rmsnorm-3-hand-rmsnorm"&gt;&lt;code&gt;8xa100m40-rmsnorm-3-hand-rmsnorm&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/bbc13c63c05672b54200a5e9a760c43ba2334579/runs/8xa100m40-rmsnorm-4-pytorch-rmsnorm"&gt;&lt;code&gt;8xa100m40-rmsnorm-4-pytorch-rmsnorm&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/tree/bbc13c63c05672b54200a5e9a760c43ba2334579/runs/8xa100m40-rmsnorm-5-no-norm"&gt;&lt;code&gt;8xa100m40-rmsnorm-5-no-norm&lt;/code&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Each configuration was identical apart from the &lt;code&gt;norm_type&lt;/code&gt;, plus a small extra difference
+for the no-norm test, which (conveniently enough) we'll look at now.&lt;/p&gt;
+
+&lt;h3 id="results"&gt;Results&lt;/h3&gt;
+
+&lt;p&gt;Let's look at the no-normalisation test first.  From previous experience, I suspected that it was likely to go
+bad fast, so I set it to checkpoint and log training loss every 10 global steps instead
+of every 617.  And, indeed, by step 530 it started logging a consistent loss of &lt;code&gt;nan&lt;/code&gt; on
+every training step, so I force-quit it at step 640.&lt;/p&gt;
+
+&lt;p&gt;The training loss looked like this:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/rmsnorm/no-norm-loss-chart.png" alt="Loss chart without normalisation" title="Loss chart without normalisation" /&gt;&lt;/p&gt;
+
+&lt;p&gt;You can see that loss started rising at step 500, and then after that it didn't
+even try to log it.  Gradients also zoomed off the top of the chart:&lt;/p&gt;
+
+&lt;p&gt;&lt;img src="/post-assets/rmsnorm/no-norm-grad-norm-chart.png" alt="Gradients chart without normalisation" title="Gradients chart without normalisation" /&gt;&lt;/p&gt;
+
+&lt;p&gt;So, that was reassuring!  As expected, training a Transformer-based LLM without
+any kind of normalisation doesn't work well.&lt;/p&gt;
+
+&lt;p&gt;The other training runs were much less eventful -- they all completed normally, and
+I downloaded the models, and ran my normal held-back test set through them to get
+a comparable quality metric.  Here's what I got:&lt;/p&gt;
+
+&lt;table&gt;
+&lt;thead&gt;
+&lt;tr&gt;
+  &lt;th&gt;Model&lt;/th&gt;
+  &lt;th&gt;Training time (s)&lt;/th&gt;
+  &lt;th&gt;Tokens/sec&lt;/th&gt;
+  &lt;th&gt;Test loss&lt;/th&gt;
+&lt;/tr&gt;
+&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-rmsnorm-1-hand-layernorm"&gt;&lt;code&gt;gpjt/8xa100m40-rmsnorm-1-hand-layernorm&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;9,358&lt;/td&gt;
+  &lt;td&gt;348,364&lt;/td&gt;
+  &lt;td&gt;3.595336&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-rmsnorm-2-pytorch-layernorm"&gt;&lt;code&gt;gpjt/8xa100m40-rmsnorm-2-pytorch-layernorm&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;8,324&lt;/td&gt;
+  &lt;td&gt;391,659&lt;/td&gt;
+  &lt;td&gt;3.571158&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-rmsnorm-3-hand-rmsnorm"&gt;&lt;code&gt;gpjt/8xa100m40-rmsnorm-3-hand-rmsnorm&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;9,134&lt;/td&gt;
+  &lt;td&gt;356,899&lt;/td&gt;
+  &lt;td&gt;3.601292&lt;/td&gt;
+&lt;/tr&gt;
+&lt;tr&gt;
+  &lt;td&gt;&lt;a href="https://huggingface.co/gpjt/8xa100m40-rmsnorm-4-pytorch-rmsnorm"&gt;&lt;code&gt;gpjt/8xa100m40-rmsnorm-4-pytorch-rmsnorm&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+  &lt;td&gt;8,289&lt;/td&gt;
+  &lt;td&gt;393,294&lt;/td&gt;
+  &lt;td&gt;3.572383&lt;/td&gt;
+&lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;The links go to the models themselves on Hugging Face.&lt;/p&gt;
+
+&lt;p&gt;These are really interesting!  Let's look at training speed first.&lt;/p&gt;
+
+&lt;h4 id="training-speed"&gt;Training speed&lt;/h4&gt;
+
+&lt;p&gt;What we're meant to be looking into here is the performance characteristics of
+RMSNorm versus LayerNorm, so let's compare like vs like.  The hand-rolled RMSNorm was indeed a bit faster to train
+than the hand-rolled LayerNorm, but only about 2.5% faster, both in terms of training
+time and tokens per second.  For the runs using the built-in PyTorch modules it was an even closer-run thing -- only
+0.5% improvement for RMSNorm.&lt;/p&gt;
+
+&lt;p&gt;Without doing tons of extra training runs I can't say safely what the noise level is
+for this kind of thing, but my gut feeling (based on having trained
+more than 60 of these models now) is that the 2.5% difference is &lt;em&gt;probably&lt;/em&gt; real, while
+the 0.5% one could well just be noise.  In particular, it's worth noting that both
+of the "hand-rolled" training runs happened on the same instance (by chance), though
+the PyTorch ones were on different ones, which makes the 2.5% number more trustworthy.&lt;/p&gt;
+
+&lt;p&gt;But on to the elephant in the room: the difference between the fused PyTorch implementations and the hand-rolled ones
+is &lt;em&gt;much&lt;/em&gt; bigger.  With LayerNorm, it took 11%
+less time to run.  The speedup for RMSNorm was a little smaller, at just less than 10%.
+That is &lt;em&gt;definitely&lt;/em&gt; not noise, and completely eclipses the speedup from switching
+the kind of normalisation! &lt;sup class="footnote-ref" id="fnref-6"&gt;&lt;a href="#fn-6"&gt;6&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
+
+&lt;p&gt;Now let's take a look at the quality of our models.&lt;/p&gt;
+
+&lt;h4 id="test-loss"&gt;Test loss&lt;/h4&gt;
+
+&lt;p&gt;Again, we'll start with the like vs like comparison.  Hand-rolled RMSNorm got
+a test loss that was &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;3.601292&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3.595336&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.005956&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; worse than the hand-rolled
+LayerNorm.  That's a tiny difference.&lt;/p&gt;
+
+&lt;p&gt;Similarly, the PyTorch RMSNorm got &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;3.572383&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3.571158&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.001225&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; worse loss than
+the PyTorch LayerNorm.&lt;/p&gt;
+
+&lt;p&gt;I'm tempted to say that those numbers were within the noise.  However, I don't have
+any numbers to back that up -- when I &lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;looked into noise previously&lt;/a&gt;
+I did measurements for variations in weight initialisation, and for runs with
+the same initial weights but different random seeds for the post-model-initialisation
+steps, but those runs used dropout, which the ones in this experiment did not.&lt;/p&gt;
+
+&lt;p&gt;In theory, my training loop should be entirely deterministic; no randomness is used
+after the initial weight initialisation.  &lt;a href="/2026/04/llm-from-scratch-32i-interventions-what-is-in-the-noise"&gt;A while back&lt;/a&gt;
+I did two training runs on 8x A100 machines with the same config, months apart, and the Safetensors files were identical bit-for-bit.&lt;/p&gt;
+
+&lt;p&gt;But what we did here was start with a specific set of initial weights, and then see what happened
+when we trained them with different normalisation settings.  It's certainly conceivable
+that some initial weights might be "in a better place" for training with LayerNorm while others were
+in a better place for RMSNorm.&lt;/p&gt;
+
+&lt;p&gt;So while the fact that both were a little bit worse with RMSNorm is interesting, I'd really need to
+train a bunch of different models to get any certainty here.  Best to chalk it up to
+noise for now.&lt;/p&gt;
+
+&lt;p&gt;Now, back to that elephant... Once again, the big difference here is not between
+LayerNorm and RMSNorm, but between hand-rolled and built-in PyTorch implementations.
+For LayerNorm, the PyTorch version got &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;3.595336&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3.571158&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.024178&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt; lower -- better! --
+loss than the hand-rolled one.  And for RMSNorm, the difference was &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;3.601292&lt;/mn&gt;&lt;mo&gt;&amp;#x02212;&lt;/mo&gt;&lt;mn&gt;3.572383&lt;/mn&gt;&lt;mo&gt;&amp;#x0003D;&lt;/mo&gt;&lt;mn&gt;0.028909&lt;/mn&gt;&lt;/mrow&gt;&lt;/math&gt;.&lt;/p&gt;
+
+&lt;p&gt;Those are not super-small differences.  Based on the various &lt;a href="/2026/04/llm-from-scratch-32j-interventions-trying-to-train-a-better-model-in-the-cloud"&gt;interventions&lt;/a&gt;
+I tested against the GPT-2 code, that's larger than the improvements I got
+from switching to full-fat 32-bit rather than using Automatic Mixed Precision (AMP -- at 0.012558), more than
+I got from adding on gradient clipping (0.013209), and more than adding on bias to the
+QKV weights (0.022141).&lt;/p&gt;
+
+&lt;p&gt;I'd need to do significantly more training runs in order to find out if this was
+due to some kind of noise, and I'll not spend that time and money now.  It feels like
+there are two possibilities:&lt;/p&gt;
+
+&lt;ol&gt;
+&lt;li&gt;It's noise due to numerical differences -- some kind of rounding thing, for example.  Imagine a
+tiny difference right at the start of training -- a single parameter gets updated to
+0.11892473 with the hand-rolled code, but to 0.11892474 with the fused code.
+That slightly changes the results from the next training step, so the gradients
+are different, and now the model diverges a bit more.  As we continue over 33,000
+training steps over 3.2B tokens, you can imagine that the models could diverge
+quite a lot.  We're on a choppy ride over the loss landscape, always trying to head
+downwards, and a small change near the start can drastically change where we end up.&lt;/li&gt;
+&lt;li&gt;Alternatively: maybe there's something systematic that makes the PyTorch implementations &lt;em&gt;better&lt;/em&gt; in this case?&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;On the one hand, the fact that the results were consistent is interesting.  If the PyTorch models
+had both been better than the hand-rolled ones but by different amounts, then that would
+be easy to ascribe to chance (I make it a 25% probability, though you could argue for
+1/6).  But the fact that the improvements were so similar is harder to explain.&lt;/p&gt;
+
+&lt;p&gt;On the other hand, a systematic difference would be &lt;em&gt;really weird&lt;/em&gt;, at least to me.  I'm confident that my hand-rolled
+implementations match the PyTorch ones in terms of the maths -- not only have I checked and double-checked
+the code, but the LayerNorm one was written by someone expert in the field, and I've
+also run them past both Claude Opus 5.5 and GPT-6 Astra, both on high thinking levels, to
+check that there are no differences &lt;sup class="footnote-ref" id="fnref-7"&gt;&lt;a href="#fn-7"&gt;7&lt;/a&gt;&lt;/sup&gt;.  So while I can't rule errors out, I've done
+a lot to try to eliminate them.&lt;/p&gt;
+
+&lt;p&gt;For now, I think I'll loosely chalk this up to noise too.  I've seen weird
+coincidences crop up before -- regular readers might remember that in my
+&lt;a href="/2026/10/low-rank-vocab-matrices"&gt;post on LoRE&lt;/a&gt;, the loss delta of using it on
+the input side only, when added to the delta of adding it to the output side
+only, was almost exactly the same as the delta for adding it to both ends.  That repro'd
+over two separate random seeds and really looked like it was a thing -- only to disappear
+with a change to a part of the code that should not have affected it if it had been
+a real additive effect.  More Tests Needed.&lt;/p&gt;
+
+&lt;p&gt;I think an interesting
+set of experiments to test that would be not only to try with different random seeds,
+but also to try with different weight initialisation strategies entirely.  What would these
+results look like if, instead of using PyTorch's default initialisation, we used the one
+they describe in the GPT-2 paper?  (More on that in an upcoming post.)&lt;/p&gt;
+
+&lt;p&gt;But back to this experiment: what can the results that we have right now tell us?&lt;/p&gt;
+
+&lt;h3 id="wrapping-up"&gt;Wrapping up&lt;/h3&gt;
+
+&lt;p&gt;I started this set of experiments with two goals: to understand how RMSNorm works,
+and to see if I could show similar results to the original paper -- that it gets
+comparable loss to LayerNorm, with a noticeable saving in training time.&lt;/p&gt;
+
+&lt;p&gt;I'm happy with the first part of that -- and hopefully if you're reading this, the "how
+it works" part is clear for you too!&lt;/p&gt;
+
+&lt;p&gt;The loss was, I think, also as expected.  Again, I'd need to do a much larger-scale
+experiment with various starting weights to be sure, but the fact that the difference
+between RMSNorm and LayerNorm was so small was certainly reassuring.&lt;/p&gt;
+
+&lt;p&gt;The training speed was a much less impressive result.  With hand-rolled code, the
+2.5% speedup looked potentially real, but it pretty much vanished when I switched
+to PyTorch's built-in classes.&lt;/p&gt;
+
+&lt;p&gt;The big difference, of course, was that between PyTorch's built-in classes and the
+hand-rolled ones.  The speedup from using fused kernels for this stuff was not such
+a big surprise, especially after the similar improvement from using the built-in GELU.
+It would certainly be interesting to see if using &lt;a href="https://docs.pytorch.org/docs/2.14/generated/torch.compile.html"&gt;&lt;code&gt;torch.compile&lt;/code&gt;&lt;/a&gt;
+narrowed the gap, though.&lt;/p&gt;
+
+&lt;p&gt;But the improved loss was definitely interesting.  Again, I'd need to do a ton
+of training runs to see if that was real or noise.  It seems most likely that
+it was noise, but the fact that the effect was positive for PyTorch in both cases, and
+was by such a similar amount, keeps nagging at me.&lt;/p&gt;
+
+&lt;p&gt;One remaining question aside from that, though: RMSNorm wasn't obviously significantly
+faster, especially if you use fused kernels, and while it wasn't obviously worse than LayerNorm, it didn't appear to be
+better -- so what explains its popularity in so many open weights models?&lt;/p&gt;
+
+&lt;p&gt;The first thing I thought was that maybe it's something that becomes more effective in terms of
+cost reductions as
+models get larger.  However, having thought it through, I think that exactly the opposite
+is true -- its effects get even smaller as we scale up.&lt;/p&gt;
+
+&lt;p&gt;Remember that -- in terms of calculations --
+RMSNorm saved &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;3&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; additions/subtractions for each context vector.  That would scale smoothly
+as &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; was increased, and of course the number of RMSNorms would increase
+proportionally as the model gained more layers.  So I think that the absolute compute reduction
+in terms of calculations saved would scale roughly linearly with each of width and depth.&lt;/p&gt;
+
+&lt;p&gt;But other aspects of the model's cost scale more than linearly with width.  For example, in
+GPT-2, our FFNs map from &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; to &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mn&gt;4&lt;/mn&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;/math&gt; and back again; that means
+that the number of calculations scales as &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;O&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msup&gt;&lt;mrow&gt;&lt;msub&gt;&lt;mi&gt;d&lt;/mi&gt;&lt;mtext&gt;emb&lt;/mtext&gt;&lt;/msub&gt;&lt;/mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt;.  More modern implementations
+use SwiGLU, but I believe that the scaling is of the same order.&lt;/p&gt;
+
+&lt;p&gt;And that's not even
+to mention the fact that modern models have longer context, and while the norms scale
+linearly with the sequence length (and the RMSNorm savings do too), full attention
+is &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;O&lt;/mi&gt;&lt;mo stretchy="false"&gt;&amp;#x00028;&lt;/mo&gt;&lt;msup&gt;&lt;mi&gt;n&lt;/mi&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/msup&gt;&lt;mo stretchy="false"&gt;&amp;#x00029;&lt;/mo&gt;&lt;/mrow&gt;&lt;/math&gt; on that.&lt;/p&gt;
+
+&lt;p&gt;So if we're only getting, say,
+0.5% improvement for these tiny 163M parameter models with a 1,024 token context length, it would be an even smaller
+&lt;em&gt;percentagewise&lt;/em&gt; improvement for larger ones.&lt;/p&gt;
+
+&lt;p&gt;Even if that wasn't the case, the amount is pretty small:  DeepSeek
+V3 was widely reported to have cost US$6M to train (excluding R&amp;amp;D and a bunch of other stuff,
+but that's actually the correct number to use here).  So even if we ignore all of the
+above and use it directly, that would just be a US$30,000
+saving from using RMSNorm.  And that's basically an upper bound -- we'd expect it to
+be significantly less.&lt;/p&gt;
+
+&lt;p&gt;Another possibility, though, is that it's an architectural thing.  These open models
+have a bunch of differences to the GPT-2-style code I've been using here.  They use
+RoPE for position encoding, and SwiGLU for the feed-forward networks.  Mistral has multiple
+differences in the attention mechanism.  On the face of it, I don't see any obvious reasons
+why those might speed up RMSNorm, but I can certainly
+imagine that they might "prefer" one form of normalisation over another, resulting in better loss.  So perhaps
+that's what people have found.&lt;/p&gt;
+
+&lt;p&gt;But there are plenty of other possibilities.  If people have generally found that it's just
+as good as LayerNorm, then perhaps it's just a fashion -- one model uses it, then the
+next one has no particular reason to move back, and so on.  And there is a general move
+towards dropping biases from LLMs (for example, from the QKV weights), and RMSNorm
+would fit that.  And anyway, it is a bit simpler!&lt;/p&gt;
+
+&lt;p&gt;Whatever the reason: if RMSNorm is that little bit simpler than LayerNorm, by skipping the recentring
+aspect of normalisation, is there something even simpler that could work even better?
+While discussing the subject with Claude Opus 5.5, it mentioned &lt;a href="https://arxiv.org/abs/2503.10622"&gt;"Transformers without Normalization"&lt;/a&gt; &lt;sup class="footnote-ref" id="fnref-8"&gt;&lt;a href="#fn-8"&gt;8&lt;/a&gt;&lt;/sup&gt;,
+which is a really interesting paper -- one of the authors has a neat intro
+&lt;a href="https://jiachenzhu.github.io/DyT/"&gt;on GitHub&lt;/a&gt;.  They noticed that the transformations
+that normalisation layers tend to learn wind up looking a bit like the S-shaped mappings
+you get from the &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;tanh&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; function, so tried using that instead with a system they called
+Dynamic Tanh (DyT) -- and got good results!&lt;/p&gt;
+
+&lt;p&gt;The first sentence in this post was "Normalisation is an essential part of LLMs".  Was that
+wrong?  I suppose that depends on what you mean by "normalisation" -- could you regard
+their &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;tanh&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; trick as being normalisation of some kind? -- though given that
+&lt;a href="https://en.wikipedia.org/wiki/Yann_LeCun"&gt;Yann LeCun&lt;/a&gt; was a co-author on the paper I should probably be a bit hesitant to disagree
+with his definition of it ;-)&lt;/p&gt;
+
+&lt;p&gt;I think their DyT system is something for a follow-on post, though.  For now: RMSNorm seems to be essentially
+the same in terms of model quality, and maybe slightly faster than LayerNorm for the models
+I've been playing with, at least if you don't use the fused modules.&lt;/p&gt;
+
+&lt;p&gt;But using
+the fused PyTorch modules instead of hand-rolling our own normalisation is a huge win for
+speed.  The loss improvement that came with it in this experiment is very interesting,
+but I'd certainly want to do quite a lot of extra experiments before claiming it was real!&lt;/p&gt;
+
+&lt;p&gt;For now, I think I'll say that I'm happy that I learned how RMSNorm worked, but I don't
+think I'll add it in as a standard part of my training runs.  And the further experiments
+can go on the pile with the hundreds of other things I'll look into later.  Once I've learned
+about RoPE, and SwiGLU, and all of the rest of it...&lt;/p&gt;
+
+&lt;p&gt;Thanks for reading!&lt;/p&gt;
+
+&lt;div class="footnotes"&gt;
+&lt;hr /&gt;
+&lt;ol&gt;
+&lt;li id="fn-1"&gt;
+&lt;p&gt;Linkrot-safe citation: Biao Zhang, &amp;amp; Rico Sennrich. (2019). Root Mean Square Layer Normalization.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-2"&gt;
+&lt;p&gt;There was an earlier normalisation technique called BatchNorm which operated
+across the whole batch, but that seems to have dropped out of favour.  The paper
+has some discussion of why that was.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-3"&gt;
+&lt;p&gt;Or by the number of elements minus one if we're using &lt;a href="https://mathworld.wolfram.com/BesselsCorrection.html"&gt;Bessel's correction&lt;/a&gt;.
+I'll use the version without in this post, but the maths works out either way.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-4"&gt;
+&lt;p&gt;Raschka's LayerNorm implementation does not use Bessel's correction, which makes
+it compatible with the original GPT-2 code; specifically, it uses the &lt;code&gt;unbiased&lt;/code&gt;
+kwarg:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;var&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;unbiased&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Per &lt;a href="https://docs.pytorch.org/docs/2.14/generated/torch.var.html"&gt;the PyTorch docs for &lt;code&gt;var&lt;/code&gt;&lt;/a&gt;,
+this is the pre-PyTorch 2.0 way of saying:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;var&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;correction&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;From the &lt;a href="https://docs.pytorch.org/docs/2.14/generated/torch.nn.LayerNorm.html"&gt;docs for &lt;code&gt;LayerNorm&lt;/code&gt;&lt;/a&gt;&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;The variance is calculated via the biased estimator, equivalent to &lt;code&gt;torch.var(input, correction=0)&lt;/code&gt;.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;So that matches nicely.&amp;#160;&lt;a href="#fnref-4" class="footnoteBackLink" title="Jump back to footnote 4 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-5"&gt;
+&lt;p&gt;Just in case I want to use it in the future, here it is:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;from&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nn"&gt;contextlib&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;contextmanager&lt;/span&gt;
+
+&lt;span class="o"&gt;...&lt;/span&gt;
+
+&lt;span class="nd"&gt;@contextmanager&lt;/span&gt;
+&lt;span class="k"&gt;def&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;stable_rng&lt;/span&gt;&lt;span class="p"&gt;():&lt;/span&gt;
+    &lt;span class="n"&gt;after_seed&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;getrandbits&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;63&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="k"&gt;try&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="k"&gt;yield&lt;/span&gt;
+    &lt;span class="k"&gt;finally&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+        &lt;span class="n"&gt;random&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;seed&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;after_seed&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;manual_seed&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;after_seed&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;cuda&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;manual_seed_all&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;after_seed&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;With that, you can wrap anything that might draw variable amounts of randomness
+from the various random-number generators in a &lt;code&gt;with stable_rng():&lt;/code&gt; block, and
+you can be sure that the state will be stable afterwards regardless.&lt;/p&gt;
+
+&lt;p&gt;Using that in some of my earlier code would have been much easier than the various
+contortions I went through to ensure that different routes through the code drew
+the same amount regardless of the model's configuration.&amp;#160;&lt;a href="#fnref-5" class="footnoteBackLink" title="Jump back to footnote 5 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-6"&gt;
+&lt;p&gt;One possibility that occurs to me: the fact that the LayerNorm got more of a speedup might be due to an inefficiency in the
+hand-rolled code having been addressed in the PyTorch implementation.
+Remember, what we started with was written as educational code to explain how
+LayerNorm works, so it does this:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;mean&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;var&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;unbiased&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;False&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;norm_x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;norm_x&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;Now, remember that in the explanation of LayerNorm &lt;a href="#layernorm"&gt;above&lt;/a&gt;, I noted that
+once you've recentred the vector, you can re-use that to work out variance, because
+the recentred vector is already a list of differences from the mean.  So you could rewrite
+the above more efficiently as:&lt;/p&gt;
+
+&lt;div class="codehilite"&gt;
+&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;mean&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;recentered&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="n"&gt;mean&lt;/span&gt;
+        &lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;recentered&lt;/span&gt; &lt;span class="o"&gt;**&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;mean&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dim&lt;/span&gt;&lt;span class="o"&gt;=-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;keepdim&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="kc"&gt;True&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;norm_x&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;recentered&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="n"&gt;torch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sqrt&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;var&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;eps&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;scale&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="n"&gt;norm_x&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shift&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;That would save us two calculations of the mean and the differences from it, so would
+hopefully speed things up.&lt;/p&gt;
+
+&lt;p&gt;Or, of course, it could have just been noise, or something completely different :-)&amp;#160;&lt;a href="#fnref-6" class="footnoteBackLink" title="Jump back to footnote 6 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-7"&gt;
+&lt;p&gt;I was going to put a defensive "FWIW" against the "I got an LLM to check it out"
+bit there, but these days, for this kind of thing, I think it's unnecessary.&amp;#160;&lt;a href="#fnref-7" class="footnoteBackLink" title="Jump back to footnote 7 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+
+&lt;li id="fn-8"&gt;
+&lt;p&gt;Zhu, J., Chen, X., He, K., LeCun, Y., &amp;amp; Liu, Z. (2025). Transformers without Normalization.
+In &lt;em&gt;Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)&lt;/em&gt;.&amp;#160;&lt;a href="#fnref-8" class="footnoteBackLink" title="Jump back to footnote 8 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">/2026/10/rmsnorm</guid>
+      <pubDate>Fri, 23 Oct 2026 18:40:00 +0000</pubDate>
+    </item>
     <item>
       <title>Fun with low-rank vocab matrices (and a bonus test loss reduction?)</title>
       <link>https://www.gilesthomas.com/2026/10/low-rank-vocab-matrices</link>
@@ -3865,7 +4799,7 @@ next steps it's best to have something a bit more tangible in mind.&lt;/p&gt;
 
 &lt;p&gt;&lt;small id="diagram-5"&gt;&lt;strong&gt;Diagram 5&lt;/strong&gt;: The &lt;code&gt;xs&lt;/code&gt; tensor as a 3-D cuboid&lt;/small&gt;&lt;/p&gt;
 
-&lt;p&gt;&lt;img src="/post-assets/gpt-2-to-moe/xs-cuboid-3d.svg" alt="The &amp;lt;code&amp;gt;md5-b962c69554a46862150bf876b8a9d572&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" title="The &amp;lt;code&amp;gt;xs&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src="/post-assets/gpt-2-to-moe/xs-cuboid-3d.svg" alt="The &amp;lt;code&amp;gt;md5-0a07875ab2311fa1d47ccfe5a85583df&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" title="The &amp;lt;code&amp;gt;xs&amp;lt;/code&amp;gt; tensor as a 3-D cuboid" /&gt;&lt;/p&gt;
 
 &lt;p&gt;Every dot in that cuboid is a single number.  A single context vector is the numbers
 as you follow a line from the "front" of the cube -- the &lt;code&gt;batch_size&lt;/code&gt; &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;mi&gt;&amp;#x000D7;&lt;/mi&gt;&lt;/mrow&gt;&lt;/math&gt; &lt;code&gt;sequence_length&lt;/code&gt;
@@ -7989,736 +8923,6 @@ when I say that.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="
 </description>
       <guid isPermaLink="true">/2026/07/ai-use</guid>
       <pubDate>Fri, 31 Jul 2026 19:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Why do OpenAI's GPT-2 weights beat mine?  Part three: testing overtraining</title>
-      <link>https://www.gilesthomas.com/2026/07/why-do-openai-gpt2-weights-beat-mine-3-overtraining</link>
-      <description>&lt;p&gt;The GPT-2-style models that I've been training work really well, and I've even
-managed to train some that perform better than the original OpenAI small model
-in terms of cross entropy loss on a test set.  But
-&lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-1-intro"&gt;as I wrote previously&lt;/a&gt;,
-there's a mystery: why do they perform worse on my instruction fine-tuning evaluation?&lt;/p&gt;
-
-&lt;p&gt;I had various theories about why that might be, and to me, the most plausible-seeming of them
-was the amount of data they were trained with.  As best I can find out, OpenAI's models were, by modern
-standards, trained on much more data than they should have been, while I'd used
-the theoretically optimal amount of training data.&lt;/p&gt;
-
-&lt;p&gt;To put it in other words, OpenAI's models were overtrained.  If I deliberately
-overtrained my own models, could I match their performance?  This post is a write-up
-of what happened, but so as not to bury the lede -- it didn't seem to help much, if at all.&lt;/p&gt;
-
-&lt;p&gt;Let's see why.&lt;/p&gt;
-&lt;h2 id="overtraining"&gt;Overtraining&lt;/h2&gt;
-
-&lt;p&gt;Let's start by getting a nice crisp definition of overtraining.&lt;/p&gt;
-
-&lt;p&gt;It's important not to confuse overtraining with overfitting.  Overfitting is
-where you train a model so that instead of learning a general rule about the
-data it's seeing, it learns something very specific to the training data -- for example,
-this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32f-interventions-weight-decay/overfit_plot2.png" alt="Overfitting example: the powerful model's solution" title="Overfitting example: the powerful model's solution" /&gt;&lt;/p&gt;
-
-&lt;p&gt;...rather than this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/llm-from-scratch-32f-interventions-weight-decay/overfit_plot4.png" alt="Overfitting example: a simpler model fits perfectly" title="Overfitting example: a simpler model fits perfectly" /&gt;&lt;/p&gt;
-
-&lt;p&gt;Overfitting is pretty much always a bad thing.&lt;/p&gt;
-
-&lt;p&gt;Overtraining, by contrast, is more of a judgement call.  For LLMs, it's generally used as a shorthand for
-"training for more than the Chinchilla-optimal number of tokens".  The
-&lt;a href="https://arxiv.org/abs/2203.15556"&gt;Chinchilla paper&lt;/a&gt; makes a very specific case:
-if you train a model for roughly 20 times as many tokens as it has parameters, then
-you'll have as good a model as you can get for that budget in terms of compute.
-They were arguing against contemporaneous experiments where people were doing
-things like doubling the number of parameters but training on the same amount of
-data.&lt;/p&gt;
-
-&lt;p&gt;If you overtrain, it means that you're training on more than 20 tokens per parameter.
-The Chinchilla argument is that instead of doing that, you should scale up the number of parameters and the number
-of tokens equally to keep the 20x ratio.  Because the amount of compute used scales pretty much linearly
-with both tokens and parameters, you'll spend the same amount and you'll get a better model that way.&lt;/p&gt;
-
-&lt;p&gt;Based on that heuristic, if you double your compute budget, then you should scale up your parameter count
-by &lt;math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"&gt;&lt;mrow&gt;&lt;msqrt&gt;&lt;mrow&gt;&lt;mn&gt;2&lt;/mn&gt;&lt;/mrow&gt;&lt;/msqrt&gt;&lt;/mrow&gt;&lt;/math&gt; and your training token count by the same amount, and by doing
-that you'll get a better result than you would if you'd naively just doubled the parameters
-or the tokens, for the same amount of compute time spent.&lt;/p&gt;
-
-&lt;p&gt;But overtraining is not always a bad thing.  Keeping things Chinchilla-optimal means
-that you have to keep scaling up the model as you scale up the compute budget, and
-often you can't do that -- for example, let's imagine you're training a model that's
-meant to run on mobile phones.  You have a hard limit on the number of parameters:
-what will fit in the target devices' RAM.&lt;/p&gt;
-
-&lt;p&gt;And importantly, in general you will still get a better model by overtraining -- just not
-as much better as you would have done if you had been able to scale up the model as
-well as the training tokens.&lt;/p&gt;
-
-&lt;p&gt;Now, as always, we don't know enough about the original GPT-2 training runs to be sure
-as to whether they were overtrained, and if so, by how much.  But one thing that we
-do know is that GPT-2 was trained in 2019, three years before the Chinchilla paper
-came out, so they definitely didn't use it as a heuristic!&lt;/p&gt;
-
-&lt;p&gt;One thing that they do say in &lt;a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"&gt;the GPT-2 paper&lt;/a&gt;
-is that their dataset, WebText, is "a total of 40 GB of text".  Assuming 4 bytes per token (a good
-rule of thumb for the GPT-2 tokeniser), that's
-10B tokens.  If the small model, which had 124M parameters, was trained on all of those, then it definitely was
-overtrained; 124M times 20 is about 2.5B. &lt;sup class="footnote-ref" id="fnref-1"&gt;&lt;a href="#fn-1"&gt;1&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;On top of that, there's the question of epochs.  In my training runs so far, I've been
-training through a Chinchilla-optimal 3.2B unique tokens.  But being able to easily get your
-hands on that much training data is a relatively new thing, as you can see from the
-fact that the GPT-2 authors decided to document how they got theirs in the paper.
-So back then, pre-Chinchilla, people tended to train for multiple epochs so that
-they could make better use of limited data.&lt;/p&gt;
-
-&lt;p&gt;Now, when I first started training my models,
-I tried to dig up some details on the GPT-2 training run beyond what was there in the paper.
-I found &lt;a href="https://wandb.ai/bkkaggle/lm-finetuning/reports/Pretraining-a-124-M-Parameter-GPT-2-Language-Model--VmlldzoyMjg4NzA"&gt;this report&lt;/a&gt;,
-and using data there, I
-&lt;a href="/2025/12/llm-from-scratch-28-training-a-base-model-from-scratch#epochs"&gt;calculated&lt;/a&gt;
-that it looked like OpenAI had trained for about 42 epochs over WebText.  The report's author
-came up with 60 epochs as an equivalent-sized training run for their own dataset. &lt;sup class="footnote-ref" id="fnref-2"&gt;&lt;a href="#fn-2"&gt;2&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;Again, those numbers are shaky; we don't have the real data.  But I think it's not
-crazy to say that the OpenAI models were probably trained on more data than mine,
-and probably over more than one epoch.  They were, in the Chinchilla sense, overtrained.
-That makes perfect sense for the time, given that it was three years before the
-Chinchilla paper!&lt;/p&gt;
-
-&lt;p&gt;But that opened up a couple of interesting experiments that I could try.&lt;/p&gt;
-
-&lt;h2 id="the-experiments"&gt;The experiments&lt;/h2&gt;
-
-&lt;p&gt;Obviously I didn't want to train a model over 10B tokens (not least because I'd need
-to download a larger sample of FineWeb).  And I certainly didn't want to do 42 epochs
-of training, given that one epoch over 3.2B tokens took almost two days, even with
-&lt;a href="/2026/07/llm-from-scratch-34b-building-and-training-gpt-2-small-in-jax"&gt;my relatively fast JAX code&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;But it seemed plausible that I'd be able to get at least some signal if I trained
-longer.  I decided to use &lt;a href="/2026/07/poppy-the-training-box-1-the-beginnings"&gt;&lt;code&gt;poppy&lt;/code&gt;, my new dedicated training box&lt;/a&gt; to train two new models:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Firstly, I'd train one on 6.4B tokens from my FineWeb dataset -- the original 3.2B
-that I had been training on to date, and then on whatever 3.2B came next.&lt;/li&gt;
-&lt;li&gt;Secondly, I'd train another one on the same 3.2B tokens as usual, but I'd do two
-epochs.&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;I expected each training run to take a bit less than four days on &lt;code&gt;poppy&lt;/code&gt;.
-Once they were done, I would be able to evaluate the models, both with the test loss eval and the
-IFT one.&lt;/p&gt;
-
-&lt;p&gt;In an unusual-for-me fit of scientific good practice, I decided to write down what I expected to
-see up-front.  I felt that:&lt;/p&gt;
-
-&lt;ul&gt;
-&lt;li&gt;Both models would get better results on the test loss eval than my existing ones
-(90% probability).  The one trained on more tokens would be better than the
-one trained for two epochs on the same tokens (70%).&lt;/li&gt;
-&lt;li&gt;Both models would score better than my existing models in the IFT test (70%) but
-would still be worse than GPT-2 small (90%).&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;It was time to find out!&lt;/p&gt;
-
-&lt;h2 id="the-extended-train-model"&gt;The extended-train model&lt;/h2&gt;
-
-&lt;p&gt;I kicked off the extended train, over 6.4B unique tokens, using my JAX code because it's
-somewhat faster than the PyTorch version.  It crashed after about 40 hours, with
-this error:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;jax.errors.JaxRuntimeError: INTERNAL: CUDA error: Failed to end stream capture:&lt;/span&gt;
-&lt;span class="go"&gt;CUDA_ERROR_STREAM_CAPTURE_INVALIDATED: operation failed due to a previous error&lt;/span&gt;
-&lt;span class="go"&gt;during capture [executable_name=&amp;#39;jit_train_step&amp;#39;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;There were no obvious issues with the machine -- the CPU temperature had been hovering
-at around 60°C, and GPU at around 70°C, as had been typical in training runs on &lt;code&gt;poppy&lt;/code&gt; in the past.
-There was nothing in &lt;code&gt;journalctl&lt;/code&gt; or &lt;code&gt;dmesg&lt;/code&gt; that looked suspicious.&lt;/p&gt;
-
-&lt;p&gt;On &lt;a href="https://docs.nvidia.com/dl-cuda-graph/troubleshooting/capture-failures.html"&gt;Nvidia's documentation site&lt;/a&gt;
-I found a mention of that error message, but the page in question was all about PyTorch;
-I couldn't find anything relevant to JAX.&lt;/p&gt;
-
-&lt;p&gt;For now, I decided to chalk it up to some bug somewhere in the training stack, and only
-dig in if it happened again.  So I kicked the training run off again from the latest checkpoint to see what happened,
-and 38 hours later, it completed:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 140,667.401 seconds&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-24 03:36:02.148127 Tokens seen: 3,191,341,056&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-24 03:36:02.148133 Throughput: 22,687 tokens/second&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-24 03:36:02.148155 Final train loss: 2.979&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-24 03:36:02.148163 Done&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Note that the numbers there -- tokens seen, time taken, and so on -- are for the
-portion of the training run after the restart.  My checkpoint recovery code doesn't carry
-those over.  The final train loss is just the loss over the period from the penultimate
-checkpoint to the end of the run -- there must have been some "easy" data there :-)&lt;/p&gt;
-
-&lt;p&gt;The training loss chart looked like this:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/why-do-openai-gpt2-weights-beat-mine-3-overtraining/extended-train-loss-chart.png" alt="Loss chart for the extended run" title="Loss chart for the extended run" /&gt;&lt;/p&gt;
-
-&lt;p&gt;As you can see, the latest checkpoint wasn't the "best" one, so I pulled both latest and best down to
-&lt;code&gt;perry&lt;/code&gt;, my workstation, for investigation.&lt;/p&gt;
-
-&lt;p&gt;Firstly, I ran them both through my JAX smoke test, which asks them to complete
-"Every effort moves you" with 20 more tokens (using greedy sampling):&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_generation.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/best/model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;forward.
-The&lt;span class="w"&gt; &lt;/span&gt;best&lt;span class="w"&gt; &lt;/span&gt;way&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;get&lt;span class="w"&gt; &lt;/span&gt;started&lt;span class="w"&gt; &lt;/span&gt;is&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;start&lt;span class="w"&gt; &lt;/span&gt;with&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;simple,&lt;span class="w"&gt; &lt;/span&gt;easy&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;use&lt;span class="w"&gt; &lt;/span&gt;online
-giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_generation.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/latest/model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;forward.
--&lt;span class="w"&gt; &lt;/span&gt;You&lt;span class="w"&gt; &lt;/span&gt;are&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;leader.
--&lt;span class="w"&gt; &lt;/span&gt;You&lt;span class="w"&gt; &lt;/span&gt;are&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;leader.
--&lt;span class="w"&gt; &lt;/span&gt;You&lt;span class="w"&gt; &lt;/span&gt;are
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Very inspirational.  But coherent, and that's what matters.&lt;/p&gt;
-
-&lt;p&gt;Now, the bulk of my evals use PyTorch rather than JAX -- I've been
-sticking to that for consistency -- so I converted the model Safetensors files so that
-they had the right structure to work with that:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;convert_model_to_pytorch.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/best/model.safetensors&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/best/pytorch-model.safetensors
-giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;convert_model_to_pytorch.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/latest/model.safetensors&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/latest/pytorch-model.safetensors
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...and did the equivalent smoke test on that side (which uses non-greedy decoding
-with a temperature of 1):&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/best/pytorch-model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;along&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;try&lt;span class="w"&gt; &lt;/span&gt;the&lt;span class="w"&gt; &lt;/span&gt;recipes&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;each&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;every&lt;span class="w"&gt; &lt;/span&gt;one&lt;span class="w"&gt; &lt;/span&gt;of&lt;span class="w"&gt; &lt;/span&gt;them&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;try&lt;span class="w"&gt; &lt;/span&gt;it&lt;span class="w"&gt; &lt;/span&gt;all&lt;span class="w"&gt; &lt;/span&gt;over&lt;span class="w"&gt; &lt;/span&gt;again.&lt;span class="w"&gt; &lt;/span&gt;You
-giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/latest/pytorch-model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;conclusion.
-If&lt;span class="w"&gt; &lt;/span&gt;the&lt;span class="w"&gt; &lt;/span&gt;answer&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;each&lt;span class="w"&gt; &lt;/span&gt;of&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;goals&lt;span class="w"&gt; &lt;/span&gt;is&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;get&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;where&lt;span class="w"&gt; &lt;/span&gt;we�
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;I think that the Unicode junk at the end of the second is probably the first half
-of a two-token apostrophe or something along those lines.  Anyway, those looked good.&lt;/p&gt;
-
-&lt;p&gt;Next, it was time to run the first eval: how would the models perform on the held-back
-test set?&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/best/pytorch-model.safetensors
-Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;593&lt;/span&gt;.57it/s&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;04&lt;/span&gt;:54&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.88it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.325897
-giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/latest/pytorch-model.safetensors
-Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1508&lt;/span&gt;.74it/s&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;04&lt;/span&gt;:54&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.86it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.324953
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So, the "latest" checkpoint was better than the "best" one.&lt;/p&gt;
-
-&lt;p&gt;This is a problem with
-the way I define "best" in my training script.  The original version of that script used a validation
-set to evaluate the model before every checkpoint; "best" at that point meant that the
-model was the best performer on that validation set.  Later on, I decided to play a little
-loose with my training runs and pull out the validation -- this seemed &lt;em&gt;reasonably&lt;/em&gt;
-safe because I was doing single-epoch training, so what I saw as the primary benefit
-of regular validation during training -- detecting overfitting by looking for rising
-validation loss -- was not so important.  It's hard for a model to overfit on a single
-epoch training run.&lt;/p&gt;
-
-&lt;p&gt;However, doing that meant that "best" had to be changed
-to mean "best-performing on the training data".  And that's actually a really bad metric,
-because the training data is different for each measurement, so they're not really
-comparable.&lt;/p&gt;
-
-&lt;p&gt;So, for this model, I decided that I'd discard the "best" checkpoint, and use the "latest" one.&lt;/p&gt;
-
-&lt;p&gt;But all of that aside, those numbers were pretty impressive!  Not only did it beat my
-best Chinchilla-optimal model to date,
-which had got 3.418784 loss on the same eval, and the original OpenAI small model with a loss of 3.499677,
-but it was actually getting quite close to the OpenAI medium's loss of 3.231442. &lt;sup class="footnote-ref" id="fnref-3"&gt;&lt;a href="#fn-3"&gt;3&lt;/a&gt;&lt;/sup&gt;&lt;/p&gt;
-
-&lt;p&gt;Promising!&lt;/p&gt;
-
-&lt;p&gt;&lt;strong&gt;Update&lt;/strong&gt;: The model is now on Hugging Face as &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-no-dropout-extended"&gt;&lt;code&gt;gpjt/jax-with-mha-bias-no-dropout-extended&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;So now it was time for the two-epoch training run.&lt;/p&gt;
-
-&lt;h2 id="the-two-epoch-model"&gt;The two-epoch model&lt;/h2&gt;
-
-&lt;p&gt;Adding support for handling multiple epochs to the code was &lt;a href="https://github.com/gpjt/jax-gpt2-from-scratch/commit/3cfb1dee50c0a36750c3c5132811c7aea09518d8"&gt;very simple&lt;/a&gt;,
-so having done that, I kicked it off.&lt;/p&gt;
-
-&lt;p&gt;Just over three days later:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="go"&gt;Training complete in 282,366.091 seconds&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-27 20:14:26.124497 Tokens seen: 6,520,504,320&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-27 20:14:26.124503 Throughput: 23,092 tokens/second&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-27 20:14:26.124518 Final train loss: 3.547&lt;/span&gt;
-&lt;span class="go"&gt;2026-07-27 20:14:26.124524 Done&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;This time the numbers are for the full training run -- there were no odd CUDA issues,
-and it ran straight through.  Again, the final train loss is just the loss over the period from the penultimate
-checkpoint to the end of the run.  For runs over the same dataset, it can actually
-be a useful quick-and-dirty way to compare results before running the full evals,
-but in this case it's obviously not comparable with the last run's result there,
-because we're talking about loss on different data.&lt;/p&gt;
-
-&lt;p&gt;Anyway, once again, "best" and "latest" were different checkpoints, as you can see from
-the loss chart:&lt;/p&gt;
-
-&lt;p&gt;&lt;img src="/post-assets/why-do-openai-gpt2-weights-beat-mine-3-overtraining/two-epoch-loss-chart.png" alt="Loss chart for the two-epoch run" title="Loss chart for the two-epoch run" /&gt;&lt;/p&gt;
-
-&lt;p&gt;...so I pulled them both
-to &lt;code&gt;perry&lt;/code&gt;, did the first smoke test:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_generation.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/best/model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;forward,&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;you’ll&lt;span class="w"&gt; &lt;/span&gt;be&lt;span class="w"&gt; &lt;/span&gt;able&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;see&lt;span class="w"&gt; &lt;/span&gt;the&lt;span class="w"&gt; &lt;/span&gt;results.
-The&lt;span class="w"&gt; &lt;/span&gt;best&lt;span class="w"&gt; &lt;/span&gt;way&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;get
-giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_generation.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/latest/model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;forward,&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;you’re&lt;span class="w"&gt; &lt;/span&gt;not&lt;span class="w"&gt; &lt;/span&gt;alone.
-The&lt;span class="w"&gt; &lt;/span&gt;most&lt;span class="w"&gt; &lt;/span&gt;important&lt;span class="w"&gt; &lt;/span&gt;thing&lt;span class="w"&gt; &lt;/span&gt;is&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;be&lt;span class="w"&gt; &lt;/span&gt;able&lt;span class="w"&gt; &lt;/span&gt;to
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;...converted them to PyTorch:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;convert_model_to_pytorch.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/best/model.safetensors&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/best/pytorch-model.safetensors
-giles@perry:~/Dev/jax-gpt2-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;convert_model_to_pytorch.py&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/latest/model.safetensors&lt;span class="w"&gt; &lt;/span&gt;runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/latest/pytorch-model.safetensors
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Did the PyTorch smoke test:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/best/pytorch-model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;take&lt;span class="w"&gt; &lt;/span&gt;on&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;larger&lt;span class="w"&gt; &lt;/span&gt;responsibility.
-We’re&lt;span class="w"&gt; &lt;/span&gt;here&lt;span class="w"&gt; &lt;/span&gt;to&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;help&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;you.
-We�
-giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_smoke.py&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/latest/pytorch-model.safetensors
-Every&lt;span class="w"&gt; &lt;/span&gt;effort&lt;span class="w"&gt; &lt;/span&gt;moves&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;closer,&lt;span class="w"&gt; &lt;/span&gt;and&lt;span class="w"&gt; &lt;/span&gt;you&lt;span class="w"&gt; &lt;/span&gt;become&lt;span class="w"&gt; &lt;/span&gt;a&lt;span class="w"&gt; &lt;/span&gt;better&lt;span class="w"&gt; &lt;/span&gt;person&lt;span class="w"&gt; &lt;/span&gt;as&lt;span class="w"&gt; &lt;/span&gt;the&lt;span class="w"&gt; &lt;/span&gt;year&lt;span class="w"&gt; &lt;/span&gt;progresses.”
-There’s
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;So that all looked good (despite the Unicode junk), and it was time to work out the
-loss:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/best/pytorch-model.safetensors
-Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3507&lt;/span&gt;.68it/s&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;04&lt;/span&gt;:55&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.83it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.332157
-giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;test_loss.py&lt;span class="w"&gt; &lt;/span&gt;datasets/&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-baseline/model.json&lt;span class="w"&gt; &lt;/span&gt;../jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/latest/pytorch-model.safetensors
-Fetching&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;files:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;/4&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:00&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1760&lt;/span&gt;.09it/s&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3200&lt;/span&gt;/3200&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;04&lt;/span&gt;:53&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.90it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Loss&lt;span class="w"&gt; &lt;/span&gt;against&lt;span class="w"&gt; &lt;/span&gt;our&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;test&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;dataset:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;.326482
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;That was pleasingly in line with my predictions:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Both models would get better results on the test loss eval than my existing ones
-  (90% probability).  The one trained on more tokens would be better than the
-  one trained for two epochs on the same tokens (70%).&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;...though of course the difference between the 3.326482 that this model got and the
-3.324953 that the one-long-epoch one got was tiny and probably in the noise.  I decided to
-count it as a win, anyway :-)&lt;/p&gt;
-
-&lt;p&gt;&lt;strong&gt;Update&lt;/strong&gt;: The model is now on Hugging Face as &lt;a href="https://huggingface.co/gpjt/jax-with-mha-bias-no-dropout-2-epoch"&gt;&lt;code&gt;gpjt/jax-with-mha-bias-no-dropout-2-epoch&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;So now it was time for the big test: how would they do at instruction-following?&lt;/p&gt;
-
-&lt;h2 id="at-last-the-ift-test"&gt;At last, the IFT test!&lt;/h2&gt;
-
-&lt;p&gt;There are two phases to getting numbers for this test: firstly, I run
-&lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/e71f33fb6aa421ec646b71f5cb69f3e3368c0d84/ift_generate_test_responses.py"&gt;the script&lt;/a&gt;
-that does the fine-tuning, and then generates the model's completions for the
-test set using the fine-tuned model.  These are written to a JSON file for later
-use by the LLM-as-a-judge script.  That script is the one I fixed in my &lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix"&gt;previous post&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;I ran it for the extended train (one long epoch) model, taking care to make sure
-that the config it was passed matched the model's original training run in not
-having dropout enabled:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;ift_generate_test_responses.py&lt;span class="w"&gt; &lt;/span&gt;jax-mha-bias-extended-train&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-stacked-interventions/model.json&lt;span class="w"&gt; &lt;/span&gt;~/Dev/jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-extended/checkpoints/latest/pytorch-model.safetensors
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.23it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;still&lt;span class="w"&gt; &lt;/span&gt;decreasing,&lt;span class="w"&gt; &lt;/span&gt;continuing
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.54it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;still&lt;span class="w"&gt; &lt;/span&gt;decreasing,&lt;span class="w"&gt; &lt;/span&gt;continuing
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.54it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;still&lt;span class="w"&gt; &lt;/span&gt;decreasing,&lt;span class="w"&gt; &lt;/span&gt;continuing
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.58it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;rising,&lt;span class="w"&gt; &lt;/span&gt;bailing&lt;span class="w"&gt; &lt;/span&gt;out
-&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;110&lt;/span&gt;/110&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:08&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;13&lt;/span&gt;.40it/s&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;Next, I ran it for the two-epoch model:&lt;/p&gt;
-
-&lt;div class="codehilite"&gt;
-&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;giles@perry:~/Dev/ddp-base-model-from-scratch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;(&lt;/span&gt;main&lt;span class="o"&gt;)&lt;/span&gt;$&lt;span class="w"&gt; &lt;/span&gt;uv&lt;span class="w"&gt; &lt;/span&gt;run&lt;span class="w"&gt; &lt;/span&gt;ift_generate_test_responses.py&lt;span class="w"&gt; &lt;/span&gt;jax-mha-bias-2-epoch&lt;span class="w"&gt; &lt;/span&gt;runs/1xrtx3090-stacked-interventions/model.json&lt;span class="w"&gt; &lt;/span&gt;~/Dev/jax-gpt2-from-scratch/runs/full-llm-full-train-with-mha-output-bias-2-epoch/checkpoints/latest/pytorch-model.safetensors
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;0&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.13it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;still&lt;span class="w"&gt; &lt;/span&gt;decreasing,&lt;span class="w"&gt; &lt;/span&gt;continuing
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;1&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.22it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;still&lt;span class="w"&gt; &lt;/span&gt;decreasing,&lt;span class="w"&gt; &lt;/span&gt;continuing
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;2&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.34it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;still&lt;span class="w"&gt; &lt;/span&gt;decreasing,&lt;span class="w"&gt; &lt;/span&gt;continuing
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;3&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.48it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;still&lt;span class="w"&gt; &lt;/span&gt;decreasing,&lt;span class="w"&gt; &lt;/span&gt;continuing
-Epoch&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;4&lt;/span&gt;:&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;116&lt;/span&gt;/116&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:06&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;18&lt;/span&gt;.32it/s&lt;span class="o"&gt;]&lt;/span&gt;
-Val&lt;span class="w"&gt; &lt;/span&gt;loss&lt;span class="w"&gt; &lt;/span&gt;rising,&lt;span class="w"&gt; &lt;/span&gt;bailing&lt;span class="w"&gt; &lt;/span&gt;out
-&lt;span class="m"&gt;100&lt;/span&gt;%&lt;span class="p"&gt;|&lt;/span&gt;███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████&lt;span class="p"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;110&lt;/span&gt;/110&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="m"&gt;00&lt;/span&gt;:10&amp;lt;&lt;span class="m"&gt;00&lt;/span&gt;:00,&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="m"&gt;10&lt;/span&gt;.06it/s&lt;span class="o"&gt;]&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;With that done, it was time to run &lt;a href="https://github.com/gpjt/ddp-base-model-from-scratch/blob/e71f33fb6aa421ec646b71f5cb69f3e3368c0d84/ift_judge.py"&gt;the LLM as a judge script&lt;/a&gt;.
-That gave us results, which I've put into the table below.  For each model, I've shown
-the number of epochs of training the model needed before its
-validation loss started rising.  For the pre-existing models, I've shown the
-score that they got in my baseline evaluation at the end of my
-&lt;a href="/2026/07/why-do-openai-gpt2-weights-beat-mine-2-the-bugfix"&gt;last post&lt;/a&gt;, and their
-ranking in that eval.  Then for all models, there's the score from this new run, and
-the new ranking. The two new models are in
-bold.&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;Test loss&lt;/th&gt;
-  &lt;th&gt;IFT epochs&lt;/th&gt;
-  &lt;th&gt;Old IFT score&lt;/th&gt;
-  &lt;th&gt;Old IFT rank&lt;/th&gt;
-  &lt;th&gt;New IFT score&lt;/th&gt;
-  &lt;th&gt;New IFT rank&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;OpenAI weights: medium&lt;/td&gt;
-  &lt;td&gt;3.231442&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;42.41&lt;/td&gt;
-  &lt;td&gt;1&lt;/td&gt;
-  &lt;td&gt;42.91&lt;/td&gt;
-  &lt;td&gt;1&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;strong&gt;JAX, overtrained one long epoch&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;3.324953&lt;/td&gt;
-  &lt;td&gt;3&lt;/td&gt;
-  &lt;td&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;/td&gt;
-  &lt;td&gt;18.75&lt;/td&gt;
-  &lt;td&gt;5&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;strong&gt;JAX, overtrained two normal epochs&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;3.326482&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;&lt;/td&gt;
-  &lt;td&gt;&lt;/td&gt;
-  &lt;td&gt;18.45&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;3.418784&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;18.12&lt;/td&gt;
-  &lt;td&gt;5&lt;/td&gt;
-  &lt;td&gt;17.53&lt;/td&gt;
-  &lt;td&gt;8&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;3.420089&lt;/td&gt;
-  &lt;td&gt;5&lt;/td&gt;
-  &lt;td&gt;20.72&lt;/td&gt;
-  &lt;td&gt;3&lt;/td&gt;
-  &lt;td&gt;20.25&lt;/td&gt;
-  &lt;td&gt;3&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
-  &lt;td&gt;3.476802&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;16.98&lt;/td&gt;
-  &lt;td&gt;8&lt;/td&gt;
-  &lt;td&gt;16.73&lt;/td&gt;
-  &lt;td&gt;10&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;OpenAI weights: small&lt;/td&gt;
-  &lt;td&gt;3.499677&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;26.11&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-  &lt;td&gt;25.66&lt;/td&gt;
-  &lt;td&gt;2&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;1xrtx3090-stacked-interventions&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.538161&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;13.68&lt;/td&gt;
-  &lt;td&gt;11&lt;/td&gt;
-  &lt;td&gt;13.35&lt;/td&gt;
-  &lt;td&gt;14&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;8xa100m40-stacked-interventions-1&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.577761&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;9.81&lt;/td&gt;
-  &lt;td&gt;15&lt;/td&gt;
-  &lt;td&gt;10.33&lt;/td&gt;
-  &lt;td&gt;17&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x A100 40 GiB&lt;/td&gt;
-  &lt;td&gt;3.673623&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-  &lt;td&gt;19.45&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;19.76&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;1xrtx3090-baseline&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.683835&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-  &lt;td&gt;13.39&lt;/td&gt;
-  &lt;td&gt;12&lt;/td&gt;
-  &lt;td&gt;13.74&lt;/td&gt;
-  &lt;td&gt;13&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;code&gt;8xa100m40-baseline&lt;/code&gt;&lt;/td&gt;
-  &lt;td&gt;3.691526&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;14.64&lt;/td&gt;
-  &lt;td&gt;9&lt;/td&gt;
-  &lt;td&gt;14.11&lt;/td&gt;
-  &lt;td&gt;11&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x H100 80 GiB&lt;/td&gt;
-  &lt;td&gt;3.724507&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;13.84&lt;/td&gt;
-  &lt;td&gt;10&lt;/td&gt;
-  &lt;td&gt;13.84&lt;/td&gt;
-  &lt;td&gt;12&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x A100 80 GiB&lt;/td&gt;
-  &lt;td&gt;3.729900&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;11.30&lt;/td&gt;
-  &lt;td&gt;14&lt;/td&gt;
-  &lt;td&gt;11.13&lt;/td&gt;
-  &lt;td&gt;16&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Cloud FineWeb, 8x B200 160 GiB&lt;/td&gt;
-  &lt;td&gt;3.771478&lt;/td&gt;
-  &lt;td&gt;4&lt;/td&gt;
-  &lt;td&gt;11.82&lt;/td&gt;
-  &lt;td&gt;13&lt;/td&gt;
-  &lt;td&gt;11.22&lt;/td&gt;
-  &lt;td&gt;15&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb train&lt;/td&gt;
-  &lt;td&gt;3.943522&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;8.93&lt;/td&gt;
-  &lt;td&gt;16&lt;/td&gt;
-  &lt;td&gt;8.73&lt;/td&gt;
-  &lt;td&gt;18&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb-Edu extended train&lt;/td&gt;
-  &lt;td&gt;4.134991&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;17.10&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;17.42&lt;/td&gt;
-  &lt;td&gt;9&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;Local FineWeb-Edu train&lt;/td&gt;
-  &lt;td&gt;4.166892&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-  &lt;td&gt;17.28&lt;/td&gt;
-  &lt;td&gt;6&lt;/td&gt;
-  &lt;td&gt;17.61&lt;/td&gt;
-  &lt;td&gt;7&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;A note on the numbers: in my previous post, I mentioned that different LLM judge
-  runs differ due to randomness in how "strict" the judge model is.  You can see that
-  showing up here -- most of the old/new IFT scores are pretty close, within a point or so,
-  but they do differ, some rising and some falling.
-  This is with exactly the same set of responses for each model going into the judging program -- I used the
-  same JSON files for this table as I did for the previous one for the models that were in there
-  -- the only difference was that the new JSON files for the new models were added.&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;As you can see, the new models scored better than the "JAX, with MHA bias, no dropout"
-one, which is the most similar: it's the same model config, just trained for the
-Chinchilla-optimal number of tokens.  The one long epoch model got a score that was
-1.22 higher than that one, and the two-epoch one scored 0.92 higher.&lt;/p&gt;
-
-&lt;p&gt;However, my normal rule of thumb for comparing models in these evals is that differences
-of less than a point or two are &lt;em&gt;probably&lt;/em&gt; in the noise.&lt;/p&gt;
-
-&lt;p&gt;I did a second run of the LLM judge script -- it takes 20 minutes to run and costs
-a couple of dollars each time, so I don't like to run it all that often -- and this time
-around (just looking at the JAX numbers) things were a bit closer:&lt;/p&gt;
-
-&lt;table&gt;
-&lt;thead&gt;
-&lt;tr&gt;
-  &lt;th&gt;&lt;/th&gt;
-  &lt;th&gt;IFT score&lt;/th&gt;
-&lt;/tr&gt;
-&lt;/thead&gt;
-&lt;tbody&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;strong&gt;JAX, overtrained one long epoch&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;18.45&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;&lt;strong&gt;JAX, overtrained two normal epochs&lt;/strong&gt;&lt;/td&gt;
-  &lt;td&gt;19.45&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, with MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;18.30&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, no dropout&lt;/td&gt;
-  &lt;td&gt;21.04&lt;/td&gt;
-&lt;/tr&gt;
-&lt;tr&gt;
-  &lt;td&gt;JAX, no MHA bias, with dropout&lt;/td&gt;
-  &lt;td&gt;17.33&lt;/td&gt;
-&lt;/tr&gt;
-&lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;You can also see that the two new models have swapped places.&lt;/p&gt;
-
-&lt;p&gt;So I think that the principled approach here is to say that the improvement is
-almost certainly in the noise.  Perhaps if I did a very large number of runs of the judge
-I'd get something more solid -- but what I'm hoping for is something a little more
-unambiguous; some change that really moves the needle in an obvious way, clearly
-outside the noise.&lt;/p&gt;
-
-&lt;p&gt;That means that my second pre-registered prediction:&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;Both models would score better than my existing models in the IFT test (70%) but
-  would still be worse than GPT-2 small (90%).&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;...was half wrong.  I got the "worse than GPT-2 small" bit right, at least.
-But while the models did look a bit better than the most similar pre-existing model,
-(a) the difference was too small for me to be confident in it, and (b) they were
-still worse than "JAX, no MHA bias, no dropout" and "Cloud FineWeb, 8x A100 40 GiB".&lt;/p&gt;
-
-&lt;p&gt;What can we take away from this?&lt;/p&gt;
-
-&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
-
-&lt;p&gt;The hypothesis that I was trying to test was whether it was simply overtraining that
-made the OpenAI weights better at this IFT evaluation than mine.  Frustratingly, I can't say that
-the hypothesis was false.&lt;/p&gt;
-
-&lt;p&gt;Perhaps there is an improvement gained by overtraining --
-and the apparent gains which, on this experiment, appeared to be in the noise,
-would have been consolidated if I'd trained for even longer -- perhaps the 42 epochs
-on 10B tokens I suspect that the original weights were trained on?&lt;/p&gt;
-
-&lt;p&gt;But equally, perhaps there is no benefit, and further training would have left the
-models exactly where they were in the ranking.&lt;/p&gt;
-
-&lt;p&gt;Intuitively, you'd think that further training of a model would make it better at
-answering questions, at least up until the point that its parameters were "saturated"
-and could not absorb new information without forgetting something else.  After all, a
-model that's never seen "Jane Austen wrote 'Pride and Prejudice'" will never be able to
-successfully answer when it's asked who the book's author was.&lt;/p&gt;
-
-&lt;p&gt;But where that saturation point might be -- and indeed how much training you'd need to do to
-get there -- is not obvious.&lt;/p&gt;
-
-&lt;p&gt;It's an annoying place to finish this experiment, but I guess at least an inconclusive result
-is better than never having run it at all.  And it was at least good to see the test
-loss improvement that I expected.&lt;/p&gt;
-
-&lt;p&gt;But given the opportunity cost of tying up &lt;code&gt;poppy&lt;/code&gt; in four-day training runs, I think I'll
-look into other possibilities next.
-As I was running this experiment, something came up -- and I'll post about that soon.
-Luckily, this time it won't involve training more base models...&lt;/p&gt;
-
-&lt;p&gt;&lt;a href="/2026/08/why-do-openai-gpt2-weights-beat-mine-4-ift-dropout"&gt;Here's a link to the next post in this series: digging into dropout&lt;/a&gt;.&lt;/p&gt;
-
-&lt;div class="footnotes"&gt;
-&lt;hr /&gt;
-&lt;ol&gt;
-&lt;li id="fn-1"&gt;
-&lt;p&gt;It's also worth noting that by the same, um, token, the extra-large model, with
-1,542M parameters, was &lt;em&gt;undertrained&lt;/em&gt; because the Chinchilla-optimal number of
-tokens would have been about 31B.  Though that said, see later regarding epochs.&amp;#160;&lt;a href="#fnref-1" class="footnoteBackLink" title="Jump back to footnote 1 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-2"&gt;
-&lt;p&gt;You might wonder whether training over the same tokens repeatedly over multiple epochs "counts" for
-Chinchilla purposes.  Is training on 1.6B tokens over two epochs the same as
-training on 3.2B tokens over one?  "&lt;a href="https://arxiv.org/abs/2305.16264"&gt;Scaling Data-Constrained Language Models&lt;/a&gt;"
-poked into that in 2023, and from the abstract, came to the conclusion that you could do up to
-four epochs over the same data without losing much value, but after that
-returns diminished.  If that holds for GPT-2, and they really did train for 42
-epochs, maybe they wasted a lot of time?  I'll need to read that paper in full
-at some point.&amp;#160;&lt;a href="#fnref-2" class="footnoteBackLink" title="Jump back to footnote 2 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-
-&lt;li id="fn-3"&gt;
-&lt;p&gt;There is a table of results later on in this post where you'll be able to
-compare models easily.&amp;#160;&lt;a href="#fnref-3" class="footnoteBackLink" title="Jump back to footnote 3 in the text."&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-&lt;/li&gt;
-&lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">/2026/07/why-do-openai-gpt2-weights-beat-mine-3-overtraining</guid>
-      <pubDate>Fri, 31 Jul 2026 01:15:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
