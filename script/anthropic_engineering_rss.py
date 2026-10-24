@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 from datetime import datetime, timezone
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -69,16 +70,8 @@ class AnthropicEngineeringRSSGenerator:
         if not link:
             return None
 
-        url = link.get("href", "").strip()
-        if url.startswith("/"):
-            url = f"https://www.anthropic.com{url}"
-
-        if (
-            not url
-            or url in seen_urls
-            or "/engineering/" not in url
-            or url.rstrip("/") == self.base_url
-        ):
+        url = self._normalize_article_url(link.get("href", ""))
+        if not url or url in seen_urls:
             return None
 
         title = self._extract_title(card)
@@ -103,12 +96,23 @@ class AnthropicEngineeringRSSGenerator:
             "date_text": date_text,
         }
 
+    def _normalize_article_url(self, href):
+        url = urlsplit(urljoin(self.base_url, href.strip()))
+        if url.scheme != "https" or url.netloc != "www.anthropic.com":
+            return None
+        if not re.fullmatch(r"/(?:engineering|research)/[^/]+/?", url.path):
+            return None
+        return url._replace(path=url.path.rstrip("/"), query="", fragment="").geturl()
+
     def _find_article_links(self, card):
         article_links = []
+        seen_urls = set()
         for link in card.find_all("a", href=True):
-            href = link.get("href", "").strip()
-            if href.startswith("/engineering/"):
+            # Engineering posts now use /research/ URLs on the team listing.
+            url = self._normalize_article_url(link.get("href", ""))
+            if url and url not in seen_urls:
                 article_links.append(link)
+                seen_urls.add(url)
         return article_links
 
     def _extract_title(self, card):
@@ -194,6 +198,11 @@ class AnthropicEngineeringRSSGenerator:
         return feed
 
     def generate_rss(self, articles_data):
+        if not articles_data:
+            raise ValueError(
+                "No Anthropic Engineering articles found; refusing to overwrite the RSS feed."
+            )
+
         feed = self.create_feed()
 
         for article_data in articles_data:
