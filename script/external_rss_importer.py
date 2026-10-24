@@ -575,8 +575,11 @@ class ExternalRSSImporter:
                     if title is None or link is None:
                         continue
 
-                    title_text = title.text if title is not None else ''
-                    link_text = link.text if link is not None else ''
+                    title_text = (title.text or '').strip()
+                    link_text = (link.text or '').strip()
+                    if not title_text or not link_text:
+                        print("Warning: Skipping RSS item missing a title or link")
+                        continue
                     description_text = description.text if description is not None else title_text
                     pub_date_text = pub_date.text if pub_date is not None else None
                     guid_text = guid.text if guid is not None else link_text
