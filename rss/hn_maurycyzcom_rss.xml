@@ -5,7 +5,188 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Tue, 27 Oct 2026 23:41:44 +0000</lastBuildDate>
+    <lastBuildDate>Wed, 28 Oct 2026 04:52:19 +0000</lastBuildDate>
+    <item>
+      <title>Some thoughts on hosting email</title>
+      <link>https://maurycyz.com/misc/email_thoughts/</link>
+      <description>&lt;!-- mksite: start of content --&gt;
+&lt;p&gt;
+
+Generally speaking, email isn't as hard as its reputation would suggest.
+Yes, big-tech providers will occasionally send my messages to spam...
+but paying for commercial email doesn't guarantee delivery:
+emails within a single provider are generally safe, but in my experience, big-tech to other big-tech has a ~75% chance. 
+&lt;/p&gt;&lt;p&gt;
+Because of this, having my own mail server is great for piece of mind:
+I can be sure that anyone can send me an email without it mysteriously vanishing.
+My reply might go to spam, but at that point we're already in communication and can sort it out.
+&lt;!-- snip --&gt;
+&lt;/p&gt;
+&lt;p&gt;
+A softer version of self hosting is to keep a big-tech account, but only use it for initiating conversations.
+Point the "reply-to" header at a server you run, and give that address when people ask for contact details.
+&lt;/p&gt;&lt;p&gt;
+Since replies to real emails never go to spam, this provides the best of both worlds:
+maximizing the chance that someone else will get your message,
+while also maximizing the chance that you will get theirs. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Receiving email&lt;/em&gt; requires:
+&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;A publicly routable IPv4 address&lt;/li&gt;
+  &lt;li&gt;Any server: good uptime is not required.&lt;/li&gt;
+  &lt;li&gt;A domain [optional]&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;
+Despite it being 2026, many mail servers still don't support IPv6:
+if you have a good ISP, it should be possible to get a public IPv4 address arranged.
+Otherwise, the only real option is to rent space in a datacenter, which will cost some money.
+&lt;/p&gt;&lt;p&gt;
+(Note, there's no requirement for the VPS to actually run the mail daemon:
+It's possible to have it forwarding traffic to a box in your house)
+&lt;/p&gt;&lt;p&gt;
+The server itself doesn't have to be anything special.
+A "big" email is only a few megabytes, and people only send a few messages per day.
+However, disk space may be a consideration if you plan on having multiple users.
+&lt;/p&gt;&lt;p&gt;
+Mailer daemons will retry message delivery, and only give up after days of downtime.
+If it does, the sender will get a failure notification:
+emails will never be dropped silently. 
+&lt;/p&gt;&lt;p&gt;
+Regarding domains,
+"ihavenoname@[65.109.172.162]" is a perfectly valid email address.
+However, doing this ties your identity to your hosting provider or ISP, which is not ideal.
+&lt;/p&gt;&lt;p&gt;
+Buying, or rather renting, a domain costs money.
+It's not a huge amount of money (around 1 $/month), but it is a significant commitment.
+If you let a domain lapse, someone else can buy it and take over your old address.
+I prefer to think of the cost as $800 per lifetime:
+not a prohibitive amount, but you should think twice before getting yet-another domain for a sideproject.
+&lt;/p&gt;&lt;p&gt;
+(Just remember that email needs an MX record)
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;Sending email&lt;/em&gt; requires:
+&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;An IP address with a PTR record&lt;/li&gt;
+  &lt;li&gt;A domain&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;
+The domain is unavoidable here, because you'll need to make a few DNS records to prove the moral character of your packets.
+Specifically, you'll need SPF and DKIM.
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;h-c&gt;; SPF record&lt;/h-c&gt;
+&lt;h-s&gt;@&lt;/h-s&gt; TXT &lt;h-v&gt;"v=spf1 ip4:65.109.172.162 ip6:2a01:4f9:c011:841a::1 -all"&lt;/h-v&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+SPF tells receiving servers to accept mail from particular IP addresses and reject everything else.
+Importantly, this means if you have multiple different addresses,
+the mailer daemon will have to be configured to use a specific one.
+&lt;/p&gt;&lt;p&gt;
+Most servers will handle a missing SPF record as "deny everything", which is sensible:
+otherwise, even if someone had SPF at root, bad actors could spoof emails from a non-existent subdomains.
+&lt;/p&gt;&lt;p&gt;
+The second authentication mechanism is DKIM, which uses a cryptographic signing key published through DNS.
+Here's mine, but you will need to generate your own:
+&lt;/p&gt;
+&lt;pre&gt;
+&lt;h-s&gt;2020._domainkey&lt;/h-s&gt; TXT &lt;h-v&gt;"v=DKIM1;h=sha256;k=rsa;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBi
+QKBgQDcysWHfXhdjsK3jWRnUKa3cdNF7gfl0EP/Xe2r5Ixqp7htPRVx7sntLgF1S5fODBM9o9xWSTwu
+TuuFF0DLvkvi2fiddiSFa+0IXMb7sevhYIGha6Ewpk5h4vHkRIEGG7MDTlnXovgQpq5Q6MUymU6Z+Or
+H6xXBaiwf8wOfZtRIYwIDAQAB"&lt;/h-v&gt;
+&lt;/pre&gt;
+&lt;p&gt;
+&lt;/p&gt;&lt;p&gt;
+Most providers also require reverse DNS on the origin IP address.
+This doesn't have to be the same domain as you are sending email from,
+but it should be a public hostname associated with your server.
+&lt;/p&gt;&lt;p&gt;
+&lt;h1&gt;Dealing with spam:&lt;/h1&gt;
+&lt;/p&gt;&lt;p&gt;
+Spam hasn't been as much of a problem as I expected, despite my near-worst case setup:
+a catchall email and a contact address listed on a public website.
+All I've needed to deal with spam is:
+&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;SPF checking, but not enforcement. (default allow)&lt;/li&gt;
+  &lt;li&gt;Light email obfuscation.&lt;/li&gt;
+  &lt;li&gt;A blacklist of 12 domains and IP addresses&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;
+&lt;em&gt;I'm not particularly worried&lt;/em&gt; about the spoofing potential of allowing unauthenticated messages since I have infinite addresses;
+If I get an email to my blog's comment box purporting to be a bill from my hosting provider,
+then I know it's fake regardless of what's in the "From" field or message body.
+&lt;/p&gt;&lt;p&gt;
+However, this relaxed SPF does still filter out a lot of the spam:
+most of the particularly obnoxious spammers forge emails from well
+known-domains which do have an SPF record.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;There are lots of wacky solutions&lt;/em&gt; for email obfuscation:
+images, javascript initiated network requests, encryption, etc, etc.
+In practice, 99% of spam bots don't parse HTML and can be thrown off by something as simple as:
+&lt;/p&gt;&lt;p&gt;
+&lt;pre&gt;
+&lt;h-c&gt;&amp;lt;!-- A random comment --&amp;gt;&lt;/h-c&gt;
+blog@maurycyz&lt;h-c&gt;&amp;lt!--.example--&amp;gt;&lt;/h-c&gt;.com
+
+&lt;h-c&gt;&amp;lt;!-- Or needless percent encoding --&amp;gt;&lt;/h-c&gt;
+&amp;lt;&lt;h-n&gt;a&lt;/h-n&gt; &lt;h-s&gt;href&lt;/h-s&gt;=&lt;h-v&gt;mailto:blog@&lt;h-e&gt;%6d&lt;/h-e&gt;aurycyz.com&lt;/h-v&gt;&amp;gt;email&amp;lt/&lt;h-n&gt;a&lt;/h-n&gt;&amp;gt;
+&lt;/pre&gt;
+&lt;/p&gt;&lt;p&gt;
+This works in every browser, is compatible with screen readers and not too hard to figure out by hand.
+More extreme measures would also work, but why bother?
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;With blacklists&lt;/em&gt;, there is a very long tail needed to get rid of all spam,
+but it doesn't take much at all to get it down to tolerable levels.
+For me, it was enough to block seven domains and five IP addresses (not address blocks) to get it down to around 3 messages per week:
+I think that's a sensible price for being sure nothing important will get caught up.
+&lt;/p&gt;&lt;p&gt;
+&lt;h1&gt;Security:&lt;/h1&gt;
+&lt;/p&gt;&lt;p&gt;
+Getting your email compromised is bad.
+Not only does it have a lot of personal information, most services run password resets and account recovery over email.
+&lt;/p&gt;&lt;p&gt;
+Some attacks are technical, but many aren't:
+your server password should not be "password123".
+If you don't trust yourself to use a good password, set up key-based for authentication.
+&lt;/p&gt;&lt;p&gt;
+In terms of defending against exploits, the best thing to do is keep everything up to date and isolated:
+&lt;/p&gt;&lt;p&gt;
+Setup automatic updates and check back a moth later to make sure they work.
+Services should be run as separate unprivileged users:
+if your web server gets popped, the attacker should not be able to read your email.
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;One thing that is unique to email&lt;/em&gt; is just how aggressive people are be when blacklisting IPs:
+if your server gets used to send spam, good luck recovering any reputation.
+Because of this, it's a very good idea to lock down outgoing network traffic.
+&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;A web server doesn't need to make any outgoing connections.&lt;/li&gt;
+  &lt;li&gt;A minecraft server needs HTTPS and DNS to authenticate users, but should not have access to anything else.&lt;/li&gt;
+  &lt;li&gt;Only the mail daemon needs outgoing port 25 access.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;
+(Also, make sure to lock down locally submitting email)
+&lt;/p&gt;&lt;p&gt;
+Reputation aside, this is good security practice.
+Remember log4shell, that trivially exploitable RCE against Java applications?
+It requires downloading a payload from the attacker's server, so proper firewalling makes it impossible to exploit.
+Additionally, almost all malware opens up a communication channel over the internet:
+a crypto miner needs to download the blockchain state, a stealer needs to upload the stolen data...
+&lt;!--
+&lt;/p&gt;&lt;p&gt;
+If someone pops say, a PHP worker,
+but they can't touch anything or communicate with the outside world,
+the worst they can really do is deface your website...
+and they can be kicked out by restarting the service.
+--&gt;
+&lt;/p&gt;
+&lt;!-- mksite: end of content --&gt;
+				</description>
+      <guid isPermaLink="true">http://maurycyz.com/misc/email_thoughts/</guid>
+      <pubDate>Mon, 26 Oct 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>The indicators of a quality website (somewhat silly)</title>
       <link>https://maurycyz.com/misc/quality/indicators.html</link>
@@ -545,251 +726,6 @@ Don't expect better photos or more measurements for a while
 				</description>
       <guid isPermaLink="true">http://maurycyz.com/misc/rocks3/</guid>
       <pubDate>Tue, 25 Aug 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>You have been mislead about lightbulbs</title>
-      <link>https://maurycyz.com/misc/tungsten/</link>
-      <description>&lt;!-- mksite: start of content --&gt;
-&lt;p&gt;
-
-There's a story that goes something like this:
-&lt;/p&gt;&lt;p&gt;
-&lt;blockquote&gt;
-In 1925, lightbulb manufactures secretly colluded to standardized lifespans at 1,000 hours.
-They would test each other's products to ensure compliance.
-&lt;/blockquote&gt;
-&lt;/p&gt;&lt;p&gt;
-This is true.
-&lt;/p&gt;&lt;p&gt;
-&lt;blockquote&gt;
-At the time, many bulbs lasted longer than one thousand hours.
-&lt;/blockquote&gt;
-&lt;/p&gt;&lt;p&gt;
-This is true.
-&lt;/p&gt;&lt;p&gt;
-&lt;blockquote&gt;
-Therefore, this must have been done so that people would always need to buy more light bulbs.
-&lt;/blockquote&gt;
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;This isn't quite right&lt;/em&gt;, but it's the type of wrong that cites its sources and hides in the part you'd never think to fact check:
-&lt;/p&gt;&lt;p&gt;
-The assumption that a longer lasting lightbulb is a good product. 
-&lt;/p&gt;&lt;p&gt;
-In truth, increasing the lifespan of a bulb makes it worse in every other way...
-but people think they want a long lasting lightbulb:
-the purpose of standardizing was (primarily) to avoid a race to the bottom.
-&lt;/p&gt;&lt;p&gt;
-&lt;!-- Bulb physics --&gt;
-&lt;/p&gt;
-&lt;p&gt;
-&lt;em&gt;A old-school lightbulb is a rather simple device&lt;/em&gt;:
-&lt;/p&gt;&lt;p&gt;
-A thin tungsten wire (~20 &amp;mu;m) sealed inside a glass envelope to protect it from air.
-When current is applied, the wire gets white hot and starts glowing.
-&lt;/p&gt;&lt;p&gt;
-The most important parameter of a lightbulb is how hot that wire gets:
-this controls the peak emission wavelength (color) and brightness of the lamp.
-&lt;/p&gt;&lt;p&gt;
-Room temperature objects do emit light (this is how thermal cameras work), 
-but it's at the ~10 &amp;mu;m range instead of the 400 nm - 700 nm light that we can see.
-&lt;/p&gt;&lt;p&gt;
-In order to put the emission peak in the visible spectrum, the filament would need to run at ~5700 &amp;deg;C
-&lt;/p&gt;&lt;p&gt;
-... that is, the temperature of &lt;b&gt;the sun&lt;/b&gt;.
-&lt;/p&gt;&lt;p&gt;
-No metal can survive these conditions:
-Tungsten melts at "only" 3422 &amp;deg;C.
-&lt;/p&gt;
-&lt;details&gt;
-&lt;summary&gt;Filament materials:&lt;/summary&gt;
-&lt;p&gt;
-Since it has the highest melting point of any metal, tungsten is the obvious choice for filaments.
-However, the metal is quite brittle and drawing it into a wire isn't easy.
-&lt;/p&gt;&lt;p&gt;
-The first commercialized lamps used carbon filaments that were made by charring plant fibers.
-However, the carbon would evaporate at fairly modest temperatures ~2000 &amp;deg;C.
-&lt;/p&gt;&lt;p&gt;
-Tantalum filaments were briefly produced during the 1900s, because the metal was easier to draw into a wire than tungsten.
-These were the first lightbulbs that could actually be left on at night, although they were quickly replaced with tungsten manufacturing improved.
-&lt;/p&gt;&lt;p&gt;
-There ware also some experiments using zirconium dioxide ceramics, which become conductive when heated.
-These allowed lamps to operate in air (obviating the need for a vacuum pump and &lt;a href=/projects/glass/1/&gt;glass seals&lt;/a&gt;), but were limited by its melting point of 2,700 &amp;deg;C.
-&lt;/p&gt;
-&lt;/details&gt;
-&lt;p&gt;
-&lt;em&gt;Since any filament must run below its melting point&lt;/em&gt;, the peak emission is always in the infrared.
-&lt;/p&gt;&lt;p&gt;
-This means that only the extreme high-energy edge of the spectrum is useful for illumination,
-so a small increase in temperature will make a lamp orders of magnitude more efficient.
-Also, since this increases the average energy of the atoms, the lamp is able produce shorter wavelengths:
-resulting in a whiter and less depressing glow.
-&lt;/p&gt;&lt;p&gt;
-The snag is that when a metal is close to its melting point, the atoms are barely holding together:
-&lt;/p&gt;&lt;p&gt;
-A hot tungsten filament slowly falls apart as the metal crystals slide past each other.
-Additionally, atoms can evaporate from the surface until there's no wire left.
-&lt;/p&gt;&lt;p&gt;
-The rate of both of these processes increases with temperature,
-so there's a fundamental trade off between color/efficiency and lifespan. 
-&lt;/p&gt;&lt;p&gt;
-&lt;!-- That hundred year lightbulb --&gt;
-&lt;em&gt;The lightbulb everyone always cites in the story&lt;/em&gt; is hanging in a California fire department.
-It's been running nearly continuously for over 120 years and racked up over a million hours of operation.
-&lt;/p&gt;&lt;p&gt;
-Impressive right?
-&lt;/p&gt;&lt;p&gt;
-What almost no one talks about is that it's hardly even glowing!
-&lt;/p&gt;&lt;p&gt;
-&lt;img src=/misc/tungsten/centenial2.jpg alt="A carbon filament lamp handing from a pendant. The bulb is dirty and the filament glows a dim orange."&gt;
-&lt;center&gt;Photo taken by Wikipedia user Rjaerial&lt;/center&gt;
-&lt;/p&gt;&lt;p&gt;
-Despite nominally being a 60 W lamp, it draws only 4 watts...
-and is a lot dimmer than you'd expect from a 4 W lamp due to its poor efficiency.
-&lt;/p&gt;&lt;p&gt;
-There isn't any documentation, but in all likelihood, the bulb was made wrong and ended up having a very high filament resistance.
-That's why it was sold for as a night light, because it wasn't usable for anything else.
-&lt;/p&gt;&lt;p&gt;
-&lt;!-- Cost tradeoffs --&gt;
-&lt;em&gt;Early bulbs (like that one) were handmade&lt;/em&gt;, and quite expensive.
-Because of this, there were universally optimized for long lives.
-&lt;/p&gt;&lt;p&gt;
-This resulted in light isn't anywhere near white, and a an efficiency that was a tiny fraction of a modern incandescent lamp.
-(which are also terrible by any objective standards)
-&lt;/p&gt;&lt;p&gt;
-Once the production process was automated,
-new bulbs cost pennies, so it made sense to optimize them to work well...
-because less efficient bulbs cost more money to operate:
-&lt;/p&gt;&lt;p&gt;
-Going off modern day prices, electricity costs around 0.10 [$/kW*h], so a 60 W lamp will consume 6$ of electricity over a 1,000 hour lifespan.
-Considering that such a lamp only costs around 3$, installing one that lasts longer but uses more power would be silly.
-&lt;/p&gt;&lt;p&gt;
-&lt;!-- No one makes longer lasting bulbs today --&gt;
-&lt;em&gt;Case in point&lt;/em&gt;, despite the cartel only lasting for 14 years,
-modern (non-halogen, incandescent) bulbs still last for between 500 to 2,500 hours,
-a range that includes the cartel's 1,000 hour standard. 
-&lt;/p&gt;&lt;p&gt;
-Instead of "making bulbs last longer", manufacturers spent huge amounts of time and money developing entirely new technology:
-fluorescent and LED lamps.
-Because these don't use a wire on the very edge of melting, they can be made to work well and last a long time.
-&lt;/p&gt;&lt;p&gt;
-Of course, specialized lamps have different requirements:
-&lt;/p&gt;&lt;p&gt;
-In photography, a truly white light is desirable, which leads to specialized "photoflood" bulbs that only last for a few hours.
-In the other direction, many indicator lamps are designed for 100,000 hours because they are difficult to replace.
-&lt;/p&gt;&lt;p&gt;
-&lt;!-- Asside: why standardize --&gt;
-&lt;em&gt;Ok, but what's with the testing&lt;/em&gt;?
-&lt;/p&gt;&lt;p&gt;
-If long lived light bulbs are worse products, why would they need a cartel to enforce a the thousand hour limit?
-Well, it's because people think long lasting bulbs are a good product:
-&lt;/p&gt;&lt;p&gt;
-Lifespan is something everyone can understand, and has a direct effect on when you will have to go back to the store:
-if you saw two 60 W bulbs in a store, one claiming to last 400 hours and the other 2,000 hours, you'd probably get the longer lasting one without thinking about it.
-&lt;/p&gt;&lt;p&gt;
-It's not that efficiency is hard to understand, but most people aren't doing homework before buying lightbulbs...
-and it doesn't help that bulb packaging uses input power as a proxy for brightness,
-so the idea that two bulbs both labeled as "40 W" would have a different brightness is rather confusing.
-&lt;/p&gt;&lt;p&gt;
-As a result, competition was forcing lightbulb makers to produce worse products.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;To be clear&lt;/em&gt;, I'm not defending the Phoebus cartel:
-they absolutely engaged in price fixing and other anti-consumer practices, and
-it's difficult to imagine that profit wasn't a factor when deciding the 1,000 hour standard...
-but by nature, tungsten lamps are consumable items.
-&lt;!--
-saying lightbulbs were designed to fail is like saying fuel tanks are designed to run out.
-a railcar full of gas would run an engine for a very long time, but towing that behind your car would be terribly annoying.
---&gt;
-&lt;/p&gt;&lt;p&gt;
-I guess the the moral here is reality rarely fits into nice stories.
-Even something so obvious like "products designed to break are bad" often isn't &amp;mdash;
-every manufactured object is the result of hundreds of overlapping compromises, most of which are invisible to the end user.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Also&lt;/em&gt;, to preempt the orange site, I'm not saying that planned obsolescence doesn't exist.
-There are plenty of actual cases of products being made hard to repair so they can sell you another one.
-&lt;/p&gt;&lt;p&gt;
-... but lightbulbs aren't a good example.
-&lt;/p&gt;
-&lt;h1&gt;&lt;em&gt;Related&lt;/em&gt;:&lt;/h1&gt;
-&lt;link-box&gt;
-  &lt;ul&gt;
-    &lt;li&gt;
-      &lt;a href=https://www.mouser.com/datasheet/3/299/1/T_1_Wire_Terminal.pdf&gt;https://www.mouser.com/datasheet/3/299/1/T_1_Wire_Terminal.pdf&lt;/a&gt;:
-      Indicator lamp datasheet featuring a 100,000 hour rating.
-    &lt;/li&gt;
-    &lt;li&gt;
-      &lt;a href=https://www.1000bulbs.com/product/67291/STAG-PH213I.html&gt;https://www.1000bulbs.com/product/67291/STAG-PH213I.html&lt;/a&gt;:
-      A photography lamp that lasts 3 hours. (store page)
-    &lt;/li&gt;
-    &lt;li&gt;
-      &lt;a href="https://www.youtube.com/watch?v=zb7Bs98KmnY"&gt;https://www.youtube.com/watch?v=zb7Bs98KmnY&lt;/a&gt;: An excellent youtube video on this topic.
-    &lt;/li&gt;
-    &lt;li&gt;
-      &lt;a href=https://doi.org/10.1063/1.1657874&gt;https://doi.org/10.1063/1.1657874&lt;/a&gt;:
-      Lab tests of tungsten wire evaporation
-    &lt;/li&gt;
-    &lt;li&gt;
-      &lt;a href=https://doi.org/10.1016/s0016-0032(25)91062-9&gt;https://doi.org/10.1016/s0016-0032(25)91062-9&lt;/a&gt;:
-      Brightness and color of light as a function of temperature.
-    &lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/link-box&gt;
-
-&lt;hr&gt;
-&lt;h1 id=dubai&gt;PS. About &lt;em&gt;LED&lt;/em&gt; bulbs:&lt;/h1&gt;
-&lt;p&gt;
-I've gotten a few comments about "Dubai Lamps", which are LED filament-style bulbs that feature four times as many diodes as a standard one.
-Because of this, each diode is only running at a quarter it's rated power and stays a lot cooler.
-&lt;/p&gt;&lt;p&gt;
-First off, the claim that you're not allowed to buy these outside of Dubai is just wrong.
-You can: the only difference is that they are branded as "UltraEfficient" bulbs.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;The efficiency boost&lt;/em&gt; is real:
-&lt;/p&gt;&lt;p&gt;
-These lamps can achieve 200 lm/W instead of the usual ~100 lm/W, at the cost of being much more expensive to make.
-&lt;/p&gt;&lt;p&gt;
-&lt;em&gt;Lifespan is interesting&lt;/em&gt;:
-&lt;/p&gt;&lt;p&gt;
-I've taken apart quite a few failed LED bulbs, and almost none of them failed because of the diodes overheated.
-The near universal failure mode is heat-related damage to the power supply's input smoothing capacitor.
-&lt;/p&gt;&lt;p&gt;
-However, if you've even taken apart an non-filament-style LED bulb, it's clear manufacturer's know about the problem:
-The diodes are soldered to a metal heatsink, and the capacitor has very long leads to push it as far away from the diodes as physically possible.
-Filament-style ones can't do this, but put the power supply in the base in an attempt to remove heat via the metal threads. 
-&lt;/p&gt;&lt;p&gt;
-Since capacitor heating depends on total power dissipation, "dubai lamps" still have the advantage here, since they burn less power to produce a good amount of light...
-&lt;/p&gt;&lt;p&gt;
-&lt;!-- 
-... except that the only bulb that I've seen with failed diodes was a filament-style lamp.
-&lt;/p&gt;&lt;p&gt;
-These pack the diodes onto a long string, surround them in insulating rubber and suspended them in the air.
-Since there's nowhere for the heat to go, the LEDs get very hot even if they only dissipate a tiny amount of power!
-&lt;/p&gt;&lt;p&gt;
-Despite this, the filament-style ones aren't an unreasonable starting point for making an everlasting bulb:
-the same low thermal conductity that cooks the diodes keeps the capacitor nice and cool.
---&gt;
-&lt;em&gt;... although they still run quite hot&lt;/em&gt;:
-&lt;/p&gt;&lt;p&gt;
-The lightbulb form factor is just not good for heat dissipation.
-LED light fixtures can have much more effective cooling and very long lifespans.
-&lt;/p&gt;&lt;p&gt;
-As a bonus, these take up a lot less space which makes them easier to install...
-but are widely hated because if anything does go wrong, they are much harder to replace than bulbs.
-&lt;/p&gt;&lt;p&gt;
-The most eco-friendly LED light would work like fluorescent tubes:
-a separate power supply and emitter, with both being standardized and interchangeable...
-but the popularity of (similarly compromised) CFL bulbs shows how well that would go over.
-&lt;/p&gt;&lt;p&gt;
-In reality, a light must also be easy to install and comparable with existing wiring:
-the energy cost of LEDs is low enough that efficiency just isn't terribly important for most people. 
-&lt;/p&gt;&lt;p&gt;
-Again, it's complicated:
-"dubai lamps" are not exclusive to Dubai (although the branding is), and are still an imperfect design.
-&lt;/p&gt;
-&lt;!-- mksite: end of content --&gt;
-				</description>
-      <guid isPermaLink="true">http://maurycyz.com/misc/tungsten/</guid>
-      <pubDate>Thu, 30 Jul 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
