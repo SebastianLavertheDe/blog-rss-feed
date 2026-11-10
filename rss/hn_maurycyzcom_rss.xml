@@ -5,7 +5,7 @@
     <link>https://maurycyz.com/</link>
     <description>I sometimes post stuff here</description>
     <language>en</language>
-    <lastBuildDate>Tue, 10 Nov 2026 17:35:19 +0000</lastBuildDate>
+    <lastBuildDate>Tue, 10 Nov 2026 23:02:07 +0000</lastBuildDate>
     <item>
       <title>Horrible public key tricks:</title>
       <link>https://maurycyz.com/projects/badcert/</link>
@@ -153,7 +153,7 @@ The result is a functional, trusted certificate with a longish message hidden in
 Renewal is done by resumbitting the CSR and repeating the ACME chalange, which can be automated.
 &lt;/p&gt;&lt;p&gt;
 Base64 is missing most punctuation, but it provides the full ASCII alphabet,
-and the ~150 (RSA-2048) or ~320 (RSA-4096) avalable charaters provides plenty of space for jokes.
+and the ~150 (RSA-2048) or ~320 (RSA-4096) available charaters provides plenty of space for jokes.
 Another option would be to target the base16 displayed in most browser's certificate viewer:
 this would provide a lot more space (2 chars/byte instea of 0.75), but requires careful word choice. 
 &lt;/p&gt;&lt;p&gt;
@@ -370,7 +370,8 @@ Verifying sender addresses is not possible using the MX record, since there is n
 The simplest solution is to publish the sending address in a seperate DNS record:
 &lt;/p&gt;&lt;p&gt;
 &lt;pre&gt;
-@ TXT v=spf1 &lt;h-s&gt;ip4:&lt;/h-s&gt;&lt;h-v&gt;65.109.172.162&lt;/h-v&gt; &lt;h-s&gt;ip6:&lt;/h-s&gt;&lt;h-v&gt;2a01:4f9:c011:841a:b01d::1&lt;/h-v&gt; -all
+&lt;h-c&gt;; Needed on MAIL FROM domain&lt;/h-c&gt;
+@ TXT v=spf1 "&lt;h-s&gt;ip4:&lt;/h-s&gt;&lt;h-v&gt;65.109.172.162&lt;/h-v&gt; &lt;h-s&gt;ip6:&lt;/h-s&gt;&lt;h-v&gt;2a01:4f9:c011:841a:b01d::1&lt;/h-v&gt; -all"
 &lt;h-c&gt;; Roughly:&lt;/h-c&gt;
 &lt;h-c&gt;;   allow from 65.109.172.162&lt;/h-c&gt;
 &lt;h-c&gt;;   allow from 2a01:4f9:c011:841a:b01d::1&lt;/h-c&gt;
@@ -378,15 +379,39 @@ The simplest solution is to publish the sending address in a seperate DNS record
 &lt;/pre&gt;
 &lt;/p&gt;&lt;p&gt;
 However, that's not quite enough for the email empire.
-Big-tech also wants the email body to be signed with a cryptographic key published via a (DKIM) DNS record.
+Big-tech also wants the email body to be signed with a cryptographic key published via a DKIM record.
 This requires adding a step to sending mails, usually as a plugin for the MTA. 
 &lt;/p&gt;&lt;p&gt;
 While I rag on big-tech a lot, but this is actually a sensible policy:
 SPF can only verify the MAIL FROM, since forwarding the email will chance the source IP address. 
 DKIM signatures are attached to the message and can be used to verify the original sender (the "From" address) of a message,
-which is what's actually shown to the user in most cases.
+which is what's shown to the user in most cases.
 &lt;/p&gt;&lt;p&gt;
-&lt;em&gt;However&lt;/em&gt;, both of these don't actually prevent spam, because spammers can just set up a few TXT records.
+&lt;em&gt;There's also DMARC&lt;/em&gt;, which uses a DNS record to specify how to handle email that fails both SPF or DKIM checks.
+&lt;/p&gt;&lt;p&gt;
+&lt;pre&gt;
+&lt;h-c&gt;; Needed on "From: " domain&lt;/h-c&gt;
+_dmarc txt "&lt;h-s&gt;v&lt;/h-s&gt;=&lt;h-v&gt;DMARC1&lt;/h-v&gt;; &lt;h-s&gt;p&lt;/h-s&gt;=&lt;h-v&gt;none&lt;/h-v&gt;;"
+&lt;/pre&gt;
+&lt;/p&gt;&lt;p&gt;
+One sublety with DMARC is that it only considers SPF to be enough if the messages's MAIL FROM matches the From address.
+This means that forwarded email (mailing lists, etc) will need a signature from the original sender.
+Email originating at a server will not need a signature if SPF is set up correctly.
+&lt;/p&gt;&lt;p&gt;
+A policy (p=) of "none" means that failures should be handled with the reciever's default behavior.
+"reject" indicates that the sender is confident all legitimate email is authenticated:
+failing mail should be rejected.
+"quarantine" treats such maill as suspicious...
+although this is effectively an invitation to make your messages vanish into the spam folder.
+&lt;/p&gt;&lt;p&gt;
+DMARC also allows publishing an email address to receive aggregate reports about accepted messages (rua=), and detailed information about failing messages (ruf=).
+This can be useful, but will generate a lot of emails if some spammer picks your domain as the return address. 
+&lt;/p&gt;&lt;p&gt;
+In theory, creating a DMARC record should not be needed:
+since it doesn't actually provide any information for authenticating messages, no record is functionally equivalent to "p=none".
+However, some big-tech servers will reject email from domains without the record, so it's a good idea to create one. 
+&lt;/p&gt;&lt;p&gt;
+&lt;em&gt;However&lt;/em&gt;, these don't actually prevent spam, because spammers can just set up a few TXT records.
 Big-tech also requires the sender's HELO hostname to be consistent with their IP address, via both forward and reverse DNS.
 This helps prevent compromised devices from spewing out junk:
 a smart TV is unlikely to have a meaningful PTR record, and if it does, that hostname won't resolve back to it's address.
@@ -395,6 +420,24 @@ a smart TV is unlikely to have a meaningful PTR record, and if it does, that hos
 Of course, the solution is to pay a big-tech company money to relay your emails.
 If you don't like this, find a mail provider with more permissive rules:
 the only reason big-tech is able to keep their racket running that five or so companies control 99% of email.
+&lt;/p&gt;&lt;p&gt;
+In short, to send email to big tech, an MTA needs:
+&lt;/p&gt;&lt;p&gt;
+&lt;ul&gt;
+&lt;li&gt;A HELO hostname that matches with it's IP via forward DNS and reverse DNS&lt;/li&gt;
+&lt;li&gt;A SPF record on the envelope sender's domain&lt;/li&gt;
+&lt;li&gt;A DKIM signature matching the "From: " address&lt;/li&gt;
+&lt;li&gt;A DMARC record, even if the policy is set to none.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/p&gt;&lt;p&gt;
+Additionally, big-tech will consider your emails as "spam" unless you have a long history of sending and receiving email.
+This means that the first six months or so of running a new MTA can be rough:
+The best thing to do is give out your server's address as contact information.
+Receiving email from real users builds reputation without risking anything important ending up in the junk folder.
+&lt;/p&gt;&lt;p&gt;
+Of course, big-tech doesn't really care about spam: a lot of the junk arriving at my server is from bc.googleusercontent.com, and providers often insert their own ads into user's mailboxes.
+The real reason for making everyone do chores is to convince most people to pay a them for email services...
+which allows them to control who is allowed to send those users messages and reenforce their oligopoly. 
 &lt;/p&gt;&lt;p&gt;
 &lt;h2&gt;&lt;em&gt;The message&lt;/em&gt;&lt;/h2&gt;
 &lt;/p&gt;&lt;p&gt;
