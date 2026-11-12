@@ -5,7 +5,206 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Thu, 12 Nov 2026 09:33:06 +0000</lastBuildDate>
+    <lastBuildDate>Thu, 12 Nov 2026 18:02:24 +0000</lastBuildDate>
+    <item>
+      <title>SSA from bytecode: imperative pearl</title>
+      <link>https://bernsteinbear.com/blog/ssa-bytecode/?utm_source=rss</link>
+      <description>&lt;p&gt;Ufuk made a comment that he enjoyed my description of SSA from bytecode in
+&lt;a href="https://www.youtube.com/watch?v=h9_FyHYUhww"&gt;Aaron’s livestream with me&lt;/a&gt;.
+While filming the livestream—an intro to ZJIT internals—I got a little
+nervous that people would shy away from our 1900 line &lt;code class="language-plaintext highlighter-rouge"&gt;add_iseq_to_hir&lt;/code&gt;
+function. This function is responsible for converting CRuby’s stack based
+bytecode for the YARV virtual machine into a high-level SSA IR for ZJIT to
+analyze and optimize.&lt;/p&gt;
+
+&lt;p&gt;It takes bytecode that looks roughly like this:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;push 3
+push 4
+add
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;into SSA form, giving an SSA value to each stack slot, ish:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;v0 = const 3
+v1 = const 4
+v2 = add v0, v1
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;While our function is 2000 lines long because it handles a lot of specific
+opcodes and weird facts about those opcodes, the core of it is small. Here is
+that core.&lt;/p&gt;
+
+&lt;h2 id="what-if-a-stack-but-virtual"&gt;What if a stack, but virtual&lt;/h2&gt;
+
+&lt;p&gt;The bytecode assumes that when it is run, it will be operating on a stack. This
+means that every opcode has implicit stack inputs and implicit stack outputs.&lt;/p&gt;
+
+&lt;p&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;push 3&lt;/code&gt;, for example, has empty stack inputs and one stack output. By
+contrast, &lt;code class="language-plaintext highlighter-rouge"&gt;add&lt;/code&gt; has two stack inputs and one stack output. Some instructions
+such as &lt;code class="language-plaintext highlighter-rouge"&gt;nop&lt;/code&gt; are empty on both counts. As far as I can tell, all instructions
+have &lt;em&gt;at most&lt;/em&gt; one output.&lt;/p&gt;
+
+&lt;p&gt;These counts are known when looking at the bytecode: we can reason statically
+about how many inputs and outputs each opcode has. Some are variadic, such as
+&lt;code class="language-plaintext highlighter-rouge"&gt;send&lt;/code&gt; (call), but they come bearing an argument count in a nearby field.&lt;/p&gt;
+
+&lt;p&gt;Let’s model how the first example runs on the VM by adding a view of the stack
+after each instruction has run. The stack will be displayed as a list
+left-to-right, where the left is the bottom and the right is the top.&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;       ; []
+push 3 ; [3]
+push 4 ; [3, 4]
+add    ; [7]
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Because the input counts and output counts are static, when ZJIT reads through
+the bytecode, we can run the stack parts of it at compile-time.&lt;/p&gt;
+
+&lt;p&gt;We don’t &lt;em&gt;really&lt;/em&gt; need to know what the values on the stack are; we only need
+to keep track of where they came from. And when I say “where they came from”, I
+mean that we name each instruction and refer to its output by the instruction’s
+name. I like how the paper &lt;a href="/assets/img/design-hotspot-client-compiler.pdf"&gt;Design of the Java HotSpot™ Client Compiler for
+Java 6&lt;/a&gt; (PDF) puts it:&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;An instruction that loads or computes a value represents both the operation
+and its result, so that operands can be represented as pointers to previous
+instructions.&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;Here is what that looks like for the above example. In addition to the run-time
+stack, I will also write the SSA instruction to indicate that we are generating
+new code:&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;       ; []
+push 3 ; v0 = const 3
+       ; [v0]
+push 4 ; v1 = const 4
+       ; [v0, v1]
+add    ; v2 = add v0, v1
+       ; [v2]
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This is neat! We have transformed stack based bytecode to a form where
+instructions can directly reference their inputs. You may notice, though, that
+&lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;v2&lt;/code&gt; both end up in the same stack slot (the first element). This is
+why I said earlier “giving an SSA value to each stack slot, &lt;em&gt;ish&lt;/em&gt;”.&lt;/p&gt;
+
+&lt;p&gt;The difference between the two is &lt;em&gt;time&lt;/em&gt;. &lt;code class="language-plaintext highlighter-rouge"&gt;v0&lt;/code&gt; was in the operand stack at one
+point but now &lt;code class="language-plaintext highlighter-rouge"&gt;v2&lt;/code&gt; is. This is kind of why I describe SSA as “pushing time
+through the IR”.&lt;/p&gt;
+
+&lt;p&gt;Alright, let’s implement it.&lt;/p&gt;
+
+&lt;h2 id="implementation"&gt;Implementation&lt;/h2&gt;
+
+&lt;p&gt;We’ll start with the real (“concrete”) interpreter of the bytecode, which
+operates on a value stack. This gives you a simplified version of how Ruby
+internals work:&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;interpret&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bytecode&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="n"&gt;stack&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
+  &lt;span class="n"&gt;bytecode&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+    &lt;span class="k"&gt;case&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;
+    &lt;span class="k"&gt;in&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:push&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+      &lt;span class="n"&gt;stack&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt;
+    &lt;span class="k"&gt;in&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:add&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+      &lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;stack&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;
+      &lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;stack&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;
+      &lt;span class="n"&gt;stack&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;right&lt;/span&gt;
+    &lt;span class="k"&gt;else&lt;/span&gt;
+      &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="s2"&gt;"Unknown op &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
+    &lt;span class="k"&gt;end&lt;/span&gt;
+  &lt;span class="k"&gt;end&lt;/span&gt;
+  &lt;span class="n"&gt;stack&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+
+&lt;span class="n"&gt;bytecode&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;
+  &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:push&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+  &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:push&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+  &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:add&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+&lt;span class="p"&gt;]&lt;/span&gt;
+
+&lt;span class="nb"&gt;puts&lt;/span&gt; &lt;span class="n"&gt;interpret&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bytecode&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;  &lt;span class="c1"&gt;# 7&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Now let’s look at the abstract intepreter, which by contrast operates on an SSA
+stack. You can see that they are quite similar looking:&lt;/p&gt;
+
+&lt;div class="language-ruby highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;to_ssa&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bytecode&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+  &lt;span class="n"&gt;code&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
+  &lt;span class="n"&gt;stack&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
+  &lt;span class="n"&gt;bytecode&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;each&lt;/span&gt; &lt;span class="k"&gt;do&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;
+    &lt;span class="k"&gt;case&lt;/span&gt; &lt;span class="n"&gt;op&lt;/span&gt;
+    &lt;span class="k"&gt;in&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:push&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+      &lt;span class="nb"&gt;name&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="ss"&gt;:"v&lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;code&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="ss"&gt;"&lt;/span&gt;
+      &lt;span class="n"&gt;code&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="s2"&gt;"&lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="nb"&gt;name&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt; = const &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
+      &lt;span class="n"&gt;stack&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="nb"&gt;name&lt;/span&gt;
+    &lt;span class="k"&gt;in&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:add&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+      &lt;span class="nb"&gt;name&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="ss"&gt;:"v&lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;code&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;length&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="ss"&gt;"&lt;/span&gt;
+      &lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;stack&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;
+      &lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;stack&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nf"&gt;pop&lt;/span&gt;
+      &lt;span class="n"&gt;code&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="s2"&gt;"&lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="nb"&gt;name&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt; = add &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;left&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;, &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;right&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
+      &lt;span class="n"&gt;stack&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt; &lt;span class="nb"&gt;name&lt;/span&gt;
+    &lt;span class="k"&gt;else&lt;/span&gt;
+      &lt;span class="k"&gt;raise&lt;/span&gt; &lt;span class="s2"&gt;"Unknown op &lt;/span&gt;&lt;span class="si"&gt;#{&lt;/span&gt;&lt;span class="n"&gt;op&lt;/span&gt;&lt;span class="si"&gt;}&lt;/span&gt;&lt;span class="s2"&gt;"&lt;/span&gt;
+    &lt;span class="k"&gt;end&lt;/span&gt;
+  &lt;span class="k"&gt;end&lt;/span&gt;
+  &lt;span class="n"&gt;code&lt;/span&gt;
+&lt;span class="k"&gt;end&lt;/span&gt;
+
+&lt;span class="n"&gt;bytecode&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;
+  &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:push&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+  &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:push&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+  &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="ss"&gt;:add&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt;
+&lt;span class="p"&gt;]&lt;/span&gt;
+
+&lt;span class="nb"&gt;puts&lt;/span&gt; &lt;span class="n"&gt;to_ssa&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bytecode&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# v0 = const 3&lt;/span&gt;
+&lt;span class="c1"&gt;# v1 = const 4&lt;/span&gt;
+&lt;span class="c1"&gt;# v2 = add v0, v1&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;The &lt;code class="language-plaintext highlighter-rouge"&gt;name&lt;/code&gt;s could be anything as long as they are unique. For simplicity and
+ease of reading, I picked the length of the &lt;code class="language-plaintext highlighter-rouge"&gt;code&lt;/code&gt; array, which grows
+monotonically. This is an array/vector-based analogue to the real-pointer
+approach in the HotSpot paper from above.&lt;/p&gt;
+
+&lt;p&gt;Ta da! You have built a small abstract interpreter.&lt;/p&gt;
+
+&lt;p&gt;Now to make it global (to handle control flow) you need some kind of
+inter-basic-block data flow mechanism such as phi nodes or basic block
+parameters. Perhaps more on that in another post, but for now, you may enjoy
+&lt;a href="/blog/ssa/"&gt;my collection of other people’s writing&lt;/a&gt; about that.&lt;/p&gt;
+
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+
+&lt;p&gt;I originally wanted to title this blog post “you could have invented abstract
+interpretation” or similar, but I decided that I find those titles obnoxious
+because they assume the reader is or thinks of themself as unintelligent.
+Perhaps &lt;em&gt;we&lt;/em&gt; could have invented it.&lt;/p&gt;
+
+&lt;p&gt;The title is a bit of a tongue-in-cheek nod to the “functional pearl” papers
+that I always felt should be simpler than they are but leave me confused. And
+also kind of a nicer nod to &lt;a href="/img/appel-basic-block-arguments.pdf"&gt;SSA is Functional
+Programming&lt;/a&gt; (PDF) by Andrew Appel.&lt;/p&gt;
+
+&lt;h2 id="references"&gt;References&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href="/assets/img/ertl92.pdf"&gt;A New Approach to Forth Native Code Generation&lt;/a&gt; (PDF, 1992)&lt;/li&gt;
+  &lt;li&gt;&lt;a href="/assets/img/caffeine.pdf"&gt;Java Bytecode to Native Code Translation: The Caffeine Prototype and Preliminary Results&lt;/a&gt; (PDF, 1996) section 3.2&lt;/li&gt;
+  &lt;li&gt;&lt;a href="/assets/img/cacao.pdf"&gt;CACAO - A 64 bit JavaVM Just-in-Time Compiler&lt;/a&gt; (PDF, 1997) section 3&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://dl.acm.org/doi/pdf/10.1145/277650.277740"&gt;Fast, Effective Code Generation in a Just-In-Time Java Compiler&lt;/a&gt; (PDF, 1998) section 2.2, the mimic stack&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://dl.acm.org/doi/pdf/10.1145/304065.304113"&gt;The Jalapeño Dynamic Optimizing Compiler for Java™&lt;/a&gt; (PDF, 1999)&lt;/li&gt;
+  &lt;li&gt;&lt;a href="https://dspace.mit.edu/entities/publication/6896835b-c46b-4ebb-8ecc-1f5cbac364b5"&gt;Dynamic optimization through the use of automatic runtime specialization&lt;/a&gt; (1999) section 3.4&lt;/li&gt;
+&lt;/ul&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/ssa-bytecode/</guid>
+      <pubDate>Thu, 12 Nov 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>I am searching for a coffee alternative</title>
       <link>https://bernsteinbear.com/blog/coffee-alternative/?utm_source=rss</link>
@@ -3498,170 +3697,6 @@ working on tracking down the implementation… &lt;a href="#fnref:fil" class="r
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/inlining-heuristics/</guid>
       <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Checking assembly with Z3</title>
-      <link>https://bernsteinbear.com/blog/asm-z3/?utm_source=rss</link>
-      <description>&lt;p&gt;Short post today. New ZJIT contributor dak2 &lt;a href="https://github.com/ruby/ruby/pull/17165"&gt;submitted a
-PR&lt;/a&gt; to fix an overflow bug in fixnum
-division in ZJIT. We did the division fine, but lied about the type of the
-result in the case of dividing &lt;code class="language-plaintext highlighter-rouge"&gt;FIXNUM_MIN&lt;/code&gt; by &lt;code class="language-plaintext highlighter-rouge"&gt;-1&lt;/code&gt;. You can see how this is
-special-cased in CRuby:&lt;/p&gt;
-
-&lt;div class="language-c highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="kr"&gt;inline&lt;/span&gt; &lt;span class="kt"&gt;void&lt;/span&gt;
-&lt;span class="nf"&gt;rb_fix_divmod_fix&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;divp&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;VALUE&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;modp&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="p"&gt;{&lt;/span&gt;
-    &lt;span class="c1"&gt;// ...&lt;/span&gt;
-    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;x&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="n"&gt;y&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;divp&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;divp&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LONG2NUM&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;modp&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;modp&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LONG2FIX&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-        &lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
-    &lt;span class="p"&gt;}&lt;/span&gt;
-    &lt;span class="c1"&gt;// ...&lt;/span&gt;
-&lt;span class="p"&gt;}&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Since &lt;code class="language-plaintext highlighter-rouge"&gt;-FIXNUM_MIN&lt;/code&gt; (note the negative) does not fit in a fixnum, it gets
-promoted to a bignum. It’s one of two special cases in fixnum division that
-does not produce a fixnum, the other being dividing by zero (which produces an
-error).&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;$ irb
-irb(main):001&amp;gt; LONG_MAX = 2**63 - 1
-=&amp;gt; 9223372036854775807
-irb(main):002&amp;gt; FIXNUM_MAX = LONG_MAX / 2
-=&amp;gt; 4611686018427387903
-irb(main):003&amp;gt; LONG_MIN = -LONG_MAX - 1
-=&amp;gt; -9223372036854775808
-irb(main):004&amp;gt; FIXNUM_MIN = LONG_MIN / 2
-=&amp;gt; -4611686018427387904
-irb(main):005&amp;gt; (-FIXNUM_MIN) &amp;lt; FIXNUM_MAX
-=&amp;gt; false
-irb(main):006&amp;gt;
-$
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This is due to the numbers being &lt;a href="https://en.wikipedia.org/wiki/Two%27s_complement"&gt;two’s
-complement&lt;/a&gt; and therefore
-having more negative numbers than positive numbers (because of zero).&lt;/p&gt;
-
-&lt;p&gt;dak2’s proposed patch included a branchless test for this &lt;code class="language-plaintext highlighter-rouge"&gt;left == FIXNUM_MIN&lt;/code&gt; and
-&lt;code class="language-plaintext highlighter-rouge"&gt;right == -1&lt;/code&gt; case, making us leave JIT code and enter the interpreter rather
-than handle it inline. The patch encodes this branchless test as &lt;code class="language-plaintext highlighter-rouge"&gt;xor&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;xor&lt;/code&gt;,
-&lt;code class="language-plaintext highlighter-rouge"&gt;or&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;test&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;je&lt;/code&gt; in our platform-independent low-level IR (LIR):&lt;/p&gt;
-
-&lt;div class="language-rust highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;// Side exit on FIXNUM_MIN / -1, which overflows to a Bignum, not a Fixnum.&lt;/span&gt;
-&lt;span class="c1"&gt;// Branchless (left == FIXNUM_MIN &amp;amp;&amp;amp; right == -1): (left ^ MIN) | (right ^ -1) == 0.&lt;/span&gt;
-&lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;left_diff&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.xor&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;left&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;Opnd&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nn"&gt;VALUE&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;fixnum_from_isize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;RUBY_FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;)));&lt;/span&gt;
-&lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;right_diff&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.xor&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;right&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nn"&gt;Opnd&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;from&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nn"&gt;VALUE&lt;/span&gt;&lt;span class="p"&gt;::&lt;/span&gt;&lt;span class="nf"&gt;fixnum_from_isize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)));&lt;/span&gt;
-&lt;span class="k"&gt;let&lt;/span&gt; &lt;span class="n"&gt;combined&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.or&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;left_diff&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;right_diff&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-&lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.test&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;combined&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;combined&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
-&lt;span class="n"&gt;asm&lt;/span&gt;&lt;span class="nf"&gt;.je&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="nf"&gt;side_exit&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;jit&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;state&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;FixnumDivOverflow&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;I didn’t understand why those were equivalent. Rather than try and bang my head
-against it, I thought I’d let Z3 try. After all, I’ve been watching &lt;a href="https://pypy.org/posts/2024/08/toy-knownbits.html"&gt;CF have
-fun with it&lt;/a&gt; &lt;a href="https://pypy.org/posts/2024/07/finding-simple-rewrite-rules-jit-z3.html"&gt;for a couple
-years now&lt;/a&gt;.&lt;/p&gt;
-
-&lt;p&gt;Z3 is an SMT solver. The core trick to use Z3 as a “proof engine” that I
-learned from CF&lt;sup id="fnref:standard" role="doc-noteref"&gt;&lt;a href="#fn:standard" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt; is to make Z3 search for counter-examples by negating the
-condition:&lt;/p&gt;
-
-&lt;div class="language-python highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="c1"&gt;#!/usr/bin/env python3
-# /// script
-# requires-python = "&amp;gt;=3.13"
-# dependencies = [
-#     "z3-solver",
-# ]
-# ///
-&lt;/span&gt;
-&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;z3&lt;/span&gt;
-
-&lt;span class="n"&gt;WORD_SIZE&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;64&lt;/span&gt;
-&lt;span class="n"&gt;LONG_MAX&lt;/span&gt;   &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;BitVecVal&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="o"&gt;**&lt;/span&gt;&lt;span class="mi"&gt;63&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;WORD_SIZE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;LONG_MIN&lt;/span&gt;   &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;LONG_MAX&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
-&lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;LONG_MIN&lt;/span&gt; &lt;span class="o"&gt;/&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt;
-
-&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;prove&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cond&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
-    &lt;span class="n"&gt;solver&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Solver&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-    &lt;span class="k"&gt;assert&lt;/span&gt; &lt;span class="n"&gt;solver&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;check&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Not&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cond&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unsat&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;solver&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;model&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
-
-&lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;BitVec&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"left"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;WORD_SIZE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;BitVec&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;"right"&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;WORD_SIZE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="c1"&gt;# The original C condition
-&lt;/span&gt;&lt;span class="n"&gt;lhs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;z3&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;And&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;span class="c1"&gt;# The new branchless LIR
-&lt;/span&gt;&lt;span class="n"&gt;rhs&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;left&lt;/span&gt; &lt;span class="o"&gt;^&lt;/span&gt; &lt;span class="n"&gt;FIXNUM_MIN&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;|&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;right&lt;/span&gt; &lt;span class="o"&gt;^&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;
-&lt;span class="n"&gt;prove&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;lhs&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="n"&gt;rhs&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;This negation is required because the core model of Z3 is a machine that finds
-example values. This means that there is an implicit “exists” in front of your
-condition. To disprove this, Z3 needs to search all inputs. However, if you
-negate the condition, it becomes a “for all”. This means that in order to
-disprove the “for all”, Z3 only needs to find a single counterexample.&lt;/p&gt;
-
-&lt;div class="language-console highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;uv run prove_fixnum_min.py
-&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt;
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Z3 did not complain, so the new code must be fine. Just as a quick check, in
-case &lt;code class="language-plaintext highlighter-rouge"&gt;assert&lt;/code&gt; is turned off or something, I like to see tests fail. So after
-modifying one of the constants from &lt;code class="language-plaintext highlighter-rouge"&gt;-1&lt;/code&gt; to &lt;code class="language-plaintext highlighter-rouge"&gt;0&lt;/code&gt;:&lt;/p&gt;
-
-&lt;div class="language-console highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;uv run prove_fixnum_min.py
-&lt;span class="go"&gt;Traceback (most recent call last):
-&lt;/span&gt;&lt;span class="gp"&gt;  File "/path/prove_fixnum_min.py", line 26, in &amp;lt;module&amp;gt;&lt;/span&gt;&lt;span class="w"&gt;
-&lt;/span&gt;&lt;span class="go"&gt;    prove(lhs == rhs)
-    ~~~~~^^^^^^^^^^^^
-  File "/path/prove_fixnum_min.py", line 18, in prove
-    assert solver.check(z3.Not(cond)) == z3.unsat, solver.model()
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: [right = 18446744073709551615, left = 13835058055282163712]
-&lt;/span&gt;&lt;span class="gp"&gt;$&lt;/span&gt;&lt;span class="w"&gt;
-&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;Neat.&lt;/p&gt;
-
-&lt;h3 id="thanks"&gt;Thanks&lt;/h3&gt;
-
-&lt;p&gt;Thanks to &lt;a href="https://cfbolz.de/"&gt;CF Bolz-Tereick&lt;/a&gt; for reading and giving feedback
-on this post.&lt;/p&gt;
-
-&lt;h3 id="update"&gt;Update&lt;/h3&gt;
-
-&lt;p&gt;I tried running this with &lt;a href="https://github.com/BasisResearch/lean.py"&gt;&lt;code class="language-plaintext highlighter-rouge"&gt;lean_py&lt;/code&gt;&lt;/a&gt;
-after seeing a
-&lt;a href="https://bsky.app/profile/kirancodes.me/post/3mmhenqbcy22w"&gt;post&lt;/a&gt; about it. I
-installed &lt;code class="language-plaintext highlighter-rouge"&gt;elan&lt;/code&gt; and got a Lean installation going and manage to successfully
-&lt;code class="language-plaintext highlighter-rouge"&gt;import lean_py.z3 as z3&lt;/code&gt; and whatnot, but then I think compiling the Lean
-program failed somehow:&lt;/p&gt;
-
-&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;cedar% uv run prove_fixnum_min.py
-Traceback (most recent call last):
-  File "/home/max/Documents/code/bernsteinbear.com/prove_fixnum_min.py", line 28, in &amp;lt;module&amp;gt;
-    z3.prove(lhs == rhs)
-...
-...
-  File "/home/max/.cache/uv/environments-v2/prove-fixnum-min-67c8d67f8106c77d/lib/python3.13/site-packages/lean_py/utils.py", line 17, in run_command
-    raise RuntimeError(f"Command {args} exited with {res.returncode}: {stderr}")
-RuntimeError: Command ['lake', 'build'] exited with 1: error: build failed
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
-
-&lt;p&gt;If I have time, I will come back to this and try and figure out what the
-inscrutable error is. I’ve never used Lean before, though…&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:standard" role="doc-endnote"&gt;
-      &lt;p&gt;They note that this is a “standard technique” and they did not
-come up with it. &lt;a href="#fnref:standard" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/asm-z3/</guid>
-      <pubDate>Mon, 01 Jun 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
