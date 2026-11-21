@@ -5,7 +5,585 @@
     <link>https://bernsteinbear.com</link>
     <description>Latest posts from Max Bernstein's Blog</description>
     <language>en</language>
-    <lastBuildDate>Sat, 21 Nov 2026 17:17:07 +0000</lastBuildDate>
+    <lastBuildDate>Sat, 21 Nov 2026 22:57:31 +0000</lastBuildDate>
+    <item>
+      <title>Linear scan register allocation in Datalog</title>
+      <link>https://bernsteinbear.com/blog/lsra-datalog/?utm_source=rss</link>
+      <description>&lt;p&gt;&lt;em&gt;Note: This was supposed to be published basically immediately after PLDI 2026
+but I got hung up on posting it because I am not a Datalog native like Yannis
+is and I like understanding everything I post. But I guess that’s what expert
+co-authors are for, right? It’s a little rough but it’s been so long that the
+editing is holding up the posting. Happy reading.&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;Last year I wrote &lt;a href="/blog/linear-scan"&gt;my first register allocator&lt;/a&gt;: a small
+linear scan implementation in Ruby on SSA. Immediately after publishing the
+post, I had a call with &lt;a href="https://waleedkhan.name"&gt;Waleed Khan&lt;/a&gt; where he walked
+me through implementing the liveness fixpoint algorithm in Datalog. We talked
+about doing the whole register allocator in Datalog—how hard could it
+be?—but it never materialized.&lt;/p&gt;
+
+&lt;p&gt;This year, though, I met &lt;a href="https://yanniss.github.io/"&gt;Yannis Smaragdakis&lt;/a&gt; at
+PLDI. I did my usual thing, which is to nerd snipe other people into doing
+interesting projects: in this case, full linear scan in Datalog. Several short
+hours and several beers later, we have an implementation that I only mostly
+understand.&lt;/p&gt;
+
+&lt;p&gt;Overall this is an excellent demonstration of programming in Datalog. It shows
+tasks that Datalog handles very elegantly, such as the basic block computation
+and the liveness analysis, which are just a handful of lines.&lt;/p&gt;
+
+&lt;p&gt;At the same time, it shows how to do things that are complex to do in Datalog,
+namely the linear scan algorithm. The algorithm is very sequential,
+imperative-style. It has steps such as “remove an interval that expires”,
+“update the stack of intervals to evict the one ending last”, etc. All of these
+operations have to be simulated declaratively.&lt;/p&gt;
+
+&lt;p&gt;The final result contains perhaps the most advanced Datalog programming
+pattern, a forall emulation: iterating declaratively over a pre-determined set
+(in this case, to select the interval corresponding to the variable to spill).&lt;/p&gt;
+
+&lt;p&gt;Let’s get into program representation.&lt;/p&gt;
+
+&lt;h2 id="encoding"&gt;Encoding&lt;/h2&gt;
+
+&lt;p&gt;As with Waleed, we started off with the Wimmer2010 CFG example from the last
+two posts.&lt;/p&gt;
+
+&lt;!--
+# dot IN.dot -Tsvg -Nfontname=Monospace -Efontname=Monospace &gt; OUT.svg
+
+digraph G {
+node [shape=plaintext]
+B1 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
+&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B1(0:R10, 1:R11)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;2:jump →B2($1, R11)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;/TABLE&gt;&gt;];
+B1:s -&gt; B2:params:n;
+B2 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
+&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;B2(3:R12, 4:R13)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;5:cmp R13, $1&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;6:blt →B4, →B3&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;/TABLE&gt;&gt;];
+B2:s -&gt; B4:params:n;
+B2:s -&gt; B3:params:n;
+B3 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
+&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;7:B3()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;9:R14 = 8:mul R12, R13&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;11:R15 = 10:sub R13, $1&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="2"&gt;12:jump →B2(R14, R15)&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;/TABLE&gt;&gt;];
+B3:s -&gt; B2:params:n;
+B4 [label=&lt;&lt;TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"&gt;
+&lt;TR&gt;&lt;TD PORT="params" BGCOLOR="lightgray"&gt;13:B4()&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="0"&gt;15:R16 = 14:add R10, R12&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;TR&gt;&lt;TD ALIGN="left" PORT="1"&gt;16:ret R16&amp;nbsp;&lt;/TD&gt;&lt;/TR&gt;
+&lt;/TABLE&gt;&gt;];
+}
+--&gt;
+
+&lt;figure&gt;
+&lt;object class="svg" type="image/svg+xml" data="/assets/img/wimmer-lsra-cfg-numbered.svg"&gt;&lt;/object&gt;
+&lt;figcaption&gt;
+    &lt;p&gt;The graph from Wimmer2010 has come back! Again! Remember, we’re using block
+arguments instead of phis, so &lt;code class="language-plaintext highlighter-rouge"&gt;B1(R10, R11)&lt;/code&gt; defines R10 and R11 before the
+first instruction in B1.&lt;/p&gt;
+
+    &lt;p&gt;Additionally, we have numbered the instructions in the graph. For each
+instruction that defines a value, we have also given it two separate numbers:
+one number N at which it uses its inputs and one number N+1 at which it defines
+its output.&lt;/p&gt;
+
+    &lt;p&gt;We do this so that the logic can process one event at a time: the end of a
+liveness interval happens before the need to possibly allocate a register
+because a variable gets assigned. This is visible in labels 8 and 9 as well as
+14 and 15.&lt;/p&gt;
+
+    &lt;p&gt;We have similarly modified block parameters: we sequentialize assignment by
+picking different instruction indices for each block parameter in a block. This
+is visible in labels 0 and 1.&lt;/p&gt;
+  &lt;/figcaption&gt;
+&lt;/figure&gt;
+
+&lt;p&gt;This time, however, we encoded the program in terms of instructions instead of
+in terms of blocks: we modeled which instructions used which registers and
+def-ed which registers.&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;.type Block &amp;lt;: number
+.type Var &amp;lt;: symbol
+.type Instruction &amp;lt;: number
+
+// Input
+.decl var_use(insn:Instruction, var:Var)
+.decl var_def(insn:Instruction, var:Var)
+
+.decl jump(insn:Instruction, next:Instruction)
+.decl jumpi(insn:Instruction, next:Instruction, otherNext:Instruction)
+.decl ret(insn:Instruction)
+
+#define NUM_REGS 2
+
+// Facts: maintain the property that defs use a unique instruction so that
+// liveness intervals end before the def
+var_def(0, "R10").
+var_def(1, "R11").
+
+var_use(2, "R11").
+
+var_def(3, "R12").
+var_def(4, "R13").
+
+var_use(5, "R13").
+
+var_use(8, "R12").
+var_use(8, "R13").
+var_def(9, "R14").
+
+var_use(10, "R13").
+var_def(11, "R15").
+
+var_use(12, "R14").
+var_use(12, "R15").
+
+var_use(14, "R10").
+var_use(14, "R12").
+var_def(15, "R16").
+
+var_use(16, "R16").
+
+.decl min_instruction(insn:Instruction)
+min_instruction(-1).
+
+.decl max_instruction(insn:Instruction)
+max_instruction(16).
+
+jump(2, 3).
+jumpi(6, 7, 13).
+jump(12, 3).
+ret(16).
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;!--
+TODO explain `min_instruction`, `max_instruction`
+--&gt;
+
+&lt;p&gt;We also model the control-flow in terms of instructions: we have jumps between
+instructions from which we (in Datalog!) recover the basic block boundaries and
+control-flow graph (omitted for brevity). This is why we have &lt;code class="language-plaintext highlighter-rouge"&gt;jump(2, 3)&lt;/code&gt;
+(which means &lt;code class="language-plaintext highlighter-rouge"&gt;jump&lt;/code&gt; at instruction &lt;code class="language-plaintext highlighter-rouge"&gt;2&lt;/code&gt; targeting instruction &lt;code class="language-plaintext highlighter-rouge"&gt;3&lt;/code&gt;), &lt;code class="language-plaintext highlighter-rouge"&gt;ret(16)&lt;/code&gt;
+(&lt;code class="language-plaintext highlighter-rouge"&gt;ret&lt;/code&gt; at instruction &lt;code class="language-plaintext highlighter-rouge"&gt;16&lt;/code&gt;), etc.&lt;/p&gt;
+
+&lt;p&gt;Now that we have our program represented in Datalog, we can begin to compute
+what we need from it… like liveness information.&lt;/p&gt;
+
+&lt;h2 id="liveness"&gt;Liveness&lt;/h2&gt;
+
+&lt;p&gt;Since we complicated our input data a bit (variables are no longer def-ed in
+blocks but instead def-ed in their own instruction indices), we had to expand
+out liveness from the last post. Now we do a lot more in Datalog:&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;compute block boundaries (omitted for brevity)&lt;/li&gt;
+  &lt;li&gt;compute what instructions are in what block (omitted for brevity)&lt;/li&gt;
+  &lt;li&gt;compute the control-flow graph structure (omitted for brevity)&lt;/li&gt;
+  &lt;li&gt;compute live-in and live-out for each instruction (not block!)&lt;/li&gt;
+  &lt;li&gt;and finally, compute liveness intervals&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;Still, liveness is the most straightforward part of the implementation. There
+are 4 rules defining &lt;code class="language-plaintext highlighter-rouge"&gt;live_out&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;live_in&lt;/code&gt; in mutual recursion. These
+correspond to the standard data-flow equations in textbook definitions of
+liveness. (The transfer function is encoded as two rules for explicitness, to
+capture that a variable is live-in if it is used by the instruction, or if it
+was live-out and is not def-ed.)&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;live_out(insn, var) :-
+  block_succ(prev, succ),
+  block_head(succ, headinsn),
+  live_in(headinsn, var),
+  block_tail(prev, insn).
+
+live_in(insn, var) :-
+  var_use(insn, var).
+
+live_in(insn, var) :-
+  live_out(insn, var),
+  !var_def(insn, var).
+
+live_out(insn, var) :-
+  live_in(next, var),
+  next_in_block(insn, next).
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;This looks similar enough to the liveness implementation that Waleed and I did,
+but (as mentioned) handles instructions, not just blocks.&lt;/p&gt;
+
+&lt;p&gt;This only gives us the per-instruction sets, so to get the intervals, we need
+to extract the full extents of the interval for every variable: the earliest
+place it was known live and the latest place it was known live. We can use a
+&lt;code class="language-plaintext highlighter-rouge"&gt;max&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;min&lt;/code&gt; here because we compute this &lt;em&gt;only after&lt;/em&gt; the mutually
+recursive dataflow has settled.&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;// Liveness starts right after start, ends right before end
+.decl liveness_interval(start:Instruction, end:Instruction, var:Var)
+
+liveness_interval(start, end, var) :-
+  live_out(_, var),
+  start = min b : { live_out(b, var) },
+  end = max b : { live_in(b, var) }.
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Once we have intervals, we need to assign physical registers to the
+variables&lt;sup id="fnref:intervals" role="doc-noteref"&gt;&lt;a href="#fn:intervals" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;.&lt;/p&gt;
+
+&lt;h2 id="register-assignment"&gt;Register assignment&lt;/h2&gt;
+
+&lt;!--
+TODO clean up
+--&gt;
+
+&lt;p&gt;The difficult part of the computation is the linear scan register allocation
+itself. We encode this using a predicate &lt;code class="language-plaintext highlighter-rouge"&gt;reg_assignment&lt;/code&gt; which simulates what
+the algorithm does at every step, with a linear scan of instructions.&lt;/p&gt;
+
+&lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;// after instruction, this is the register assignment. Var = "none" is a possibility
+.decl reg_assignment(insn:Instruction, reg:Register, var:Var)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;At every
+instruction, the algorithm keeps the current contents of registers that we are
+allocating. Registers that are not currently encoding a variable are instead
+holding a pseudo-variable that corresponds to the register’s name. E.g., when
+register 0 is empty, it contains variable &lt;code class="language-plaintext highlighter-rouge"&gt;none_0&lt;/code&gt;. This encoding lets us
+phrase every decision as a comparison between variables. The actual choice of
+variable to spill, for instance, always prefers a “none” variable over a real
+one, and then between real variables it implements the usual linear scan
+policy: the spilled variable is the one whose liveness interval ends last.&lt;/p&gt;
+
+&lt;p&gt;Comments in the code explain all the cases that the algorithm needs to handle.&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;The assignment of values to registers is propagated if there is no liveness
+interval that ends and no new variable that is def-ed (i.e., assigned).&lt;/li&gt;
+  &lt;li&gt;When a liveness interval expires, the register holding the variable (if any)
+gets reset to a “none” variable.&lt;/li&gt;
+  &lt;li&gt;The interesting case is when we encounter a new variable def. We then need to
+decide which variable to spill, i.e., which register (if any) should best
+hold the def-ed variable. The policy for deciding on a victim variable is
+entirely self-contained and modular, captured by predicate
+&lt;code class="language-plaintext highlighter-rouge"&gt;better_victim_var&lt;/code&gt;, which pre-calculates the result of all possible variable
+comparisons.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;However, the interesting part is the forall emulation encoded in the rules for
+predicates &lt;code class="language-plaintext highlighter-rouge"&gt;best_victim_up_to_reg&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;all_reg_best_victim&lt;/code&gt;. (The latter is
+trivial to inline, but it’s kept for making the concept explicit.) The forall
+emulation iterates over all registers and keeps at every point in the iteration
+the current best victim variable. When we reach the final variable, we have the
+overall best victim.&lt;/p&gt;
+
+&lt;p&gt;Returning to the core algorithm, if the victim variable is the def-ed var
+itself, then all registers get carried over—the def-ed var does not receive a
+register.&lt;/p&gt;
+
+&lt;p&gt;If, however, the best victim is a variable that is currently held in a register
+then that register now gets assigned to the def-ed var, with all other
+registers copied over to the next instruction.&lt;/p&gt;
+
+&lt;p&gt;Forall emulation is an advanced Datalog coding pattern. It arises in all cases
+when a forall cannot be simply emulated as a “not exists”, because the
+predicates involved are defined in mutual recursion. From a complexity theory
+standpoint, the forall emulation pattern is essential for Datalog to be able to
+encode all PTIME algorithms. (Although realistic Datalog implementations
+include arithmetic and tuples, and hence are Turing-complete.) Without a
+forall-emulation, which is possible only via an underlying ordering of values,
+Datalog without extra features only expresses a subset of polynomial-time
+algorithms.&lt;/p&gt;
+
+&lt;p&gt;The final step of the algorithm just assigns a register to a variable if the
+variable can be held by the register for its entire lifetime. This is the
+simplest implementation of linear scan—one could also extend it to allow
+registers to hold a variable for a part of its lifetime.&lt;/p&gt;
+
+&lt;p&gt;Accordingly, there are many improvements to the implementation that one can
+perform, especially for efficiency. Currently iteration is done over all
+instructions, whereas it could instead jump from “interesting” to “interesting”
+instruction, i.e., defs and interval expirations, ignoring instructions that
+only copy over the register assignment. Additionally, the comparison between
+two variables to find the best victim can be done on demand, instead of
+calculating the result for all possible variable pairs up front. This would
+require a request-response programming pattern, where the current rules only
+fire in response to a request, i.e., only for variable pairs that truly need to
+be compared in the course of execution.&lt;/p&gt;
+
+&lt;h2 id="conclusion"&gt;Conclusion&lt;/h2&gt;
+
+&lt;p&gt;Datalog is fun. It’s not for everyone or everything. But I love nerd sniping
+people at conferences. Thank you to Yannis for playing along and writing half
+this article and being so patient for it to be published!&lt;/p&gt;
+
+&lt;p&gt;See the &lt;a href="https://gist.github.com/yanniss/c04e75faf8dc395a5055cdabe7c6e3d4"&gt;implementation&lt;/a&gt;.&lt;/p&gt;
+
+&lt;!--
+.type Block &lt;: number
+.type Var &lt;: symbol
+.type Instruction &lt;: number
+
+// Input
+.decl var_use(insn:Instruction, var:Var)
+.decl var_def(insn:Instruction, var:Var)
+
+.decl jump(insn:Instruction, next:Instruction)
+.decl jumpi(insn:Instruction, next:Instruction, otherNext:Instruction)
+.decl ret(insn:Instruction)
+
+#define NUM_REGS 2
+
+// Facts: maintain the property that defs use a unique instruction so that liveness intervals end
+// before the def
+var_def(0, "R10").
+var_def(1, "R11").
+
+var_use(2, "R11").
+
+var_def(3, "R12").
+var_def(4, "R13").
+
+var_use(5, "R13").
+
+var_use(8, "R12").
+var_use(8, "R13").
+var_def(9, "R14").
+
+var_use(10, "R13").
+var_def(11, "R15").
+
+var_use(12, "R14").
+var_use(12, "R15").
+
+var_use(14, "R10").
+var_use(14, "R12").
+var_def(15, "R16").
+
+var_use(16, "R16").
+
+.decl min_instruction(insn:Instruction)
+min_instruction(-1).
+
+.decl max_instruction(insn:Instruction)
+max_instruction(16).
+
+jump(2, 3).
+jumpi(6, 7, 13).
+jump(12, 3).
+ret(16).
+
+.type Register &lt;: number
+
+
+// Scaffolding
+.decl is_register(reg:Register)
+is_register(0).
+is_register(i+1) :- is_register(i), i &lt; NUM_REGS-1.
+
+.decl is_var(var:Var)
+is_var(var) :-
+  var_def(_, var); var_use(_, var).
+
+.decl is_none_var(var:Var)
+is_var(var),
+is_none_var(var) :-
+  is_register(reg),
+  var = cat("none",to_string(reg)).
+
+// Arbitrary total order on vars
+.decl higher_var(var:Var, higher:Var)
+higher_var(var, higher) :-
+  is_var(var),
+  is_var(higher),
+  ord(var) &lt; ord(higher).
+
+// Basic blocks
+.decl instruction_block(insn:Instruction, block:Block)
+instruction_block(0, as(0, Block)).
+
+instruction_block(head, as(head, Block)) :-
+  jump(_, head);
+  jumpi(_, head, _);
+  jumpi(_, _, head).
+
+instruction_block(prev + 1, head) :-
+  instruction_block(prev, head),
+  !jump(prev, _),
+  !jumpi(prev, _, _),
+  !ret(prev),
+  prev &lt; maxi,
+  max_instruction(maxi).
+
+.decl block_head(block:Block, insn:Instruction)
+block_head(block, as(block, Instruction)) :-
+  instruction_block(_, block).
+
+.decl block_tail(block:Block, insn:Instruction)
+block_tail(block, insn) :-
+  instruction_block(insn, block),
+  (jump(insn, _);
+   jumpi(insn, _, _);
+   ret(insn)).
+
+.decl next_in_block(insn:Instruction, next:Instruction)
+next_in_block(insn, insn+1) :-
+  instruction_block(insn, block),
+  instruction_block(insn+1, block).
+
+.decl block_succ(prev:Block, next:Block)
+block_succ(prev, next) :-
+  (jump(insn, nextInsn);
+   jumpi(insn, nextInsn, _);
+   jumpi(insn, _, nextInsn)),
+  instruction_block(insn, prev),
+  instruction_block(nextInsn, next).
+
+.decl live_out(insn:Instruction, var:Var)
+.decl live_in(insn:Instruction, var:Var)
+
+live_out(insn, var) :-
+  block_succ(prev, succ),
+  block_head(succ, headinsn),
+  live_in(headinsn, var),
+  block_tail(prev, insn).
+
+live_in(insn, var) :-
+  var_use(insn, var).
+
+live_in(insn, var) :-
+  live_out(insn, var),
+  !var_def(insn, var).
+
+live_out(insn, var) :-
+  live_in(next, var),
+  next_in_block(insn, next).
+
+// Liveness starts right after start, ends right before end
+.decl liveness_interval(start:Instruction, end:Instruction, var:Var)
+liveness_interval(start, end, var) :-
+  live_out(_, var),
+  start = min b : { live_out(b, var) },
+  end = max b : { live_in(b, var) }.
+
+.output liveness_interval
+
+// after instruction, this is the register assignment. Var = "none" is a possibility
+.decl reg_assignment(insn:Instruction, reg:Register, var:Var)
+.decl spilled_var(insn:Instruction, var:Var)
+
+// Initially all registers are free
+reg_assignment(minInsn, reg, cat("none",to_string(reg))) :-
+  min_instruction(minInsn),
+  is_register(reg).
+
+// Assignments are propagated if there is no def, no liveness expiration
+reg_assignment(insn+1, reg, var) :-
+  reg_assignment(insn, reg, var),
+  !var_def(insn, _),
+  !liveness_interval(_, insn, var),
+  !max_instruction(insn).
+
+// Register gets freed if there is liveness expiration. This cannot coincide with def.
+reg_assignment(insn+1, reg, cat("none",to_string(reg))) :-
+  reg_assignment(insn, reg, var),
+  liveness_interval(_, insn, var),
+  !max_instruction(insn).
+
+// If there is a def, consider spilling, if there's a better victim than the def-ed var
+spilled_var(insn+1, var),
+reg_assignment(insn+1, reg, defedVar) :-
+  all_reg_best_victim(insn, var),
+  reg_assignment(insn, reg, var),
+  var_def(insn, defedVar),
+  !max_instruction(insn).
+
+// The def-ed var is the best victim, keep the register assignment the same
+reg_assignment(insn+1, reg, var) :-
+  all_reg_best_victim(insn, defedVar),
+  reg_assignment(insn, reg, var),
+  var_def(insn, defedVar),
+  !max_instruction(insn).
+
+// The best victim is in a register, other regs than the best victim are just copied
+reg_assignment(insn+1, otherReg, otherVar) :-
+  all_reg_best_victim(insn, var),
+  reg_assignment(insn, reg, var),
+  reg_assignment(insn, otherReg, otherVar),
+  reg != otherReg,
+  !max_instruction(insn).
+
+.output reg_assignment
+
+// Forall emulation to find the best victim by iterating over all registers
+.decl all_reg_best_victim(insn:Instruction, victimVar:Var)
+all_reg_best_victim(insn, victimVar) :-
+  best_victim_up_to_reg(NUM_REGS-1, insn, victimVar).
+
+.decl best_victim_up_to_reg(upToReg:Register, insn:Instruction, victimVar:Var)
+best_victim_up_to_reg(0, insn, victimVar) :-
+  var_def(insn, defedVar),
+  reg_assignment(insn, 0, firstVar),
+  better_victim_var(firstVar, defedVar, victimVar).
+
+best_victim_up_to_reg(reg+1, insn, victimVar) :-
+  best_victim_up_to_reg(reg, insn, prevVictimVar),
+  reg_assignment(insn, reg+1, nextVar),
+  better_victim_var(nextVar, prevVictimVar, victimVar),
+  reg &lt; NUM_REGS-1.
+
+// General comparator between variables, to decide on a victim to spill.
+.decl better_victim_var(var:Var, otherVar:Var, victimVar:Var)
+// if one slot is empty (none var) and the other is not, then the empty one is a better victim
+better_victim_var(var, otherVar, var),
+better_victim_var(otherVar, var, var) :-
+  is_none_var(var),
+  is_var(otherVar),
+  !is_none_var(otherVar).
+
+// arbitrary ordering
+better_victim_var(var, otherVar, var),
+better_victim_var(otherVar, var, var) :-
+  is_none_var(var),
+  is_none_var(otherVar),
+  higher_var(var, otherVar).
+
+better_victim_var(var, otherVar, var),
+better_victim_var(otherVar, var, var) :-
+  liveness_interval(start1, end1, var),
+  liveness_interval(start2, end2, otherVar),
+  !is_none_var(var), // unnecessary?
+  !is_none_var(otherVar),  // unnecessary?
+  (end1 &gt; end2;
+   (end1 = end2, start1 &gt; start2)).
+
+/////// Final output
+.decl assignment(reg:Register, var:Var)
+assignment(reg, var) :-
+  reg_assignment(_, reg, var),
+  !spilled_var(_, var).
+
+.output assignment
+--&gt;
+&lt;div class="footnotes" role="doc-endnotes"&gt;
+  &lt;ol&gt;
+    &lt;li id="fn:intervals" role="doc-endnote"&gt;
+      &lt;p&gt;In other register allocator implementations and in the
+literature, we normally speak of assigning physical registers to
+&lt;em&gt;intervals&lt;/em&gt;, not to &lt;em&gt;variables&lt;/em&gt;. However, in this one-interval-per-variable
+implementation of linear scan, they are the same thing: a variable has only
+one location for its entire lifetime. &lt;a href="#fnref:intervals" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
+    &lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/div&gt;
+</description>
+      <guid isPermaLink="true">https://bernsteinbear.com/blog/lsra-datalog/</guid>
+      <pubDate>Sat, 21 Nov 2026 00:00:00 +0000</pubDate>
+    </item>
     <item>
       <title>Inside PyPy: first contact with RPython</title>
       <link>https://bernsteinbear.com/blog/inside-pypy-first-contact-with-rpython/?utm_source=rss</link>
@@ -2828,198 +3406,6 @@ array length. &lt;a href="#fnref:iteration-variable" class="reversefootnote" ro
 </description>
       <guid isPermaLink="true">https://bernsteinbear.com/blog/zjit-inliner-invokeblock/</guid>
       <pubDate>Tue, 28 Jul 2026 00:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Travel notes: PLDI Boulder</title>
-      <link>https://bernsteinbear.com/blog/travel-notes-pldi-boulder/?utm_source=rss</link>
-      <description>&lt;p&gt;I had another excellent &lt;a href="https://www.sigplan.org/Conferences/PLDI/"&gt;PLDI&lt;/a&gt; this
-past June. It was my fourth&lt;sup id="fnref:fifth" role="doc-noteref"&gt;&lt;a href="#fn:fifth" class="footnote" rel="footnote"&gt;1&lt;/a&gt;&lt;/sup&gt;. I continued to meet new people and learn
-new things!&lt;/p&gt;
-
-&lt;p&gt;Overall: I got to meet a lot of new people, which was exciting. I had some good
-chats about research. I asked a question at a talk! I got to show Aaron and
-Jacob PLDI and see them enjoy it. I missed hanging out with CF Bolz-Tereick and
-Chris Fallin, the usual suspects at conferences I attend. I’m looking forward
-to next year.&lt;/p&gt;
-
-&lt;p&gt;This post is more about the conference than the town of Boulder (unlike the
-last PLDI post about Seoul) because I didn’t do much Boulder exploring.&lt;/p&gt;
-
-&lt;h2 id="sunday"&gt;Sunday&lt;/h2&gt;
-
-&lt;p&gt;I got in late on Sunday. Then I had to take a long car ride from Denver airport
-to Boulder. I don’t think I had ever flown into Denver with intent to go to
-Boulder before so it was a bit of a surprise.&lt;/p&gt;
-
-&lt;p&gt;Jacob offered to have a late dinner with me so we had a tasty meal at Gaia
-Masala and Burger. Shout out to Harry, our server.&lt;/p&gt;
-
-&lt;h2 id="monday"&gt;Monday&lt;/h2&gt;
-
-&lt;p&gt;Monday was a workshop day. I signed up for EGRAPHS and mostly stayed in that
-workshop. People kept throwing around the term “Knuth-Bendix”, as they have
-been for several years, and only in one of these workshop talks did someone
-explain it in a way that made any sense at all. It seems kind of like equality
-saturation but for the rewrite rules themselves—no actual expression graphs
-involved. I DMed Phil this sketchy explanation during a talk to get his
-response and I got to watch him cock his head and think about it in real time.&lt;/p&gt;
-
-&lt;p&gt;At lunch I met Qiantan Hong and we got to talking about Common Lisp and its
-object system, CLOS. Seems like a combination of ahead-of-time compilation and
-multiple dispatch is really tricky.&lt;/p&gt;
-
-&lt;p&gt;I had dinner with Aaron at Postino and then wandered into a bunch of people
-staying at the conference hotel chatting in the lobby. Ben Titzer said “fix my
-subtyping bug”, which I interpreted as him saying hi. I ended up just planting
-myself at the table as a bunch of interesting people cycled through: Jared
-Roesch, Mae Milano, Hila Peleg, Russel Arbore. It was a late evening.&lt;/p&gt;
-
-&lt;h2 id="tuesday"&gt;Tuesday&lt;/h2&gt;
-
-&lt;p&gt;Back to the workshops! But late because of aforementioned late evening. I saw
-Vadym’s talk about Remora. I only understood about 40% of it but it was good to
-catch up. I hadn’t seen him since leaving Northeastern.&lt;/p&gt;
-
-&lt;p&gt;Around a break time I joined a little cluster of people talking about e-graphs
-and I guessed asked enough basic questions that Pavel convinced Max Willsey to
-run a “BYOEG” (build your own e-graph) tutorial. The structure was as follows:
-Max would instruct Jacob as to what &lt;em&gt;kind&lt;/em&gt; of thing to build next but not be
-prescriptive about exactly how to build it and not look at Jacob’s screen. The
-rest of us would sit around a table and try to follow along as best we could. I
-hear Pavel has a blog post about this experience coming soon…&lt;/p&gt;
-
-&lt;p&gt;I saw Slava Pestov walking around and introduced myself because we keep liking
-one others’ bad jokes on Mastodon. We ended up getting dinner with Aaron and
-Jacob that night at Leaf. We learned a lot about monoids, Knuth-Bendix (!),
-Factor, and Swift. Slava volunteered to do a similar follow-along “BYOKBC”
-(build your own Knuth-Bendix completion) tutorial the next day.&lt;/p&gt;
-
-&lt;h2 id="wednesday"&gt;Wednesday&lt;/h2&gt;
-
-&lt;p&gt;First day of the conference! I was walking into the hotel in the morning and I
-had made it about three feet onto the property when Alexa VanHattum, who was
-going the opposite direction, convinced me to instead get coffee elsewhere. We
-had a nice catch up and I got to hear about what teaching is like these days.&lt;/p&gt;
-
-&lt;p&gt;Lunch was fun. I got to do another round of “ambush person whose research I
-admire” and plopped down with Ben and Christian Wimmer. I’d spent a lot of time
-struggling with Christian’s papers on linear scan, then convinced him to chat
-about register allocation with us on a video call a couple of months ago. We
-continued some of that at lunch but then I (kind of accidentally kind of on
-purpose) got Ben started talking about Sea of Nodes and how it is and is not
-different between Java and (for example stand-in for dynamic languages)
-JavaScript. Apparently he is thinking about a similar thing that he is calling
-Sea of Variables.&lt;/p&gt;
-
-&lt;p&gt;We talked about inlining challenges and how to infuse profiles with call
-context, which can be a challenge. I feel more inspired to get type-based alias
-analysis working in ZJIT.&lt;/p&gt;
-
-&lt;p&gt;I tracked down Christian later in the courtyard and got to hear about what he’s
-working on these days. I know very little about ML compilers and ML hardware
-and things like that so hearing about the challenges was neat. Yannis
-Smaragdakis joined our little standing table chat and we got to learn about
-Datalog. Because I had previously written about linear scan register allocation
-and about liveness analysis with Datalog, I goaded him into pairing with me on
-writing a full linear scan implementation in Datalog.&lt;/p&gt;
-
-&lt;p&gt;This ended up taking the rest of the evening and several beers and then a lot
-of the next day! And after the first bit of code I did not manage to contribute
-very much at all.&lt;/p&gt;
-
-&lt;h2 id="thursday"&gt;Thursday&lt;/h2&gt;
-
-&lt;p&gt;I met Hannah Gommerstadt and we got to chatting about bikes and formal methods
-(separately). Slava walked by and I got to introduce them. Then Jacob too.&lt;/p&gt;
-
-&lt;p&gt;I continued pairing with Yannis but remained really lost. The only thing I
-think I contributed was some familiarity with the core algorithm, which he had
-only really seen in passing before. Eventually he got it fully working, but it
-needed some deep trickery. More on this soon in its own post.&lt;/p&gt;
-
-&lt;p&gt;I saw a talk about versioned e-graphs and that got me wondering if their
-implementation can be used as a persistent e-graph or even just persistent
-union-find. Sometimes you want to do backtracking, or have undo-redo in your
-compiler.&lt;/p&gt;
-
-&lt;p&gt;Then I went to a talk about streaming byte-pair encoding (BPE). BPE is hard to
-do streaming because it definitionally requires looking over the whole input
-string. They did some neat trickery to find boundaries in the string that
-demarcate regions that don’t interfere with one another and thereby tokenize
-on-the-fly. I didn’t understand it fully but I asked my only question of the
-conference, which was if this could also be used to implement BPE in parallel.
-Seems the answer is “maybe” so I should probably reach out and ask further.&lt;/p&gt;
-
-&lt;p&gt;Slava started showing me and Jacob and Aaron how to implement Knuth-Bendix
-completion for strings. I had a lot of tiny little bugs which slowed progress.
-Such is life. The banquet and awards ceremony started so we called it a night
-and went off to eat dinner. They had good lentils.&lt;/p&gt;
-
-&lt;h2 id="friday"&gt;Friday&lt;/h2&gt;
-
-&lt;p&gt;I ran into Thalia Archibald and John Regehr and we talked about (really, they talked
-about and I tried to learn something) what it might mean to either port Alive2
-to another compiler than LLVM, or build “Alive3”, or “Mini-Alive” for some
-other IR. John suggested fuzzing the hell out of the thing first, then doing
-something more formal later… especially if it’s a dynamic language IR where a
-lot of the opcodes end up being “function call that can do anything”.&lt;/p&gt;
-
-&lt;p&gt;I had a nice chat with Steven Holtzen and Zach Tatlock about research and grad
-student life. I got some good advice. I meant to talk to Zach about this thing
-we keep occasionally chatting about that I call “the big e-graph in the sky”. I
-talked a bit about it to Max Willsey and he had some good probing questions
-about what would be slow, challenging, or somehow undefined given my problem
-statement.&lt;/p&gt;
-
-&lt;p&gt;I continued struggling to implement Knuth-Bendix with significant assistance
-from Slava and I think eventually got &lt;em&gt;something&lt;/em&gt; working. I had a really nasty
-bug due to string slicing semantics&lt;sup id="fnref:slicing" role="doc-noteref"&gt;&lt;a href="#fn:slicing" class="footnote" rel="footnote"&gt;2&lt;/a&gt;&lt;/sup&gt; in Ruby.&lt;/p&gt;
-
-&lt;p&gt;Aaron went off to learn about deep immutability in Python and then got to
-chatting with the authors of the paper. We got to compare notes about language
-and language implementation challenges. It’s been a long time since I was in
-Python-land.&lt;/p&gt;
-
-&lt;p&gt;Aaron and Slava and I got enchiladas for dinner.&lt;/p&gt;
-
-&lt;h2 id="saturday"&gt;Saturday&lt;/h2&gt;
-
-&lt;p&gt;I had no reading material for the flight so I went downtown, intending to buy
-one book, but got too many books. They barely fit into my bag for the flight
-home. I started reading Anathem for the second time. It holds up. It’s a damn
-good book.&lt;/p&gt;
-&lt;div class="footnotes" role="doc-endnotes"&gt;
-  &lt;ol&gt;
-    &lt;li id="fn:fifth" role="doc-endnote"&gt;
-      &lt;p&gt;Actually, it might be my fifth. I just remembered that I attended
-PLMW in 2020 and also watched a few online talks at wild hours from my
-living room. &lt;a href="#fnref:fifth" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-    &lt;li id="fn:slicing" role="doc-endnote"&gt;
-      &lt;p&gt;The semantics in Ruby are probably globally reasonable but did not
-fit the thing I was trying to do: if we have two strings &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt;, we
-want to find the index at which they start to overlap, &lt;code class="language-plaintext highlighter-rouge"&gt;overlap&lt;/code&gt;. Then we
-want to grab the bit of &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; that is to the left of &lt;code class="language-plaintext highlighter-rouge"&gt;overlap&lt;/code&gt;. I had
-initially written that as &lt;code class="language-plaintext highlighter-rouge"&gt;a[..overlap-1]&lt;/code&gt;.&lt;/p&gt;
-
-      &lt;p&gt;However, if &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt; and &lt;code class="language-plaintext highlighter-rouge"&gt;b&lt;/code&gt; overlap at the start of &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt;, &lt;code class="language-plaintext highlighter-rouge"&gt;overlap&lt;/code&gt; is 0. This
-generates the range &lt;code class="language-plaintext highlighter-rouge"&gt;..-1&lt;/code&gt;, which means we’ll slice until the end of &lt;code class="language-plaintext highlighter-rouge"&gt;a&lt;/code&gt;.&lt;/p&gt;
-
-      &lt;div class="language-plaintext highlighter-rouge"&gt;&lt;div class="highlight"&gt;&lt;pre class="highlight"&gt;&lt;code&gt;irb(main):001&amp;gt; "abc"[..-1]
-=&amp;gt; "abc"
-irb(main):002&amp;gt;
-&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;      &lt;/div&gt;
-
-      &lt;p&gt;Not what we want. Instead, the fix in &lt;a href="https://github.com/tekknolagi/knuth-bendix/commit/e46b0069767de44622dc116b0b7b51a4392c400d"&gt;the
-commit&lt;/a&gt;
-shows how I had to add a special slice function called &lt;code class="language-plaintext highlighter-rouge"&gt;string_upto&lt;/code&gt; that
-handles the 0 case. &lt;a href="#fnref:slicing" class="reversefootnote" role="doc-backlink"&gt;&amp;#8617;&lt;/a&gt;&lt;/p&gt;
-    &lt;/li&gt;
-  &lt;/ol&gt;
-&lt;/div&gt;
-</description>
-      <guid isPermaLink="true">https://bernsteinbear.com/blog/travel-notes-pldi-boulder/</guid>
-      <pubDate>Sun, 05 Jul 2026 00:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
