@@ -7,7 +7,7 @@
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>python-feedgen</generator>
     <language>en</language>
-    <lastBuildDate>Mon, 23 Nov 2026 00:06:21 +0000</lastBuildDate>
+    <lastBuildDate>Mon, 23 Nov 2026 08:46:11 +0000</lastBuildDate>
     <item>
       <title>unpublished blog posts</title>
       <link>https://jyn.dev/unpublished-blog-posts/</link>
@@ -151,6 +151,68 @@ here is a very short summary of all of them.&lt;/p&gt;
 &lt;li&gt;psych Amos already built it it's called Vixen&lt;/li&gt;
 &lt;li&gt;also very similar to my existing &lt;a href="https://jyn.dev/four-posts-about-build-systems/"&gt;four posts about build systems&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Buck/Bazel are &lt;em&gt;not&lt;/em&gt; this because they're too hard to use and have high switching costs&lt;/li&gt;
+&lt;li&gt;what's wrong with cargo anyway?
+&lt;ul&gt;
+&lt;li&gt;prior art
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="https://weihanglo.tw/posts/2024/the-missing-parts-in-cargo/"&gt;The missing parts in Cargo, Weihang Lo&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="https://mmapped.blog/posts/17-scaling-rust-builds-with-bazel"&gt;Scaling Rust builds with Bazel, Roman Kashitsyn&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;it's impossible to detangle the different parts
+&lt;ul&gt;
+&lt;li&gt;you can't say "replace Cargo's built-in executor with Ninja or my distributed/hermetic executor"&lt;/li&gt;
+&lt;li&gt;no way to sandbox just build scripts, you have to sandbox the whole build graph. Cargo also wants to own its cache dirs which makes sandboxing harder.&lt;/li&gt;
+&lt;li&gt;you can't opt out of feature unification&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;the declarative language is not flexible enough
+&lt;ul&gt;
+&lt;li&gt;Cargo is intentionally not general purpose, which is fine, but makes it frustrating when everyone insists your project should build with Cargo&lt;/li&gt;
+&lt;li&gt;you simply cannot write integration tests for build scripts&lt;/li&gt;
+&lt;li&gt;closely related, you can't have "staged builds"; builds are at the package level and even then many commands only support packages in the workspace&lt;/li&gt;
+&lt;li&gt;many things that could be declarative require compiling a build.rs instead&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;it's not sound or minimal
+&lt;ul&gt;
+&lt;li&gt;rebuilds all the time for silly reasons
+&lt;ul&gt;
+&lt;li&gt;needed to add a new &lt;code&gt;[lints]&lt;/code&gt; table to just to avoid rebuilding the world when you add &lt;code&gt;-A unused&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;--deny=warnings&lt;/code&gt; needed its own special configuration option built on top of Rustc JSON output&lt;/li&gt;
+&lt;li&gt;doing things this way legitimately makes the UX nicer than a naïve approach that rebuilds everything in the workspace! but there's no middle ground between "rebuild the world" and "dedicated Cargo feature"&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;no way to make the cache key content-hashes rather than timestamps&lt;/li&gt;
+&lt;li&gt;no way to express negative dependencies (admittedly this is true of ~all build systems i know about)&lt;/li&gt;
+&lt;li&gt;no way to cache tests (for incremental re-testing)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;build scripts are very very poorly supported
+&lt;ul&gt;
+&lt;li&gt;if you get it wrong, tough luck&lt;/li&gt;
+&lt;li&gt;not possible or practical to express all the dependencies a build script has&lt;/li&gt;
+&lt;li&gt;no interface for expressing which system packages you depend on. in practice people often end up vendoring C source code and building it from scratch inside the build script.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;workspaces, .cargo/config, and user-wide config don't interact well&lt;/li&gt;
+&lt;li&gt;you can't query it very well
+&lt;ul&gt;
+&lt;li&gt;cargo metadata is simultaneously too much info (slow, heavy) and too little (works at the wrong level of abstraction for many use cases)&lt;/li&gt;
+&lt;li&gt;you can't ask "what would be rebuilt next time" except by actually building&lt;/li&gt;
+&lt;li&gt;you can't ask "what files were used on the last run" except by parsing .d files yourself&lt;/li&gt;
+&lt;li&gt;you can't ask "what source code corresponds to this built &lt;code&gt;.rmeta&lt;/code&gt; file" — in particular cargo semver-checks wanted this so it didn't have to rebuild the world to get cross-crate links from rustdoc-json&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;poor discovery for the underlying commands it wraps; inconsistent where it adds wrapping flags or requires &lt;code&gt;--&lt;/code&gt; style forwarding&lt;/li&gt;
+&lt;li&gt;the difference between compiling for the host and cross-compiling is stupidly complicated for no good reason other than back-compat
+&lt;ul&gt;
+&lt;li&gt;just adding &lt;code&gt;--target $(rustc --print=host-tuple)&lt;/code&gt; changes behavior!&lt;/li&gt;
+&lt;li&gt;complications around proc-macros and build scripts, caused docs.rs no end of trouble&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
 &lt;li&gt;design:
 &lt;ul&gt;
 &lt;li&gt;start by importing Cargo metadata from Cargo.toml, so that 80% of builds can still be declarative.&lt;/li&gt;
@@ -161,7 +223,13 @@ here is a very short summary of all of them.&lt;/p&gt;
 &lt;li&gt;if processes are interrupted, delete all the artifacts they created in the latest (partial) run (this also fixes "ctrl-c breaks incremental linking sometimes").&lt;/li&gt;
 &lt;/ul&gt;
 &lt;/li&gt;
-&lt;li&gt;extend the tup model to system dependencies by strace-ing all spawned processes. rebuild if a system dependency changes.&lt;/li&gt;
+&lt;li&gt;extend the tup model to system dependencies by strace-ing all spawned processes. rebuild if a system dependency changes.
+&lt;ul&gt;
+&lt;li&gt;don't need reproducibility for our purposes, just rebuilding on file changes is enough&lt;/li&gt;
+&lt;li&gt;tracking environment variables &lt;a href="https://jyn.dev/i-want-a-better-build-executor/#environment-variables"&gt;is hard&lt;/a&gt;, but we can still get quite a long ways by tracking FS access&lt;/li&gt;
+&lt;li&gt;we could allow trading back-compat for additional correct guarantees: opt-in mode where only the env variables you explicitly declare are available in a build script&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
 &lt;li&gt;disallow setting &lt;code&gt;-l&lt;/code&gt; and &lt;code&gt;-L&lt;/code&gt;; instead require that build scripts print the path to all shared objects they want to link. rebuild if any of those change.&lt;/li&gt;
 &lt;li&gt;expose all this info with a nextest-like query language
 &lt;ul&gt;
@@ -290,9 +358,24 @@ here is a very short summary of all of them.&lt;/p&gt;
 &lt;h3 id="just-talk-to-people"&gt;"just talk to people"&lt;a class="zola-anchor" href="#just-talk-to-people" aria-label="Anchor link for: just-talk-to-people"&gt;&lt;/a&gt;
 &lt;/h3&gt;
 &lt;ul&gt;
-&lt;li&gt;"talking to people wins again"&lt;/li&gt;
-&lt;li&gt;"joke about the outcomes you want to see"&lt;/li&gt;
-&lt;li&gt;"focus on the outcomes you want to see more of"&lt;/li&gt;
+&lt;li&gt;"talking to people wins again"
+&lt;ul&gt;
+&lt;li&gt;most personal/professional conflicts i have are resolved by talking to the other person&lt;/li&gt;
+&lt;li&gt;this sounds obvious but is surprisingly hard when the two of you are mad at each other&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;"joke about the outcomes you want to see"
+&lt;ul&gt;
+&lt;li&gt;i’ve seen multiple people get jobs by joking on social media “so anyone want to hire me?”&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;"focus on the outcomes you want to see more of"
+&lt;ul&gt;
+&lt;li&gt;you need a positive vision of the future or you accidentally steer towards the thing you’re afraid of&lt;/li&gt;
+&lt;li&gt;this is why the EAs and rationalists are doomed, no matter how smart and influential they are&lt;/li&gt;
+&lt;li&gt;cannot emphasize enough how important it is to have positive visions of the future&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h3 id="you-can-t-do-things-ironically"&gt;You can't do things ironically.&lt;a class="zola-anchor" href="#you-can-t-do-things-ironically" aria-label="Anchor link for: you-can-t-do-things-ironically"&gt;&lt;/a&gt;
 &lt;/h3&gt;
@@ -320,6 +403,7 @@ here is a very short summary of all of them.&lt;/p&gt;
 &lt;p&gt;“tech bro” is a slur against autistic trans women—deleted bluesky post&lt;/p&gt;
 &lt;/blockquote&gt;
 &lt;/li&gt;
+&lt;li&gt;&lt;a href="https://catgirl.ai/log/verbum-techbro-delenda-est/"&gt;I am tired of the word 'techbro', Ash&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;"bro" is inherently gendered in this context (c.f. "bro culture") but people use "tech bro" to mean "anyone in tech with opinions i don't like"
 &lt;ul&gt;
 &lt;li&gt;maybe not originally. but they certainly do now.&lt;/li&gt;
@@ -330,9 +414,18 @@ here is a very short summary of all of them.&lt;/p&gt;
 &lt;/li&gt;
 &lt;li&gt;tech workers get &lt;em&gt;fast&lt;/em&gt; feedback on complex systems. most other fields need decades.
 &lt;ul&gt;
+&lt;li&gt;in CS, people can learn within their own careers
+&lt;ul&gt;
+&lt;li&gt;my pet theory is that this is why we so undervalue studying our past (because there's an overemphasis on learning from your personal mistakes)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;other fields take longer to learn, but as a result actually look at their own field's history.
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="https://how.complexsystems.fail/"&gt;How Complex Systems Fail, Richard I. Cook&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
 &lt;li&gt;&lt;a href="https://www.complexsystemspodcast.com/"&gt;Complex Systems podcast, Patrick McKenzie&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;&lt;a href="https://www.hillelwayne.com/post/are-we-really-engineers/"&gt;Are We Really Engineers?, Hillel Wayne&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;a href="https://how.complexsystems.fail/"&gt;How Complex Systems Fail, Richard I. Cook&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;&lt;a href="https://danluu.com/postmortem-lessons/"&gt;Reading postmortems, Dan Luu&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;&lt;a href="https://web.archive.org/web/20230628032904/https://cohost.org/tef/post/1764930-how-not-to-write-a"&gt;tef on queues&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
@@ -361,7 +454,31 @@ here is a very short summary of all of them.&lt;/p&gt;
 &lt;li&gt;&lt;a href="https://slatestarcodex.com/2018/10/30/sort-by-controversial/"&gt;Scissor statements&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;one side is focused on "does the thing do what i want"&lt;/li&gt;
 &lt;li&gt;the other is focused on "is it high-quality, does it build a community, does it bring people meaning and joy"&lt;/li&gt;
-&lt;li&gt;it used to be that these were symbiotic. now someone can sit in their room alone and build quite a complicated project without talking to anyone.&lt;/li&gt;
+&lt;li&gt;it used to be that these were symbiotic. now someone can sit in their room alone and build quite a complicated project without talking to anyone.
+&lt;ul&gt;
+&lt;li&gt;"artisan" work is slowly becoming a hobby/bespoke rather than economically compensated, like leatherworking
+&lt;ul&gt;
+&lt;li&gt;this is not necessarily a good thing; but see "Weizenbaum" below&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;we're early in this transition, for many projects it's still economically rational to hand-write code, especially for long-lived complicated projects with high stakes for failure&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;where is this going to go?
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="https://asteriskmag.com/issues/15/after-work-we-ll-have-each-other"&gt;After Work, We'll Have Each Other, Clara Collier&lt;/a&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The modern labor market has dissolved the bonds of tradition, family, and clan. In the modern world, relationships matter less. And because they matter less, we can do much more inside them. They are freer. They have room to breathe.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;if people don't get status hierarchies from work, they'll get them from somewhere else. people want to belong, it's very fundamental.&lt;/li&gt;
+&lt;li&gt;not purely about in-groups and out-groups; there will always be parties with a limited guest list, and people enjoy parties in their own right&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h3 id="revisiting-weizenbaum-on-education-and-society"&gt;Revisiting Weizenbaum on education and society&lt;a class="zola-anchor" href="#revisiting-weizenbaum-on-education-and-society" aria-label="Anchor link for: revisiting-weizenbaum-on-education-and-society"&gt;&lt;/a&gt;
 &lt;/h3&gt;
